@@ -1,0 +1,51 @@
+{
+  "IDAMetadataDescriptorVersion": 1,
+  "plugin": {
+    "name": "Rikugan",
+    "entryPoint": "rikugan_plugin.py",
+    "version": "1.2",
+    "description": "Agentic LLM reverse-engineering companion embedded directly in IDA Pro. Supports multi-provider LLMs (Anthropic, OpenAI, Google Gemini, Ollama), 60+ native tools, exploration mode with parallel subagents, natural-language binary patching, skills, and MCP server integration.",
+    "license": "MIT",
+    "categories": [
+      "analysis",
+      "ui-ux-and-visualization"
+    ],
+    "platforms": [
+      "windows-x86_64",
+      "linux-x86_64",
+      "macos-x86_64",
+      "macos-arm64"
+    ],
+    "idaVersions": ["9.0", "9.1", "9.2"],
+    "pythonDependencies": [
+      "anthropic>=0.39.0",
+      "openai>=1.50.0",
+      "google-genai>=1.0.0",
+      "mcp>=1.0.0",
+      "ida-domain>=0.1.0",
+      "tomli>=2.0.0",
+      "cryptography>=43.0.0"
+    ],
+    "keywords": [
+      "ai",
+      "llm",
+      "agent",
+      "reverse-engineering",
+      "decompiler",
+      "claude",
+      "openai",
+      "gemini",
+      "ollama",
+      "mcp",
+      "automation"
+    ],
+    "urls": {
+      "repository": "https://github.com/buzzer-re/Rikugan"
+    },
+    "authors": [
+      {
+        "name": "buzzer-re"
+      }
+    ]
+  }
+}

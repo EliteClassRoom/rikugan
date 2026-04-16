@@ -1,0 +1,40 @@
+{
+  "pluginmetadataversion": 2,
+  "name": "Rikugan",
+  "author": "buzzer-re",
+  "type": [
+    "ui",
+    "helper"
+  ],
+  "api": [
+    "python3"
+  ],
+  "description": "Rikugan reverse engineering companion for Binary Ninja.",
+  "longdescription": "Rikugan embeds an agentic LLM workflow into Binary Ninja with native tooling, skills, and an integrated chat sidebar. Supports multiple LLM providers (Anthropic, OpenAI, Google, Ollama) and MCP tool servers.",
+  "license": {
+    "name": "MIT",
+    "text": "See project repository."
+  },
+  "platforms": [
+    "Darwin",
+    "Linux",
+    "Windows"
+  ],
+  "dependencies": {
+    "pip": [
+      "anthropic>=0.39.0",
+      "openai>=1.50.0",
+      "google-genai>=1.0.0",
+      "tomli>=2.0.0",
+      "cryptography>=43.0.0"
+    ]
+  },
+  "installinstructions": {
+    "Darwin": "Clone/symlink this repository into ~/Library/Application Support/Binary Ninja/plugins/rikugan",
+    "Linux": "Clone/symlink this repository into ~/.binaryninja/plugins/rikugan",
+    "Windows": "Clone/symlink this repository into %APPDATA%/Binary Ninja/plugins/rikugan"
+  },
+  "projectUrl": "https://github.com/buzzer-re/rikugan",
+  "version": "1.2",
+  "minimumbinaryninjaversion": 3164
+}
