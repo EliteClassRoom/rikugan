@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 _BTN_STYLE = (
     "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 4px 12px; font-size: 11px; }"
+    "border-radius: 4px; padding: 4px 12px; }"
     "QPushButton:hover { background: #3c3c3c; }"
 )
 
@@ -268,11 +268,11 @@ class ProfilesTab(QWidget):
             for cat_name, tool_names in categories:
                 col = cols[col_idx % n_cols]
                 header = QLabel(f"<b>{cat_name}</b>")
-                header.setStyleSheet("font-size: 10px; color: #888; margin-top: 6px;")
+                header.setStyleSheet("color: #888; margin-top: 6px;")
                 col.addWidget(header)
                 for tname in tool_names:
                     cb = QCheckBox(tname)
-                    cb.setStyleSheet("font-size: 11px;")
+                    cb.setStyleSheet("")
                     self._denied_tool_cbs[tname] = cb
                     col.addWidget(cb)
                 col_idx += 1
@@ -559,7 +559,7 @@ class ProfilesTab(QWidget):
         lay.addLayout(form)
 
         error_label = QLabel()
-        error_label.setStyleSheet("color: #f44747; font-size: 11px;")
+        error_label.setStyleSheet("color: #f44747;")
         error_label.hide()
         lay.addWidget(error_label)
 

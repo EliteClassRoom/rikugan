@@ -27,21 +27,21 @@ from .qt_compat import (
 
 _BTN_STYLE = (
     "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 4px 10px; font-size: 11px; }"
+    "border-radius: 4px; padding: 4px 10px; font-size: inherit; }"
     "QPushButton:hover { background: #3c3c3c; }"
     "QPushButton:disabled { color: #555; }"
 )
 
 _STOP_BTN_STYLE = (
     "QPushButton { background: #2d2d2d; color: #c42b1c; border: 1px solid #c42b1c; "
-    "border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold; }"
+    "border-radius: 4px; padding: 4px 10px; font-size: inherit; font-weight: bold; }"
     "QPushButton:hover { background: #3c3c3c; }"
     "QPushButton:disabled { color: #555; border-color: #555; }"
 )
 
 _START_BTN_STYLE = (
     "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #d4d4d4; "
-    "border-radius: 4px; padding: 4px 14px; font-size: 11px; font-weight: bold; }"
+    "border-radius: 4px; padding: 4px 14px; font-size: inherit; font-weight: bold; }"
     "QPushButton:hover { background: #3c3c3c; }"
     "QPushButton:disabled { color: #555; border-color: #555; }"
 )
@@ -52,7 +52,7 @@ _TABLE_STYLE = """
         color: #d4d4d4;
         border: 1px solid #3c3c3c;
         gridline-color: #3c3c3c;
-        font-size: 11px;
+        font-size: inherit;
         alternate-background-color: #252525;
     }
     QTableWidget::item {
@@ -66,33 +66,33 @@ _TABLE_STYLE = """
         color: #d4d4d4;
         border: 1px solid #3c3c3c;
         padding: 3px 6px;
-        font-size: 10px;
+        font-size: inherit;
     }
 """
 
 _FILTER_STYLE = (
     "QLineEdit { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 3px; padding: 3px 6px; font-size: 11px; }"
+    "border-radius: 3px; padding: 3px 6px; font-size: inherit; }"
     "QLineEdit:focus { border-color: #4ec9b0; }"
 )
 
 _COMBO_STYLE = (
     "QComboBox { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 3px; padding: 3px 6px; font-size: 11px; }"
+    "border-radius: 3px; padding: 3px 6px; font-size: inherit; }"
 )
 
 _NUM_INPUT_STYLE = (
     "QLineEdit { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 3px; padding: 2px 4px; font-size: 11px; }"
+    "border-radius: 3px; padding: 2px 4px; font-size: inherit; }"
 )
 
 _PROGRESS_STYLE = (
     "QProgressBar { background: #2d2d2d; border: 1px solid #3c3c3c; "
-    "border-radius: 3px; text-align: center; color: #d4d4d4; font-size: 10px; }"
+    "border-radius: 3px; text-align: center; color: #d4d4d4; font-size: inherit; }"
     "QProgressBar::chunk { background: #808080; border-radius: 2px; }"
 )
 
-_RADIO_STYLE = "QRadioButton { color: #d4d4d4; font-size: 11px; spacing: 4px; }"
+_RADIO_STYLE = "QRadioButton { color: #d4d4d4; font-size: inherit; spacing: 4px; }"
 
 _CHECK_STYLE = "QCheckBox { spacing: 0px; } QCheckBox::indicator { width: 14px; height: 14px; }"
 
@@ -172,7 +172,7 @@ class BulkRenamerWidget(QWidget):
         top_bar.addWidget(self._filter_combo)
 
         self._selection_label = QLabel("0 / 0 selected")
-        self._selection_label.setStyleSheet("color: #808080; font-size: 11px;")
+        self._selection_label.setStyleSheet("color: #808080; font-size: inherit;")
         top_bar.addWidget(self._selection_label)
 
         main_layout.addLayout(top_bar)
@@ -224,7 +224,7 @@ class BulkRenamerWidget(QWidget):
         analysis_bar.setSpacing(6)
 
         mode_label = QLabel("Mode:")
-        mode_label.setStyleSheet("color: #d4d4d4; font-size: 11px;")
+        mode_label.setStyleSheet("color: #d4d4d4; font-size: inherit;")
         analysis_bar.addWidget(mode_label)
 
         self._quick_radio = QRadioButton("Quick")
@@ -240,7 +240,7 @@ class BulkRenamerWidget(QWidget):
         analysis_bar.addSpacing(12)
 
         batch_label = QLabel("Batch:")
-        batch_label.setStyleSheet("color: #d4d4d4; font-size: 11px;")
+        batch_label.setStyleSheet("color: #d4d4d4; font-size: inherit;")
         batch_label.setToolTip("Quick: functions per LLM prompt. Deep: ignored (1 agent per function).")
         analysis_bar.addWidget(batch_label)
 
@@ -254,7 +254,7 @@ class BulkRenamerWidget(QWidget):
         analysis_bar.addWidget(self._batch_input)
 
         concurrent_label = QLabel("Jobs:")
-        concurrent_label.setStyleSheet("color: #d4d4d4; font-size: 11px;")
+        concurrent_label.setStyleSheet("color: #d4d4d4; font-size: inherit;")
         concurrent_label.setToolTip("Max parallel agents/requests running at the same time")
         analysis_bar.addWidget(concurrent_label)
 
@@ -303,7 +303,7 @@ class BulkRenamerWidget(QWidget):
         action_bar.addWidget(self._progress, 1)
 
         self._progress_label = QLabel("0 / 0")
-        self._progress_label.setStyleSheet("color: #808080; font-size: 11px;")
+        self._progress_label.setStyleSheet("color: #808080; font-size: inherit;")
         action_bar.addWidget(self._progress_label)
 
         main_layout.addLayout(action_bar)

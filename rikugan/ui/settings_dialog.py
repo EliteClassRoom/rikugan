@@ -139,7 +139,7 @@ class _AddProviderDialog(QDialog):
         layout.addLayout(form)
 
         self._error_label = QLabel()
-        self._error_label.setStyleSheet("color: #f44747; font-size: 11px;")
+        self._error_label.setStyleSheet("color: #f44747;")
         self._error_label.hide()
         layout.addWidget(self._error_label)
 
@@ -235,6 +235,14 @@ class SettingsDialog(QDialog):
         playout.addStretch()
         self._tabs.addTab(provider_tab, "Provider")
 
+        # Tab: Appearance
+        appearance_tab = QWidget()
+        appearance_layout = QVBoxLayout(appearance_tab)
+        self._appearance_group = self._build_appearance_group()
+        appearance_layout.addWidget(self._appearance_group)
+        appearance_layout.addStretch()
+        self._tabs.addTab(appearance_tab, "Appearance")
+
         # Tab 1-3: Skills, MCP, Profiles — all use a shared SettingsService
         from .settings_service import SettingsService
         from .tabs.mcp_tab import MCPTab
@@ -300,7 +308,7 @@ class SettingsDialog(QDialog):
         """Build the provider combo + add/remove buttons row."""
         btn_style = (
             "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "border-radius: 4px; font-size: 13px; font-weight: bold; }"
+            "border-radius: 4px; font-weight: bold; }"
             "QPushButton:hover { background: #3c3c3c; }"
         )
         row = QHBoxLayout()
@@ -340,14 +348,14 @@ class SettingsDialog(QDialog):
         self._fetch_btn.setFixedWidth(70)
         self._fetch_btn.setStyleSheet(
             "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "border-radius: 4px; padding: 4px; font-size: 11px; }"
+            "border-radius: 4px; padding: 4px; }"
             "QPushButton:hover { background: #3c3c3c; }"
         )
         self._fetch_btn.clicked.connect(self._fetch_models)
         model_layout.addWidget(self._fetch_btn)
 
         self._model_status = QLabel()
-        self._model_status.setStyleSheet("color: #808080; font-size: 10px;")
+        self._model_status.setStyleSheet("color: #808080;")
         self._model_status.setWordWrap(True)
         model_layout.addWidget(self._model_status)
         return model_layout
@@ -416,13 +424,6 @@ class SettingsDialog(QDialog):
         )
         behavior_form.addRow(self._silent_retry_cb)
 
-        # --- Appearance ---
-        self._font_size_spin = QSpinBox()
-        self._font_size_spin.setRange(8, 24)
-        self._font_size_spin.setValue(self._config.font_size)
-        self._font_size_spin.setToolTip("Base font size for chat messages (8-24 pt).")
-        behavior_form.addRow("Font size:", self._font_size_spin)
-
         # --- Context preservation ---
         self._preserve_context_cb = QCheckBox("Preserve full context (disable tool result truncation)")
         self._preserve_context_cb.setChecked(self._config.preserve_context)
@@ -446,6 +447,47 @@ class SettingsDialog(QDialog):
         behavior_form.addRow(self._encrypt_keys_cb)
 
         return behavior_group
+
+    def _build_appearance_group(self) -> QGroupBox:
+        """Build the Appearance settings group box."""
+        appearance_group = QGroupBox("Font")
+        appearance_form = QFormLayout(appearance_group)
+
+        self._font_family_combo = QComboBox()
+        self._font_family_combo.setEditable(False)
+        self._font_family_combo.addItems(
+            [
+                "(Inherit from IDA)",
+                "Consolas",
+                "Courier New",
+                "Lucida Console",
+                "Monaco",
+                "Source Code Pro",
+                "Segoe UI",
+            ]
+        )
+        current_family = self._config.font_family
+        if current_family:
+            idx = self._font_family_combo.findText(current_family)
+            if idx >= 0:
+                self._font_family_combo.setCurrentIndex(idx)
+            else:
+                self._font_family_combo.insertItem(1, current_family)
+                self._font_family_combo.setCurrentIndex(1)
+        self._font_family_combo.setToolTip(
+            "Font family for chat messages and code blocks. "
+            "Leave at 'Inherit from IDA' to use IDA Pro's configured font."
+        )
+        appearance_form.addRow("Font family:", self._font_family_combo)
+
+        self._font_size_spin = QSpinBox()
+        self._font_size_spin.setRange(0, 72)
+        self._font_size_spin.setValue(self._config.font_size_override)
+        self._font_size_spin.setSuffix(" pt")
+        self._font_size_spin.setToolTip("Font size in points. Set to 0 or leave at default to inherit from IDA Pro.")
+        appearance_form.addRow("Font size:", self._font_size_spin)
+
+        return appearance_group
 
     # --- Show event: defer all non-widget work to here ---
 
@@ -572,10 +614,9 @@ class SettingsDialog(QDialog):
 
     # --- Auth status ---
 
-    _OK_STYLE = "color: #4ec9b0; font-size: 11px; font-weight: bold;"
-    _ERR_STYLE = "color: #f44747; font-size: 11px;"
-
-    _HINT_STYLE = "color: #808080; font-size: 10px;"
+    _OK_STYLE = "color: #4ec9b0; font-weight: bold;"
+    _ERR_STYLE = "color: #f44747;"
+    _HINT_STYLE = "color: #808080;"
 
     def _update_auth_status(self) -> None:
         provider_name = self._provider_combo.currentText()
@@ -647,10 +688,10 @@ class SettingsDialog(QDialog):
 
         if models:
             self._model_status.setText(f"{len(models)} models")
-            self._model_status.setStyleSheet("color: #4ec9b0; font-size: 10px;")
+            self._model_status.setStyleSheet("color: #4ec9b0;")
         else:
             self._model_status.setText("Type model name manually")
-            self._model_status.setStyleSheet("color: #808080; font-size: 10px;")
+            self._model_status.setStyleSheet("color: #808080;")
 
         # Auto-fill generation defaults based on selected model
         self._update_generation_defaults()
@@ -658,7 +699,7 @@ class SettingsDialog(QDialog):
     def _on_fetch_error(self, error: str) -> None:
         self._fetch_btn.setEnabled(True)
         self._model_status.setText(error)
-        self._model_status.setStyleSheet("color: #f44747; font-size: 10px;")
+        self._model_status.setStyleSheet("color: #f44747;")
         self._model_restore_hint = ""
 
     def _update_generation_defaults(self) -> None:
@@ -811,7 +852,9 @@ class SettingsDialog(QDialog):
         self._config.exploration_turn_limit = self._explore_turns_spin.value()
         self._config.max_retries = self._max_retries_spin.value()
         self._config.silent_retry_mode = self._silent_retry_cb.isChecked()
-        self._config.font_size = self._font_size_spin.value()
+        font_family_text = self._font_family_combo.currentText()
+        self._config.font_family = "" if font_family_text == "(Inherit from IDA)" else font_family_text
+        self._config.font_size_override = self._font_size_spin.value()
         self._config.preserve_context = self._preserve_context_cb.isChecked()
         self._config.oauth_consent_accepted = self._oauth_cb.isChecked()
 

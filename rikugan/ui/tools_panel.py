@@ -14,7 +14,7 @@ from .qt_compat import (
     QWidget,
 )
 
-_HEADER_STYLE = "color: #d4d4d4; font-weight: bold; font-size: 12px;"
+_HEADER_STYLE = "color: #d4d4d4; font-weight: bold; font-size: inherit;"
 
 _PANEL_STYLE = """
     QWidget#tools_panel {
@@ -30,7 +30,7 @@ _PANEL_STYLE = """
         border: 1px solid #3c3c3c;
         border-bottom: none;
         padding: 5px 14px;
-        font-size: 11px;
+        font-size: inherit;
         min-width: 60px;
     }
     QTabBar::tab:selected {
@@ -46,7 +46,7 @@ _PANEL_STYLE = """
 
 _BTN_STYLE = (
     "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 2px 8px; font-size: 11px; }"
+    "border-radius: 4px; padding: 2px 8px; font-size: inherit; }"
     "QPushButton:hover { background: #3c3c3c; }"
 )
 

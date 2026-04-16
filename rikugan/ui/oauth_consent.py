@@ -8,9 +8,9 @@ _POLICY_URL = "https://code.claude.com/docs/en/legal-and-compliance#authenticati
 
 _DIALOG_STYLE = (
     "QDialog { background: #1e1e1e; }"
-    "QLabel { color: #d4d4d4; font-size: 12px; }"
+    "QLabel { color: #d4d4d4; font-size: inherit; }"
     "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 8px 16px; font-size: 11px; min-width: 120px; }"
+    "border-radius: 4px; padding: 8px 16px; font-size: inherit; min-width: 120px; }"
     "QPushButton:hover { background: #3c3c3c; }"
 )
 

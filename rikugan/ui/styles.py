@@ -72,148 +72,144 @@ QFrame#message_question {
 QLabel#msg_role_label {
     color: #218871;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#tool_header {
     color: #2473b6;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#tool_content {
     color: #6851a2;
-    font-family: monospace;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#collapse_button {
     border: none;
     color: #92898a;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QLabel#thinking_header {
     color: #92898a;
-    font-size: 11px;
+    font-size: inherit;
     font-style: italic;
 }
 
 QLabel#thinking_content {
     color: #72696d;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QLabel#star_label {
     color: #b16803;
-    font-size: 14px;
+    font-size: inherit;
 }
 
 QLabel#phrase_label {
     color: #92898a;
     font-style: italic;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QLabel#queued_badge {
     color: #92898a;
-    font-size: 10px;
+    font-size: inherit;
     font-style: italic;
 }
 
 QLabel#question_header {
     color: #b16803;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#question_content {
     color: #2c232e;
-    font-size: 13px;
+    font-size: inherit;
 }
 
 QLabel#phase_label {
     color: #b16803;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#reason_label {
     color: #a59c9c;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#cat_label {
     font-weight: bold;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QLabel#addr_label {
     color: #92898a;
-    font-family: monospace;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QLabel#finding_summary {
     color: #2c232e;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#note_title {
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#note_genre {
     color: #92898a;
-    font-size: 10px;
+    font-size: inherit;
     font-style: italic;
 }
 
 QLabel#note_path {
     color: #72696d;
-    font-family: monospace;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QLabel#note_preview {
     color: #a59c9c;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#subagent_icon {
-    font-size: 14px;
+    font-size: inherit;
 }
 
 QLabel#subagent_label {
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#subagent_detail {
     color: #72696d;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#error_header {
     color: #ce4770;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#error_content {
     color: #2c232e;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QLabel#msg_content {
     color: inherit;
-    font-size: 13px;
 }
 
 QLabel#relevance_star {
     color: #d7ba7d;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QFrame#finding_tool {
@@ -260,7 +256,7 @@ QPushButton#option_btn {
     border: 1px solid #1a5a93;
     border-radius: 4px;
     padding: 4px 14px;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QPushButton#option_btn:hover {
@@ -326,13 +322,12 @@ QFrame#message_thinking {
 QLabel#tool_header {
     color: #569cd6;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#tool_content {
     color: #9cdcfe;
-    font-family: monospace;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QPlainTextEdit#input_area {
@@ -341,7 +336,6 @@ QPlainTextEdit#input_area {
     border: 1px solid #3c3c3c;
     border-radius: 8px;
     padding: 8px;
-    font-size: 13px;
     selection-background-color: #264f78;
 }
 
@@ -388,12 +382,12 @@ QFrame#context_bar {
 
 QLabel#context_label {
     color: #808080;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#context_value {
     color: #cccccc;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QFrame#plan_step {
@@ -423,7 +417,7 @@ QFrame#plan_step_done {
 QToolButton#collapse_button {
     border: none;
     color: #808080;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QToolButton#collapse_button:hover {
@@ -472,7 +466,7 @@ QFrame#tools_panel QTabBar::tab {
     padding: 4px 12px;
     border: none;
     border-right: 1px solid #3c3c3c;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QFrame#tools_panel QTabBar::tab:selected {
@@ -488,7 +482,7 @@ QTreeWidget {
     background-color: #1e1e1e;
     color: #d4d4d4;
     border: none;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QTreeWidget::item {
@@ -509,7 +503,7 @@ QHeaderView::section {
     border: none;
     border-right: 1px solid #3c3c3c;
     padding: 3px 6px;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QTableWidget {
@@ -517,7 +511,7 @@ QTableWidget {
     color: #d4d4d4;
     border: none;
     gridline-color: #3c3c3c;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QTableWidget::item {
@@ -534,7 +528,7 @@ QProgressBar {
     border-radius: 3px;
     text-align: center;
     color: #d4d4d4;
-    font-size: 10px;
+    font-size: inherit;
     height: 14px;
 }
 
@@ -545,7 +539,7 @@ QProgressBar::chunk {
 
 QRadioButton {
     color: #d4d4d4;
-    font-size: 11px;
+    font-size: inherit;
     spacing: 4px;
 }
 
@@ -554,7 +548,7 @@ QTextEdit {
     color: #d4d4d4;
     border: 1px solid #3c3c3c;
     border-radius: 4px;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QFrame#thinking_block {
@@ -578,148 +572,144 @@ QFrame#message_question {
 QLabel#msg_role_label {
     color: #4ec9b0;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#tool_header {
     color: #569cd6;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#tool_content {
     color: #9cdcfe;
-    font-family: monospace;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#collapse_button {
     border: none;
     color: #808080;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QLabel#thinking_header {
     color: #707090;
-    font-size: 11px;
+    font-size: inherit;
     font-style: italic;
 }
 
 QLabel#thinking_content {
     color: #606078;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QLabel#star_label {
     color: #dcdcaa;
-    font-size: 14px;
+    font-size: inherit;
 }
 
 QLabel#phrase_label {
     color: #808080;
     font-style: italic;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QLabel#queued_badge {
     color: #808080;
-    font-size: 10px;
+    font-size: inherit;
     font-style: italic;
 }
 
 QLabel#question_header {
     color: #dcdcaa;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#question_content {
     color: #d4d4d4;
-    font-size: 13px;
+    font-size: inherit;
 }
 
 QLabel#phase_label {
     color: #d7ba7d;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#reason_label {
     color: #b0a070;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#cat_label {
     font-weight: bold;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QLabel#addr_label {
     color: #808080;
-    font-family: monospace;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QLabel#finding_summary {
     color: #d4d4d4;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#note_title {
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#note_genre {
     color: #808080;
-    font-size: 10px;
+    font-size: inherit;
     font-style: italic;
 }
 
 QLabel#note_path {
     color: #606060;
-    font-family: monospace;
-    font-size: 10px;
+    font-size: inherit;
 }
 
 QLabel#note_preview {
     color: #a0a0a0;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#subagent_icon {
-    font-size: 14px;
+    font-size: inherit;
 }
 
 QLabel#subagent_label {
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#subagent_detail {
     color: #b0b0b0;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#error_header {
     color: #f44747;
     font-weight: bold;
-    font-size: 11px;
+    font-size: inherit;
 }
 
 QLabel#error_content {
     color: #d4d4d4;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QLabel#msg_content {
     color: inherit;
-    font-size: 13px;
 }
 
 QLabel#relevance_star {
     color: #d7ba7d;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QFrame#finding_tool {
@@ -763,7 +753,7 @@ QPushButton#option_btn {
     border: 1px solid #4a7ab5;
     border-radius: 4px;
     padding: 4px 14px;
-    font-size: 12px;
+    font-size: inherit;
 }
 
 QPushButton#option_btn:hover {

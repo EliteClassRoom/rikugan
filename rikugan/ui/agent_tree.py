@@ -29,7 +29,7 @@ _STATUS_COLORS: dict[str, str] = {
 
 _BTN_STYLE = (
     "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 4px 10px; font-size: 11px; }"
+    "border-radius: 4px; padding: 4px 10px; font-size: inherit; }"
     "QPushButton:hover { background: #3c3c3c; }"
     "QPushButton:disabled { color: #555; }"
 )
@@ -39,7 +39,7 @@ _TREE_STYLE = """
         background: #1e1e1e;
         color: #d4d4d4;
         border: 1px solid #3c3c3c;
-        font-size: 11px;
+        font-size: inherit;
         alternate-background-color: #252525;
     }
     QTreeWidget::item {
@@ -57,7 +57,7 @@ _TREE_STYLE = """
         color: #d4d4d4;
         border: 1px solid #3c3c3c;
         padding: 3px 6px;
-        font-size: 10px;
+        font-size: inherit;
     }
 """
 
@@ -109,7 +109,7 @@ class AgentTreeWidget(QWidget):
         self._filter_combo.setFixedWidth(130)
         self._filter_combo.setStyleSheet(
             "QComboBox { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "border-radius: 4px; padding: 3px 6px; font-size: 11px; }"
+            "border-radius: 4px; padding: 3px 6px; font-size: inherit; }"
         )
         self._filter_combo.addItems(["All Agents", "General", "Bulk Rename"])
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
@@ -118,7 +118,7 @@ class AgentTreeWidget(QWidget):
         toolbar.addStretch()
 
         self._status_label = QLabel("0 running / 0 completed")
-        self._status_label.setStyleSheet("color: #808080; font-size: 11px;")
+        self._status_label.setStyleSheet("color: #808080; font-size: inherit;")
         toolbar.addWidget(self._status_label)
 
         main_layout.addLayout(toolbar)
@@ -148,7 +148,7 @@ class AgentTreeWidget(QWidget):
         self._preview.setFixedHeight(80)
         self._preview.setStyleSheet(
             "QTextEdit { background: #252525; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "font-size: 11px; padding: 4px; }"
+            "font-size: inherit; padding: 4px; }"
         )
         self._preview.setPlaceholderText("Select an agent to preview its output...")
         main_layout.addWidget(self._preview)

@@ -24,12 +24,12 @@ _DELEGATION_DIALOG_STYLE = """
         color: #d4d4d4;
     }
     QLabel.header {
-        font-size: 14px;
+        font-size: inherit;
         font-weight: bold;
         color: #4ec9b0;
     }
     QLabel.section {
-        font-size: 11px;
+        font-size: inherit;
         font-weight: bold;
         color: #808080;
         margin-top: 8px;
@@ -39,8 +39,8 @@ _DELEGATION_DIALOG_STYLE = """
         color: #d4d4d4;
         border: 1px solid #3c3c3c;
         border-radius: 4px;
-        font-family: 'Consolas', 'Monaco', monospace;
-        font-size: 11px;
+
+        font-size: inherit;
     }
     QScrollArea {
         border: none;
@@ -57,7 +57,7 @@ _DELEGATION_DIALOG_STYLE = """
         border: 1px solid #3c3c3c;
         border-radius: 4px;
         padding: 6px 16px;
-        font-size: 12px;
+        font-size: inherit;
     }
     QPushButton:hover {
         background: #3c3c3c;
@@ -210,15 +210,15 @@ class DelegationApprovalWidget(QFrame):
         layout.setContentsMargins(8, 6, 8, 6)
 
         header = QLabel(f"Sub-Agent Delegation: {task_name}")
-        header.setStyleSheet("color: #4ec9b0; font-weight: bold; font-size: 11px;")
+        header.setStyleSheet("color: #4ec9b0; font-weight: bold; font-size: inherit;")
         layout.addWidget(header)
 
         info = QLabel(f"Model: {model} | Tools: {len(tools)} | Max Steps: {max_steps}")
-        info.setStyleSheet("color: #808080; font-size: 10px;")
+        info.setStyleSheet("color: #808080; font-size: inherit;")
         layout.addWidget(info)
 
         instruction_preview = QLabel(f"Task: {instruction[:200]}{'...' if len(instruction) > 200 else ''}")
-        instruction_preview.setStyleSheet("color: #d4d4d4; font-size: 10px;")
+        instruction_preview.setStyleSheet("color: #d4d4d4; font-size: inherit;")
         instruction_preview.setWordWrap(True)
         layout.addWidget(instruction_preview)
 

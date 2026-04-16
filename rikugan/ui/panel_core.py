@@ -41,20 +41,19 @@ from .qt_compat import (
     Signal,
 )
 from .settings_dialog import SettingsDialog
-from .styles import DARK_THEME
-from .styles import LIGHT_THEME
+from .styles import DARK_THEME, LIGHT_THEME
 from .tool_widgets import _SharedSpinnerTimer
 from .tools_panel import ToolsPanel
 
 _TOOL_RESULT_TRUNCATE_CHARS = 2000
 _SMALL_BTN_STYLE = (
     "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 6px; padding: 4px; font-size: 11px; }"
+    "border-radius: 6px; padding: 4px; font-size: inherit; }"
     "QPushButton:hover { background: #3c3c3c; }"
 )
 _CANCEL_BTN_STYLE = (
     "QPushButton { background: #2d2d2d; color: #c42b1c; border: 1px solid #3c3c3c; "
-    "border-radius: 6px; padding: 4px; font-size: 11px; }"
+    "border-radius: 6px; padding: 4px; font-size: inherit; }"
     "QPushButton:hover { background: #3c3c3c; }"
 )
 
@@ -181,7 +180,7 @@ class _AddButtonTabBar(QTabBar):
         self._add_btn.setAutoRaise(True)
         self._add_btn.setFixedSize(20, 20)
         self._add_btn.setStyleSheet(
-            "QToolButton { color: #d4d4d4; font-size: 14px; font-weight: bold; "
+            "QToolButton { color: #d4d4d4; font-size: inherit; font-weight: bold; "
             "border: none; background: transparent; }"
             "QToolButton:hover { background: #3c3c3c; border-radius: 3px; }"
         )
@@ -344,7 +343,7 @@ class RikuganPanelCore(QWidget):
     _MODE_BAR_STYLE = (
         "QTabBar { background: #2d2d2d; border: none; border-bottom: 1px solid #3c3c3c; }"
         "QTabBar::tab { background: #2d2d2d; color: #808080; padding: 4px 16px; "
-        "border: none; border-bottom: 2px solid transparent; font-size: 11px; }"
+        "border: none; border-bottom: 2px solid transparent; font-size: inherit; }"
         "QTabBar::tab:selected { color: #d4d4d4; border-bottom: 2px solid #4ec9b0; }"
         "QTabBar::tab:hover:!selected { color: #d4d4d4; }"
     )
@@ -433,7 +432,7 @@ class RikuganPanelCore(QWidget):
             "QTabBar { background: #1e1e1e; border: none; }"
             "QTabBar::tab { background: #252526; color: #cccccc; padding: 2px 8px; "
             "border: none; border-right: 1px solid #3c3c3c; "
-            "font-size: 11px; max-width: 140px; }"
+            "font-size: inherit; max-width: 140px; }"
             "QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; }"
             "QTabBar::tab:hover { background: #2d2d2d; }"
             "QTabBar::close-button { image: none; border: none; padding: 1px; }"
@@ -620,11 +619,7 @@ class RikuganPanelCore(QWidget):
         if session.subagent_logs:
             dlg = QDialog(self)
             dlg.setWindowTitle("Export Options")
-            dlg.setStyleSheet(
-                "QDialog { background: #1e1e1e; }"
-                "QLabel { color: #d4d4d4; font-size: 12px; }"
-                "QCheckBox { color: #d4d4d4; font-size: 12px; }"
-            )
+            dlg.setStyleSheet("QDialog { background: #1e1e1e; }")
             layout = QVBoxLayout(dlg)
             cb = QCheckBox(f"Include subagent logs ({len(session.subagent_logs)} subagent runs)")
             cb.setChecked(True)
@@ -931,9 +926,9 @@ class RikuganPanelCore(QWidget):
         dlg.setInformativeText(f"Context usage: {context_pct}%")
         dlg.setStyleSheet(
             "QMessageBox { background: #1e1e1e; color: #d4d4d4; }"
-            "QLabel { color: #d4d4d4; font-size: 12px; }"
+            ""
             "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "border-radius: 4px; padding: 6px 16px; font-size: 11px; min-width: 80px; }"
+            "border-radius: 4px; padding: 6px 16px; font-size: inherit; min-width: 80px; }"
             "QPushButton:hover { background: #3c3c3c; }"
         )
         yes_btn = dlg.addButton("Yes", QMessageBox.ButtonRole.AcceptRole)

@@ -23,7 +23,7 @@ _ORCHESTRA_PANEL_STYLE = """
         color: #d4d4d4;
     }
     QLabel.header {
-        font-size: 13px;
+        font-size: inherit;
         font-weight: bold;
         color: #4ec9b0;
     }
@@ -32,7 +32,7 @@ _ORCHESTRA_PANEL_STYLE = """
         color: #d4d4d4;
         border: 1px solid #3c3c3c;
         border-radius: 4px;
-        font-size: 11px;
+        font-size: inherit;
     }
     QTreeWidget::item {
         padding: 3px;
@@ -47,7 +47,7 @@ _ORCHESTRA_PANEL_STYLE = """
         border-right: 1px solid #3c3c3c;
         border-bottom: 1px solid #3c3c3c;
         padding: 4px;
-        font-size: 10px;
+        font-size: inherit;
         font-weight: bold;
     }
     QPushButton {
@@ -56,7 +56,7 @@ _ORCHESTRA_PANEL_STYLE = """
         border: 1px solid #3c3c3c;
         border-radius: 4px;
         padding: 4px 12px;
-        font-size: 11px;
+        font-size: inherit;
     }
     QPushButton:hover {
         background: #3c3c3c;
@@ -147,7 +147,7 @@ class OrchestraPanel(QWidget):
         main_layout.addWidget(header)
 
         self._stats_label = QLabel("0 active / 0 completed")
-        self._stats_label.setStyleSheet("color: #808080; font-size: 10px;")
+        self._stats_label.setStyleSheet("color: #808080; font-size: inherit;")
         main_layout.addWidget(self._stats_label)
 
         self._tree = DelegationTreeWidget()

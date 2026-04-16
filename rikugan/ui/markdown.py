@@ -78,25 +78,22 @@ def clear_code_block_theme() -> None:
 
 
 _INLINE_CODE_STYLE = (
-    f"background-color:{_CODE_BG}; color:{_CODE_FG}; "
-    f"padding:1px 4px; border-radius:3px; font-family:monospace; font-size:12px;"
+    f"background-color:{_CODE_BG}; color:{_CODE_FG}; padding:1px 4px; border-radius:3px; font-size:inherit;"
 )
 
 _BLOCK_CODE_STYLE = (
     f"background-color:{_BLOCK_BG}; color:{_BLOCK_FG}; "
     f"border:1px solid {_CODE_BORDER}; border-radius:4px; "
-    f"padding:8px; font-family:monospace; font-size:12px; "
+    f"padding:8px; font-size:inherit; "
     f"white-space:pre-wrap; word-break:break-all;"
 )
 
 # Theme-aware variants (transparent backgrounds — inherit from parent Qt stylesheet)
-_BASE_INLINE_CODE_STYLE = (
-    "background-color:transparent; padding:1px 4px; border-radius:3px; font-family:monospace; font-size:12px;"
-)
+_BASE_INLINE_CODE_STYLE = "background-color:transparent; padding:1px 4px; border-radius:3px; font-size:inherit;"
 
 _BASE_BLOCK_CODE_STYLE = (
     "background-color:transparent; border:1px solid; border-radius:4px; "
-    "padding:8px; font-family:monospace; font-size:12px; "
+    "padding:8px; font-size:inherit; "
     "white-space:pre-wrap; word-break:break-all;"
 )
 
@@ -107,7 +104,7 @@ def _get_inline_code_style() -> str:
     if _code_block_bg:
         return (
             f"background-color:{_code_block_bg}; color:{_code_block_text}; "
-            f"padding:1px 4px; border-radius:3px; font-family:monospace; font-size:12px;"
+            f"padding:1px 4px; border-radius:3px; font-size:inherit;"
         )
     return _BASE_INLINE_CODE_STYLE
 
@@ -119,7 +116,7 @@ def _get_block_code_style() -> str:
         return (
             f"background-color:{_code_block_bg}; color:{_code_block_text}; "
             f"border:1px solid {_code_block_border}; border-radius:4px; "
-            f"padding:8px; font-family:monospace; font-size:12px; "
+            f"padding:8px; font-size:inherit; "
             f"white-space:pre-wrap; word-break:break-all;"
         )
     return _BASE_BLOCK_CODE_STYLE
@@ -150,9 +147,9 @@ def md_to_html(text: str) -> str:
         code = html.escape(m.group(2).strip("\n"))
         # Use transparent for lang_tag color so it inherits from parent stylesheet
         if _use_theme_colors:
-            lang_tag = f'<span style="color:#808080;font-size:10px;">{html.escape(lang)}</span><br>' if lang else ""
+            lang_tag = f'<span style="color:#808080;font-size:inherit;">{html.escape(lang)}</span><br>' if lang else ""
         else:
-            lang_tag = f'<span style="font-size:10px;">{html.escape(lang)}</span><br>' if lang else ""
+            lang_tag = f'<span style="font-size:inherit;">{html.escape(lang)}</span><br>' if lang else ""
         block_style = _get_block_code_style()
         block_html = f'<div style="{block_style}">{lang_tag}{code}</div>'
         blocks.append(block_html)
@@ -184,14 +181,11 @@ def md_to_html(text: str) -> str:
         # Headers
         hm = re.match(r"^(#{1,4})\s+(.*)", stripped)
         if hm:
-            level = len(hm.group(1))
-            sizes = {1: 18, 2: 16, 3: 14, 4: 13}
-            size = sizes.get(level, 13)
             h_text = _inline(hm.group(2))
             h_color = _get_h_color()
             color_attr = f"color:{h_color};" if h_color != "inherit" else ""
             out_lines.append(
-                f'<div style="{color_attr}font-weight:bold;font-size:{size}px;margin:6px 0 2px 0;">{h_text}</div>'
+                f'<div style="{color_attr}font-weight:bold;font-size:inherit;margin:6px 0 2px 0;">{h_text}</div>'
             )
             i += 1
             continue

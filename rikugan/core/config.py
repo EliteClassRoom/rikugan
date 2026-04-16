@@ -53,7 +53,8 @@ class RikuganConfig:
     max_retries: int = 3  # max retries on rate-limit / transient API errors
     silent_retry_mode: bool = False  # show loading indicator instead of error messages on retry
     theme: str = "ida"  # "ida", "binja", "dark", or "light" — "ida" follows host theme
-    font_size: int = 13  # base font size for chat messages (points)
+    font_family: str = ""  # empty = inherit from host; set to override (e.g. "Consolas")
+    font_size_override: int = 0  # 0 = inherit from host; set to override point size
 
     # Skills & MCP external integration
     disabled_skills: list[str] = field(default_factory=list)
@@ -111,8 +112,10 @@ class RikuganConfig:
             errors.append(f"context_window must be positive, got {self.provider.context_window}")
         if not (1 <= self.max_retries <= 10):
             errors.append(f"max_retries {self.max_retries} out of range [1, 10]")
-        if not (8 <= self.font_size <= 24):
-            errors.append(f"font_size {self.font_size} out of range [8, 24]")
+        if self.font_family and not isinstance(self.font_family, str):
+            errors.append("font_family must be a string")
+        if not (0 <= self.font_size_override <= 72):
+            errors.append(f"font_size_override {self.font_size_override} out of range [0, 72]")
         if not self.active_profile or not isinstance(self.active_profile, str):
             errors.append("active_profile must be a non-empty string")
         if not isinstance(self.custom_profiles, dict):
@@ -191,7 +194,8 @@ class RikuganConfig:
             "max_retries",
             "silent_retry_mode",
             "theme",
-            "font_size",
+            "font_family",
+            "font_size_override",
             "disabled_skills",
             "enabled_external_skills",
             "enabled_external_mcp",

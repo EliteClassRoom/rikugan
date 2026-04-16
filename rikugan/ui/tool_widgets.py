@@ -361,7 +361,7 @@ def _make_preview_label() -> QLabel:
     lbl = QLabel()
     lbl.setObjectName("tool_content")
     lbl.setWordWrap(True)
-    lbl.setStyleSheet("color: #6a6a7a; font-family: monospace; font-size: 10px; margin-left: 28px;")
+    lbl.setStyleSheet("color: #6a6a7a; font-size: inherit; margin-left: 28px;")
     lbl.setVisible(False)
     return lbl
 
@@ -478,20 +478,20 @@ class ToolCallWidget(QFrame):
         header_layout.addWidget(self._toggle_btn)
 
         self._bullet = QLabel("●")
-        self._bullet.setStyleSheet(f"color: {color}; font-size: 10px;")
+        self._bullet.setStyleSheet(f"color: {color}; font-size: inherit;")
         self._bullet.setFixedWidth(14)
         header_layout.addWidget(self._bullet)
 
         self._name_label = QLabel(display_name)
-        self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px;")
+        self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: inherit;")
         header_layout.addWidget(self._name_label)
 
         self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet("color: #808080; font-size: 11px; margin-left: 6px;")
+        self._summary_label.setStyleSheet("color: #808080; font-size: inherit; margin-left: 6px;")
         header_layout.addWidget(self._summary_label, 1)
 
         self._status_label = QLabel(self._SPINNER_FRAMES[0])
-        self._status_label.setStyleSheet("color: #dcdcaa; font-size: 10px;")
+        self._status_label.setStyleSheet("color: #dcdcaa; font-size: inherit;")
         header_layout.addWidget(self._status_label)
 
         return header_layout
@@ -517,7 +517,7 @@ class ToolCallWidget(QFrame):
         self._detail_layout.addWidget(self._args_label)
 
         self._result_header = QLabel("Result:")
-        self._result_header.setStyleSheet("color: #808080; font-size: 10px; font-weight: bold;")
+        self._result_header.setStyleSheet("color: #808080; font-size: inherit; font-weight: bold;")
         self._result_header.setVisible(False)
         self._detail_layout.addWidget(self._result_header)
 
@@ -575,10 +575,10 @@ class ToolCallWidget(QFrame):
         self._result_label.setVisible(True)
         self._result_header.setVisible(True)
         if is_error:
-            self._result_label.setStyleSheet("color: #f44747; font-family: monospace; font-size: 11px;")
+            self._result_label.setStyleSheet("color: #f44747; font-size: inherit;")
             self._status_label.setText("✗")
-            self._status_label.setStyleSheet("color: #f44747; font-size: 10px;")
-            self._bullet.setStyleSheet("color: #f44747; font-size: 10px;")
+            self._status_label.setStyleSheet("color: #f44747; font-size: inherit;")
+            self._bullet.setStyleSheet("color: #f44747; font-size: inherit;")
             # Auto-expand on error
             self._expanded = True
             self._detail_widget.setVisible(True)
@@ -586,13 +586,13 @@ class ToolCallWidget(QFrame):
             self._toggle_btn.setText("▼")
         else:
             self._status_label.setText("✓")
-            self._status_label.setStyleSheet("color: #4ec9b0; font-size: 10px;")
+            self._status_label.setStyleSheet("color: #4ec9b0; font-size: inherit;")
 
     def mark_done(self) -> None:
         self._stop_spinner()
         if self._status_label.text() not in ("✓", "✗"):
             self._status_label.setText("✓")
-            self._status_label.setStyleSheet("color: #4ec9b0; font-size: 10px;")
+            self._status_label.setStyleSheet("color: #4ec9b0; font-size: inherit;")
 
     def hide_preview(self) -> None:
         """Hide the args preview (used when preview budget exhausted)."""
@@ -648,20 +648,20 @@ class ToolBatchWidget(QFrame):
         header_layout.addWidget(self._toggle_btn)
 
         self._bullet = QLabel("●")
-        self._bullet.setStyleSheet(f"color: {color}; font-size: 10px;")
+        self._bullet.setStyleSheet(f"color: {color}; font-size: inherit;")
         self._bullet.setFixedWidth(14)
         header_layout.addWidget(self._bullet)
 
         self._name_label = QLabel(display_name)
-        self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px;")
+        self._name_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: inherit;")
         header_layout.addWidget(self._name_label)
 
         self._count_label = QLabel("")
-        self._count_label.setStyleSheet("color: #808080; font-size: 11px; margin-left: 6px;")
+        self._count_label.setStyleSheet("color: #808080; font-size: inherit; margin-left: 6px;")
         header_layout.addWidget(self._count_label, 1)
 
         self._status_label = QLabel("…")
-        self._status_label.setStyleSheet("color: #dcdcaa; font-size: 10px;")
+        self._status_label.setStyleSheet("color: #dcdcaa; font-size: inherit;")
         header_layout.addWidget(self._status_label)
 
         return header_layout
@@ -697,7 +697,7 @@ class ToolBatchWidget(QFrame):
         # Add entry in detail area
         summary = _format_tool_summary(self._tool_name, args_text) if args_text else ""
         entry = QLabel(f"#{self._count}: {summary}" if summary else f"#{self._count}")
-        entry.setStyleSheet("color: #808080; font-family: monospace; font-size: 10px;")
+        entry.setStyleSheet("color: #808080; font-size: inherit;")
         entry.setWordWrap(True)
         self._entry_labels.append(entry)  # prevent Shiboken GC
         self._detail_layout.addWidget(entry)
@@ -738,10 +738,10 @@ class ToolBatchWidget(QFrame):
         if done >= self._count:
             if self._errors:
                 self._status_label.setText(f"✓{len(self._results)} ✗{len(self._errors)}")
-                self._status_label.setStyleSheet("color: #f44747; font-size: 10px;")
+                self._status_label.setStyleSheet("color: #f44747; font-size: inherit;")
             else:
                 self._status_label.setText("✓")
-                self._status_label.setStyleSheet("color: #4ec9b0; font-size: 10px;")
+                self._status_label.setStyleSheet("color: #4ec9b0; font-size: inherit;")
         else:
             self._status_label.setText(f"{done}/{self._count}")
 
@@ -794,11 +794,11 @@ class ToolGroupWidget(QFrame):
         header_layout.addWidget(self._toggle_btn)
 
         self._label = QLabel("0 tools called")
-        self._label.setStyleSheet("color: #808080; font-size: 11px; font-weight: bold;")
+        self._label.setStyleSheet("color: #808080; font-size: inherit; font-weight: bold;")
         header_layout.addWidget(self._label, 1)
 
         self._status_label = QLabel("")
-        self._status_label.setStyleSheet("color: #dcdcaa; font-size: 10px;")
+        self._status_label.setStyleSheet("color: #dcdcaa; font-size: inherit;")
         header_layout.addWidget(self._status_label)
 
         layout.addLayout(header_layout)
@@ -833,13 +833,13 @@ class ToolGroupWidget(QFrame):
             if self._errors:
                 ok = self._done - self._errors
                 self._status_label.setText(f"✓{ok} ✗{self._errors}")
-                self._status_label.setStyleSheet("color: #f44747; font-size: 10px;")
+                self._status_label.setStyleSheet("color: #f44747; font-size: inherit;")
             else:
                 self._status_label.setText("✓")
-                self._status_label.setStyleSheet("color: #4ec9b0; font-size: 10px;")
+                self._status_label.setStyleSheet("color: #4ec9b0; font-size: inherit;")
         else:
             self._status_label.setText(f"{self._done}/{self._count}")
-            self._status_label.setStyleSheet("color: #dcdcaa; font-size: 10px;")
+            self._status_label.setStyleSheet("color: #dcdcaa; font-size: inherit;")
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded
@@ -991,14 +991,14 @@ class ToolApprovalWidget(QFrame):
         layout.setContentsMargins(8, 6, 8, 6)
 
         self._header = QLabel("Approve execute_python?")
-        self._header.setStyleSheet("color: #dcdcaa; font-weight: bold; font-size: 11px;")
+        self._header.setStyleSheet("color: #dcdcaa; font-weight: bold; font-size: inherit;")
         layout.addWidget(self._header)
 
         code = self._extract_code(args_text)
         code_lines = code.strip().splitlines() if code.strip() else []
 
         self._info = QLabel(f"Python code — {len(code_lines)} line{'s' if len(code_lines) != 1 else ''}")
-        self._info.setStyleSheet("color: #808080; font-size: 10px;")
+        self._info.setStyleSheet("color: #808080; font-size: inherit;")
         layout.addWidget(self._info)
 
         editor = self._build_code_editor(code, code_lines)
@@ -1026,8 +1026,8 @@ class ToolApprovalWidget(QFrame):
         self._code_edit.setStyleSheet(
             "QPlainTextEdit { "
             "  color: #d4d4d4; background: #1e1e2e; "
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace; "
-            "  font-size: 11px; border: 1px solid #3c3c3c; border-radius: 4px; "
+            "  "
+            "  font-size: inherit; border: 1px solid #3c3c3c; border-radius: 4px; "
             "  padding: 4px; "
             "}"
             "QScrollBar:vertical { width: 8px; background: #1e1e2e; }"
@@ -1051,7 +1051,7 @@ class ToolApprovalWidget(QFrame):
         self._allow_btn.setText("  Allow  ")
         self._allow_btn.setStyleSheet(
             "QToolButton { background: #2ea043; color: #ffffff; border: none; "
-            "border-radius: 4px; padding: 4px 16px; font-size: 11px; font-weight: bold; }"
+            "border-radius: 4px; padding: 4px 16px; font-size: inherit; font-weight: bold; }"
             "QToolButton:hover { background: #3fb950; }"
         )
         self._allow_btn.clicked.connect(self._on_allow)
@@ -1061,7 +1061,7 @@ class ToolApprovalWidget(QFrame):
         self._always_btn.setText("  Always Allow  ")
         self._always_btn.setStyleSheet(
             "QToolButton { background: #1a5c2d; color: #ffffff; border: none; "
-            "border-radius: 4px; padding: 4px 16px; font-size: 11px; font-weight: bold; }"
+            "border-radius: 4px; padding: 4px 16px; font-size: inherit; font-weight: bold; }"
             "QToolButton:hover { background: #2ea043; }"
         )
         self._always_btn.clicked.connect(self._on_always_allow)
@@ -1071,7 +1071,7 @@ class ToolApprovalWidget(QFrame):
         self._deny_btn.setText("  Deny  ")
         self._deny_btn.setStyleSheet(
             "QToolButton { background: #c42b1c; color: #ffffff; border: none; "
-            "border-radius: 4px; padding: 4px 16px; font-size: 11px; font-weight: bold; }"
+            "border-radius: 4px; padding: 4px 16px; font-size: inherit; font-weight: bold; }"
             "QToolButton:hover { background: #e04030; }"
         )
         self._deny_btn.clicked.connect(self._on_deny)
@@ -1090,7 +1090,7 @@ class ToolApprovalWidget(QFrame):
         self._allow_btn.setText("  Allowed  ")
         self._allow_btn.setStyleSheet(
             "QToolButton { background: #1a5c2d; color: #808080; border: none; "
-            "border-radius: 4px; padding: 4px 16px; font-size: 11px; }"
+            "border-radius: 4px; padding: 4px 16px; font-size: inherit; }"
         )
         self.approved.emit(self._tool_call_id, "allow")
 
@@ -1099,7 +1099,7 @@ class ToolApprovalWidget(QFrame):
         self._always_btn.setText("  Always Allowed  ")
         self._always_btn.setStyleSheet(
             "QToolButton { background: #1a5c2d; color: #808080; border: none; "
-            "border-radius: 4px; padding: 4px 16px; font-size: 11px; }"
+            "border-radius: 4px; padding: 4px 16px; font-size: inherit; }"
         )
         self.approved.emit(self._tool_call_id, "allow_all")
 
@@ -1108,6 +1108,6 @@ class ToolApprovalWidget(QFrame):
         self._deny_btn.setText("  Denied  ")
         self._deny_btn.setStyleSheet(
             "QToolButton { background: #6e1a12; color: #808080; border: none; "
-            "border-radius: 4px; padding: 4px 16px; font-size: 11px; }"
+            "border-radius: 4px; padding: 4px 16px; font-size: inherit; }"
         )
         self.approved.emit(self._tool_call_id, "deny")
