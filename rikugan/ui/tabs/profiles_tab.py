@@ -31,22 +31,15 @@ from ..qt_compat import (
     QVBoxLayout,
     QWidget,
 )
+from ..styles import (
+    get_error_label_style,
+    get_profiles_btn_style,
+    get_profiles_group_style,
+    get_profiles_header_style,
+)
 
 if TYPE_CHECKING:
     from ..settings_service import SettingsService
-
-_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 4px 12px; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-)
-
-_GROUP_STYLE = (
-    "QGroupBox { font-weight: bold; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; margin-top: 14px; padding-top: 4px; }"
-    "QGroupBox::title { subcontrol-origin: margin; left: 10px; "
-    "padding: 0 6px; }"
-)
 
 
 class ProfilesTab(QWidget):
@@ -103,17 +96,17 @@ class ProfilesTab(QWidget):
         top_row.addWidget(self._profile_combo, 1)
 
         self._new_btn = QPushButton("+ New")
-        self._new_btn.setStyleSheet(_BTN_STYLE)
+        self._new_btn.setStyleSheet(get_profiles_btn_style())
         self._new_btn.clicked.connect(self._on_new_profile)
         top_row.addWidget(self._new_btn)
 
         self._clone_btn = QPushButton("Clone")
-        self._clone_btn.setStyleSheet(_BTN_STYLE)
+        self._clone_btn.setStyleSheet(get_profiles_btn_style())
         self._clone_btn.clicked.connect(self._on_clone_profile)
         top_row.addWidget(self._clone_btn)
 
         self._delete_btn = QPushButton("Delete")
-        self._delete_btn.setStyleSheet(_BTN_STYLE)
+        self._delete_btn.setStyleSheet(get_profiles_btn_style())
         self._delete_btn.clicked.connect(self._on_delete_profile)
         top_row.addWidget(self._delete_btn)
 
@@ -122,7 +115,7 @@ class ProfilesTab(QWidget):
     def _build_description_section(self) -> QGroupBox:
         """Build the description group box."""
         desc_group = QGroupBox("Description")
-        desc_group.setStyleSheet(_GROUP_STYLE)
+        desc_group.setStyleSheet(get_profiles_group_style())
         desc_lay = QVBoxLayout(desc_group)
         desc_lay.setContentsMargins(10, 16, 10, 8)
         self._desc_edit = QPlainTextEdit()
@@ -142,7 +135,7 @@ class ProfilesTab(QWidget):
     def _build_ioc_filters_section(self) -> QGroupBox:
         """Build the IOC redaction filters group with select/deselect and checkbox grid."""
         ioc_group = QGroupBox("IOC Redaction Filters")
-        ioc_group.setStyleSheet(_GROUP_STYLE)
+        ioc_group.setStyleSheet(get_profiles_group_style())
         ioc_outer = QVBoxLayout(ioc_group)
         ioc_outer.setContentsMargins(10, 20, 10, 8)
         ioc_outer.setSpacing(4)
@@ -151,11 +144,11 @@ class ProfilesTab(QWidget):
         ioc_btns = QHBoxLayout()
         ioc_btns.setSpacing(6)
         self._ioc_select_all_btn = QPushButton("Select All")
-        self._ioc_select_all_btn.setStyleSheet(_BTN_STYLE)
+        self._ioc_select_all_btn.setStyleSheet(get_profiles_btn_style())
         self._ioc_select_all_btn.clicked.connect(self._on_ioc_select_all)
         ioc_btns.addWidget(self._ioc_select_all_btn)
         self._ioc_deselect_btn = QPushButton("Deselect All")
-        self._ioc_deselect_btn.setStyleSheet(_BTN_STYLE)
+        self._ioc_deselect_btn.setStyleSheet(get_profiles_btn_style())
         self._ioc_deselect_btn.clicked.connect(self._on_ioc_deselect_all)
         ioc_btns.addWidget(self._ioc_deselect_btn)
         ioc_btns.addStretch()
@@ -183,7 +176,7 @@ class ProfilesTab(QWidget):
     def _build_custom_rules_section(self) -> QGroupBox:
         """Build the custom filter rules group with input fields and rules list."""
         rules_group = QGroupBox("Custom Filter Rules")
-        rules_group.setStyleSheet(_GROUP_STYLE)
+        rules_group.setStyleSheet(get_profiles_group_style())
         rules_lay = QVBoxLayout(rules_group)
         rules_lay.setContentsMargins(10, 20, 10, 8)
         rules_lay.setSpacing(4)
@@ -211,7 +204,7 @@ class ProfilesTab(QWidget):
         self._rule_replacement_edit.setPlaceholderText("Replacement (default: [CUSTOM_REDACTED])")
         row2.addWidget(self._rule_replacement_edit, 1)
         self._add_rule_btn = QPushButton("+ Add")
-        self._add_rule_btn.setStyleSheet(_BTN_STYLE)
+        self._add_rule_btn.setStyleSheet(get_profiles_btn_style())
         self._add_rule_btn.setMinimumWidth(70)
         self._add_rule_btn.clicked.connect(self._on_add_rule)
         row2.addWidget(self._add_rule_btn)
@@ -225,7 +218,7 @@ class ProfilesTab(QWidget):
         list_row.addWidget(self._rules_list, 1)
 
         self._remove_rule_btn = QPushButton("Remove")
-        self._remove_rule_btn.setStyleSheet(_BTN_STYLE)
+        self._remove_rule_btn.setStyleSheet(get_profiles_btn_style())
         self._remove_rule_btn.setMinimumWidth(70)
         self._remove_rule_btn.clicked.connect(self._on_remove_rule)
         list_row.addWidget(self._remove_rule_btn)
@@ -236,7 +229,7 @@ class ProfilesTab(QWidget):
     def _build_denied_tools_section(self) -> QGroupBox:
         """Build the denied tools group with category checkboxes or text fallback."""
         tools_group = QGroupBox("Denied Tools")
-        tools_group.setStyleSheet(_GROUP_STYLE)
+        tools_group.setStyleSheet(get_profiles_group_style())
         tools_lay = QVBoxLayout(tools_group)
         tools_lay.setContentsMargins(10, 20, 10, 8)
         tools_lay.setSpacing(4)
@@ -268,7 +261,7 @@ class ProfilesTab(QWidget):
             for cat_name, tool_names in categories:
                 col = cols[col_idx % n_cols]
                 header = QLabel(f"<b>{cat_name}</b>")
-                header.setStyleSheet("color: #888; margin-top: 6px;")
+                header.setStyleSheet(get_profiles_header_style())
                 col.addWidget(header)
                 for tname in tool_names:
                     cb = QCheckBox(tname)
@@ -294,7 +287,7 @@ class ProfilesTab(QWidget):
     def _build_advanced_section(self) -> QGroupBox:
         """Build the advanced settings group with denied functions and prompt filters."""
         adv_group = QGroupBox("Advanced")
-        adv_group.setStyleSheet(_GROUP_STYLE)
+        adv_group.setStyleSheet(get_profiles_group_style())
         adv_form = QFormLayout(adv_group)
         adv_form.setContentsMargins(10, 20, 10, 8)
         adv_form.setSpacing(6)
@@ -559,7 +552,7 @@ class ProfilesTab(QWidget):
         lay.addLayout(form)
 
         error_label = QLabel()
-        error_label.setStyleSheet("color: #f44747;")
+        error_label.setStyleSheet(get_error_label_style())
         error_label.hide()
         lay.addWidget(error_label)
 

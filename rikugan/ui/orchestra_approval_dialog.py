@@ -14,71 +14,13 @@ from ..ui.qt_compat import (
     QVBoxLayout,
     QWidget,
 )
-
-_DELEGATION_DIALOG_STYLE = """
-    QDialog {
-        background: #1e1e1e;
-        color: #d4d4d4;
-    }
-    QLabel {
-        color: #d4d4d4;
-    }
-    QLabel.header {
-        font-size: inherit;
-        font-weight: bold;
-        color: #4ec9b0;
-    }
-    QLabel.section {
-        font-size: inherit;
-        font-weight: bold;
-        color: #808080;
-        margin-top: 8px;
-    }
-    QTextEdit, QScrollArea {
-        background: #1e1e2e;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
-        border-radius: 4px;
-
-        font-size: inherit;
-    }
-    QScrollArea {
-        border: none;
-    }
-    QTextEdit:read-only {
-        background: #252536;
-    }
-    QDialogButtonBox {
-        button-layout: 0;
-    }
-    QPushButton {
-        background: #2d2d2d;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
-        border-radius: 4px;
-        padding: 6px 16px;
-        font-size: inherit;
-    }
-    QPushButton:hover {
-        background: #3c3c3c;
-    }
-    QPushButton#approve_btn {
-        background: #2ea043;
-        color: white;
-        border-color: #2ea043;
-    }
-    QPushButton#approve_btn:hover {
-        background: #3fb950;
-    }
-    QPushButton#deny_btn {
-        background: #c42b1c;
-        color: white;
-        border-color: #c42b1c;
-    }
-    QPushButton#deny_btn:hover {
-        background: #e83a2a;
-    }
-"""
+from .styles import (
+    get_delegation_approval_widget_style,
+    get_delegation_dialog_style,
+    get_delegation_header_style,
+    get_delegation_info_style,
+    get_delegation_preview_style,
+)
 
 
 class DelegationApprovalDialog(QDialog):
@@ -99,7 +41,7 @@ class DelegationApprovalDialog(QDialog):
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
-        self.setStyleSheet(_DELEGATION_DIALOG_STYLE)
+        self.setStyleSheet(get_delegation_dialog_style())
         self.setWindowTitle("Sub-Agent Delegation Request")
         self.setMinimumWidth(500)
         self.setMinimumHeight(400)
@@ -196,9 +138,7 @@ class DelegationApprovalWidget(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("delegation_approval")
-        self.setStyleSheet(
-            "QFrame#delegation_approval { border: 1px solid #4ec9b0; border-radius: 6px; background: #1e2e2e; }"
-        )
+        self.setStyleSheet(get_delegation_approval_widget_style())
         self._task_name = task_name
         self._instruction = instruction
         self._context = context
@@ -210,15 +150,15 @@ class DelegationApprovalWidget(QFrame):
         layout.setContentsMargins(8, 6, 8, 6)
 
         header = QLabel(f"Sub-Agent Delegation: {task_name}")
-        header.setStyleSheet("color: #4ec9b0; font-weight: bold; font-size: inherit;")
+        header.setStyleSheet(get_delegation_header_style())
         layout.addWidget(header)
 
         info = QLabel(f"Model: {model} | Tools: {len(tools)} | Max Steps: {max_steps}")
-        info.setStyleSheet("color: #808080; font-size: inherit;")
+        info.setStyleSheet(get_delegation_info_style())
         layout.addWidget(info)
 
         instruction_preview = QLabel(f"Task: {instruction[:200]}{'...' if len(instruction) > 200 else ''}")
-        instruction_preview.setStyleSheet("color: #d4d4d4; font-size: inherit;")
+        instruction_preview.setStyleSheet(get_delegation_preview_style())
         instruction_preview.setWordWrap(True)
         layout.addWidget(instruction_preview)
 

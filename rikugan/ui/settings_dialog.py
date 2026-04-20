@@ -32,6 +32,13 @@ from .qt_compat import (
     QVBoxLayout,
     QWidget,
 )
+from .styles import (
+    get_err_status_style,
+    get_error_label_style,
+    get_hint_status_style,
+    get_ok_status_style,
+    get_settings_btn_style,
+)
 
 _DEFAULT_MINIMAX_URL = "https://api.minimax.io/anthropic"
 _CUSTOM_PROVIDER_URL_PLACEHOLDER = "https://api.example.com/v1"
@@ -139,7 +146,7 @@ class _AddProviderDialog(QDialog):
         layout.addLayout(form)
 
         self._error_label = QLabel()
-        self._error_label.setStyleSheet("color: #f44747;")
+        self._error_label.setStyleSheet(get_error_label_style())
         self._error_label.hide()
         layout.addWidget(self._error_label)
 
@@ -306,11 +313,6 @@ class SettingsDialog(QDialog):
 
     def _build_provider_row(self) -> QHBoxLayout:
         """Build the provider combo + add/remove buttons row."""
-        btn_style = (
-            "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "border-radius: 4px; font-weight: bold; }"
-            "QPushButton:hover { background: #3c3c3c; }"
-        )
         row = QHBoxLayout()
         self._provider_combo = QComboBox()
         self._populate_provider_combo()
@@ -322,14 +324,14 @@ class SettingsDialog(QDialog):
         self._add_provider_btn = QPushButton("+")
         self._add_provider_btn.setFixedSize(28, 28)
         self._add_provider_btn.setToolTip("Add custom OpenAI-compatible connection")
-        self._add_provider_btn.setStyleSheet(btn_style)
+        self._add_provider_btn.setStyleSheet(get_settings_btn_style())
         self._add_provider_btn.clicked.connect(self._on_add_custom_provider)
         row.addWidget(self._add_provider_btn)
 
         self._remove_provider_btn = QPushButton("\u2212")  # minus sign
         self._remove_provider_btn.setFixedSize(28, 28)
         self._remove_provider_btn.setToolTip("Remove custom connection")
-        self._remove_provider_btn.setStyleSheet(btn_style)
+        self._remove_provider_btn.setStyleSheet(get_settings_btn_style())
         self._remove_provider_btn.clicked.connect(self._on_remove_custom_provider)
         row.addWidget(self._remove_provider_btn)
 
@@ -346,16 +348,12 @@ class SettingsDialog(QDialog):
 
         self._fetch_btn = QPushButton("Refresh")
         self._fetch_btn.setFixedWidth(70)
-        self._fetch_btn.setStyleSheet(
-            "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "border-radius: 4px; padding: 4px; }"
-            "QPushButton:hover { background: #3c3c3c; }"
-        )
+        self._fetch_btn.setStyleSheet(get_settings_btn_style())
         self._fetch_btn.clicked.connect(self._fetch_models)
         model_layout.addWidget(self._fetch_btn)
 
         self._model_status = QLabel()
-        self._model_status.setStyleSheet("color: #808080;")
+        self._model_status.setStyleSheet(get_hint_status_style())
         self._model_status.setWordWrap(True)
         model_layout.addWidget(self._model_status)
         return model_layout
@@ -614,10 +612,6 @@ class SettingsDialog(QDialog):
 
     # --- Auth status ---
 
-    _OK_STYLE = "color: #4ec9b0; font-weight: bold;"
-    _ERR_STYLE = "color: #f44747;"
-    _HINT_STYLE = "color: #808080;"
-
     def _update_auth_status(self) -> None:
         provider_name = self._provider_combo.currentText()
         explicit_key = self._api_key_edit.text().strip()
@@ -634,14 +628,14 @@ class SettingsDialog(QDialog):
 
         if status_type == "ok":
             self._auth_status.setText(label)
-            self._auth_status.setStyleSheet(self._OK_STYLE)
+            self._auth_status.setStyleSheet(get_ok_status_style())
         elif status_type == "error":
             if provider_name == "anthropic":
                 self._auth_status.setText("run claude setup-token to acquire your oauth")
-                self._auth_status.setStyleSheet(self._HINT_STYLE)
+                self._auth_status.setStyleSheet(get_hint_status_style())
             else:
                 self._auth_status.setText(label)
-                self._auth_status.setStyleSheet(self._ERR_STYLE)
+                self._auth_status.setStyleSheet(get_err_status_style())
         else:
             self._auth_status.setText("")
             self._auth_status.setStyleSheet("")
@@ -688,10 +682,10 @@ class SettingsDialog(QDialog):
 
         if models:
             self._model_status.setText(f"{len(models)} models")
-            self._model_status.setStyleSheet("color: #4ec9b0;")
+            self._model_status.setStyleSheet(get_ok_status_style())
         else:
             self._model_status.setText("Type model name manually")
-            self._model_status.setStyleSheet("color: #808080;")
+            self._model_status.setStyleSheet(get_hint_status_style())
 
         # Auto-fill generation defaults based on selected model
         self._update_generation_defaults()
@@ -699,7 +693,7 @@ class SettingsDialog(QDialog):
     def _on_fetch_error(self, error: str) -> None:
         self._fetch_btn.setEnabled(True)
         self._model_status.setText(error)
-        self._model_status.setStyleSheet("color: #f44747;")
+        self._model_status.setStyleSheet(get_err_status_style())
         self._model_restore_hint = ""
 
     def _update_generation_defaults(self) -> None:

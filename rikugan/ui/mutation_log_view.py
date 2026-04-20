@@ -16,6 +16,14 @@ from .qt_compat import (
     QWidget,
     Signal,
 )
+from .styles import (
+    get_mutation_badge_style,
+    get_mutation_count_style,
+    get_mutation_desc_style,
+    get_mutation_indicator_style,
+    get_mutation_title_style,
+    get_mutation_undo_btn_style,
+)
 
 if TYPE_CHECKING:
     from ..agent.mutation import MutationRecord
@@ -38,9 +46,7 @@ class MutationEntryWidget(QFrame):
         # Reversibility indicator
         self._indicator = QLabel("↩" if record.reversible else "⊘")
         self._indicator.setFixedWidth(20)
-        self._indicator.setStyleSheet(
-            "color: #4ec9b0; font-size: inherit;" if record.reversible else "color: #808080; font-size: inherit;"
-        )
+        self._indicator.setStyleSheet(get_mutation_indicator_style(record.reversible))
         self._indicator.setToolTip("Reversible" if record.reversible else "Not reversible")
         layout.addWidget(self._indicator)
 
@@ -48,14 +54,12 @@ class MutationEntryWidget(QFrame):
         ts = time.strftime("%H:%M:%S", time.localtime(record.timestamp))
         self._desc = QLabel(f"[{ts}] {record.description}")
         self._desc.setWordWrap(True)
-        self._desc.setStyleSheet("color: #d4d4d4; font-size: inherit;")
+        self._desc.setStyleSheet(get_mutation_desc_style())
         layout.addWidget(self._desc, 1)
 
         # Tool name badge
         self._tool_badge = QLabel(record.tool_name)
-        self._tool_badge.setStyleSheet(
-            "color: #808080; font-size: inherit; padding: 1px 4px; background: #2d2d2d; border-radius: 3px;"
-        )
+        self._tool_badge.setStyleSheet(get_mutation_badge_style())
         layout.addWidget(self._tool_badge)
 
     @property
@@ -83,23 +87,17 @@ class MutationLogPanel(QFrame):
         header_layout.setContentsMargins(12, 8, 12, 8)
 
         self._title = QLabel("Mutation Log")
-        self._title.setStyleSheet("color: #d4d4d4; font-weight: bold; font-size: inherit;")
+        self._title.setStyleSheet(get_mutation_title_style())
         header_layout.addWidget(self._title)
 
         self._count_label = QLabel("0 mutations")
-        self._count_label.setStyleSheet("color: #808080; font-size: inherit;")
+        self._count_label.setStyleSheet(get_mutation_count_style())
         header_layout.addWidget(self._count_label)
 
         header_layout.addStretch()
 
         self._undo_btn = QPushButton("Undo Last")
-        self._undo_btn.setStyleSheet(
-            "QPushButton { color: #4ec9b0; background: #2d2d2d; "
-            "border: 1px solid #4ec9b0; border-radius: 3px; "
-            "padding: 3px 10px; font-size: inherit; }"
-            "QPushButton:hover { background: #3d3d3d; }"
-            "QPushButton:disabled { color: #555; border-color: #555; }"
-        )
+        self._undo_btn.setStyleSheet(get_mutation_undo_btn_style())
         self._undo_btn.clicked.connect(lambda: self.undo_requested.emit(1))
         self._undo_btn.setEnabled(False)
         header_layout.addWidget(self._undo_btn)

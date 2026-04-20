@@ -14,58 +14,7 @@ from ..ui.qt_compat import (
     QVBoxLayout,
     QWidget,
 )
-
-_ORCHESTRA_PANEL_STYLE = """
-    QWidget#orchestra_panel {
-        background: #1e1e1e;
-    }
-    QLabel {
-        color: #d4d4d4;
-    }
-    QLabel.header {
-        font-size: inherit;
-        font-weight: bold;
-        color: #4ec9b0;
-    }
-    QTreeWidget {
-        background: #1e1e2e;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
-        border-radius: 4px;
-        font-size: inherit;
-    }
-    QTreeWidget::item {
-        padding: 3px;
-    }
-    QTreeWidget::item:selected {
-        background: #2d4a4a;
-    }
-    QHeaderView::section {
-        background: #2d2d2d;
-        color: #808080;
-        border: none;
-        border-right: 1px solid #3c3c3c;
-        border-bottom: 1px solid #3c3c3c;
-        padding: 4px;
-        font-size: inherit;
-        font-weight: bold;
-    }
-    QPushButton {
-        background: #2d2d2d;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
-        border-radius: 4px;
-        padding: 4px 12px;
-        font-size: inherit;
-    }
-    QPushButton:hover {
-        background: #3c3c3c;
-    }
-    QPushButton:disabled {
-        background: #252525;
-        color: #555555;
-    }
-"""
+from .styles import get_orchestra_panel_style, get_orchestra_stats_style
 
 _STATUS_ICONS = {
     "pending": "⏳",
@@ -135,7 +84,7 @@ class OrchestraPanel(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("orchestra_panel")
-        self.setStyleSheet(_ORCHESTRA_PANEL_STYLE)
+        self.setStyleSheet(get_orchestra_panel_style())
         self._delegations: dict[str, dict[str, Any]] = {}
 
         main_layout = QVBoxLayout(self)
@@ -147,7 +96,7 @@ class OrchestraPanel(QWidget):
         main_layout.addWidget(header)
 
         self._stats_label = QLabel("0 active / 0 completed")
-        self._stats_label.setStyleSheet("color: #808080; font-size: inherit;")
+        self._stats_label.setStyleSheet(get_orchestra_stats_style())
         main_layout.addWidget(self._stats_label)
 
         self._tree = DelegationTreeWidget()

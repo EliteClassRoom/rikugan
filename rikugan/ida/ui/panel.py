@@ -181,11 +181,11 @@ class RikuganPanel(idaapi.PluginForm):
         # Apply custom font if configured
         self._apply_font_override()
 
-        # Debug: print the font being used
-        _app_font = QApplication.instance().font()
+        # Debug: print the actual widget font after all processing
+        _widget_font = self._core.font()
         ida_kernwin.msg(
-            f"[Rikugan] Font: family='{_app_font.family()}', "
-            f"pointSize={_app_font.pointSize()}, pixelSize={_app_font.pixelSize()}\n"
+            f"[Rikugan] Widget font: family='{_widget_font.family()}', "
+            f"pointSize={_widget_font.pointSize()}, pixelSize={_widget_font.pixelSize()}\n"
         )
 
     def _apply_ida_theme(self) -> None:
@@ -258,9 +258,10 @@ class RikuganPanel(idaapi.PluginForm):
         self._core.setStyleSheet(minimal_style)
 
     def _apply_font_override(self) -> None:
-        """Apply custom font settings if configured."""
+        """Apply custom font settings via stylesheet so it propagates to all children."""
         config = getattr(self._core, "_config", None)
         if config is None:
+            ida_kernwin.msg("[Rikugan] Font: config is None, skipping override\n")
             return
 
         font_family = getattr(config, "font_family", "") or ""
@@ -269,12 +270,19 @@ class RikuganPanel(idaapi.PluginForm):
         if not font_family and not font_size:
             return
 
-        font = self._core.font()
+        font_parts = []
         if font_family:
-            font.setFamily(font_family)
+            font_parts.append(f"font-family: '{font_family}'")
         if font_size > 0:
-            font.setPointSize(font_size)
-        self._core.setFont(font)
+            font_parts.append(f"font-size: {font_size}pt")
+
+        font_css = "; ".join(font_parts)
+        font_stylesheet = f"* {{ {font_css}; }}"
+
+        current = self._core.styleSheet()
+        self._core.setStyleSheet(current + "\n" + font_stylesheet)
+
+        ida_kernwin.msg(f"[Rikugan] Font: applied stylesheet font: {font_css}\n")
 
     def OnClose(self, form):
         self.shutdown()

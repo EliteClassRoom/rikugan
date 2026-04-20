@@ -18,48 +18,14 @@ from .qt_compat import (
     QWidget,
     Signal,
 )
-
-_STATUS_COLORS: dict[str, str] = {
-    "PENDING": "#808080",
-    "RUNNING": "#dcdcaa",
-    "COMPLETED": "#4ec9b0",
-    "FAILED": "#f44747",
-    "CANCELLED": "#808080",
-}
-
-_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 4px 10px; font-size: inherit; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-    "QPushButton:disabled { color: #555; }"
+from .styles import (
+    get_agent_btn_style,
+    get_agent_combo_style,
+    get_agent_preview_style,
+    get_agent_status_colors,
+    get_agent_status_label_style,
+    get_agent_tree_style,
 )
-
-_TREE_STYLE = """
-    QTreeWidget {
-        background: #1e1e1e;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
-        font-size: inherit;
-        alternate-background-color: #252525;
-    }
-    QTreeWidget::item {
-        padding: 2px 4px;
-    }
-    QTreeWidget::item:selected {
-        background: #264f78;
-        color: #ffffff;
-    }
-    QTreeWidget::item:hover {
-        background: #2a2d2e;
-    }
-    QHeaderView::section {
-        background: #2d2d2d;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
-        padding: 3px 6px;
-        font-size: inherit;
-    }
-"""
 
 
 @dataclass
@@ -95,22 +61,19 @@ class AgentTreeWidget(QWidget):
         toolbar.setSpacing(4)
 
         self._kill_btn = QPushButton("Kill Selected")
-        self._kill_btn.setStyleSheet(_BTN_STYLE)
+        self._kill_btn.setStyleSheet(get_agent_btn_style())
         self._kill_btn.clicked.connect(self._on_kill_selected)
         toolbar.addWidget(self._kill_btn)
 
         self._clean_btn = QPushButton("Clean")
-        self._clean_btn.setStyleSheet(_BTN_STYLE)
+        self._clean_btn.setStyleSheet(get_agent_btn_style())
         self._clean_btn.setToolTip("Remove selected finished agents (or all finished if none selected)")
         self._clean_btn.clicked.connect(self._on_clean)
         toolbar.addWidget(self._clean_btn)
 
         self._filter_combo = QComboBox()
         self._filter_combo.setFixedWidth(130)
-        self._filter_combo.setStyleSheet(
-            "QComboBox { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "border-radius: 4px; padding: 3px 6px; font-size: inherit; }"
-        )
+        self._filter_combo.setStyleSheet(get_agent_combo_style())
         self._filter_combo.addItems(["All Agents", "General", "Bulk Rename"])
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
         toolbar.addWidget(self._filter_combo)
@@ -118,7 +81,7 @@ class AgentTreeWidget(QWidget):
         toolbar.addStretch()
 
         self._status_label = QLabel("0 running / 0 completed")
-        self._status_label.setStyleSheet("color: #808080; font-size: inherit;")
+        self._status_label.setStyleSheet(get_agent_status_label_style())
         toolbar.addWidget(self._status_label)
 
         main_layout.addLayout(toolbar)
@@ -126,7 +89,7 @@ class AgentTreeWidget(QWidget):
         # Tree widget
         self._tree = QTreeWidget()
         self._tree.setObjectName("agent_tree")
-        self._tree.setStyleSheet(_TREE_STYLE)
+        self._tree.setStyleSheet(get_agent_tree_style())
         self._tree.setHeaderLabels(["Name", "Type", "Status", "Turns", "Time"])
         self._tree.setColumnWidth(0, 150)
         self._tree.setColumnWidth(1, 100)
@@ -146,10 +109,7 @@ class AgentTreeWidget(QWidget):
         self._preview.setObjectName("agent_preview")
         self._preview.setReadOnly(True)
         self._preview.setFixedHeight(80)
-        self._preview.setStyleSheet(
-            "QTextEdit { background: #252525; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "font-size: inherit; padding: 4px; }"
-        )
+        self._preview.setStyleSheet(get_agent_preview_style())
         self._preview.setPlaceholderText("Select an agent to preview its output...")
         main_layout.addWidget(self._preview)
 
@@ -219,7 +179,8 @@ class AgentTreeWidget(QWidget):
         item.setText(4, self._format_elapsed(info.elapsed_seconds))
 
         # Status color
-        color = _STATUS_COLORS.get(info.status, "#d4d4d4")
+        status_colors = get_agent_status_colors()
+        color = status_colors.get(info.status, "#d4d4d4")
         from .qt_compat import QColor
 
         item.setForeground(2, QColor(color))

@@ -13,41 +13,10 @@ from .qt_compat import (
     QVBoxLayout,
     QWidget,
 )
-
-_HEADER_STYLE = "color: #d4d4d4; font-weight: bold; font-size: inherit;"
-
-_PANEL_STYLE = """
-    QWidget#tools_panel {
-        background: #1e1e1e;
-    }
-    QTabWidget::pane {
-        border: none;
-        background: #1e1e1e;
-    }
-    QTabBar::tab {
-        background: #2d2d2d;
-        color: #808080;
-        border: 1px solid #3c3c3c;
-        border-bottom: none;
-        padding: 5px 14px;
-        font-size: inherit;
-        min-width: 60px;
-    }
-    QTabBar::tab:selected {
-        background: #1e1e1e;
-        color: #d4d4d4;
-        border-bottom: 2px solid #4ec9b0;
-    }
-    QTabBar::tab:hover:!selected {
-        background: #353535;
-        color: #d4d4d4;
-    }
-"""
-
-_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 2px 8px; font-size: inherit; }"
-    "QPushButton:hover { background: #3c3c3c; }"
+from .styles import (
+    get_placeholder_style,
+    get_tools_panel_header_style,
+    get_tools_panel_style,
 )
 
 
@@ -58,7 +27,7 @@ class ToolsPanel(QWidget):
         super().__init__(parent)
         self.setObjectName("tools_panel")
         self.setWindowTitle("Rikugan Tools")
-        self.setStyleSheet(_PANEL_STYLE)
+        self.setStyleSheet(get_tools_panel_style())
         # No minimum size — this widget is embedded in IDA dockable forms
         # and Binary Ninja sidebars, which can be any size.
 
@@ -73,7 +42,7 @@ class ToolsPanel(QWidget):
         header_layout.setContentsMargins(12, 8, 12, 8)
 
         title = QLabel("Tools")
-        title.setStyleSheet(_HEADER_STYLE)
+        title.setStyleSheet(get_tools_panel_header_style())
         header_layout.addWidget(title)
         header_layout.addStretch()
 
@@ -85,17 +54,17 @@ class ToolsPanel(QWidget):
 
         # Placeholder tabs
         self._renamer_placeholder = QLabel("Not loaded")
-        self._renamer_placeholder.setStyleSheet("color: #808080; padding: 20px;")
+        self._renamer_placeholder.setStyleSheet(get_placeholder_style())
         self._renamer_placeholder.setWordWrap(True)
         self._tabs.addTab(self._renamer_placeholder, "Renamer")
 
         self._agents_placeholder = QLabel("Not loaded")
-        self._agents_placeholder.setStyleSheet("color: #808080; padding: 20px;")
+        self._agents_placeholder.setStyleSheet(get_placeholder_style())
         self._agents_placeholder.setWordWrap(True)
         self._tabs.addTab(self._agents_placeholder, "Agents")
 
         self._orchestra_placeholder = QLabel("Not loaded")
-        self._orchestra_placeholder.setStyleSheet("color: #808080; padding: 20px;")
+        self._orchestra_placeholder.setStyleSheet(get_placeholder_style())
         self._orchestra_placeholder.setWordWrap(True)
         self._tabs.addTab(self._orchestra_placeholder, "Orchestra")
 

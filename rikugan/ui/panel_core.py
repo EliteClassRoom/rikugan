@@ -41,21 +41,20 @@ from .qt_compat import (
     Signal,
 )
 from .settings_dialog import SettingsDialog
-from .styles import DARK_THEME, LIGHT_THEME
+from .styles import (
+    DARK_THEME,
+    LIGHT_THEME,
+    get_cancel_btn_style,
+    get_message_dialog_style,
+    get_mode_bar_style,
+    get_small_btn_style,
+    get_splitter_handle_style,
+    get_tab_widget_style,
+)
 from .tool_widgets import _SharedSpinnerTimer
 from .tools_panel import ToolsPanel
 
 _TOOL_RESULT_TRUNCATE_CHARS = 2000
-_SMALL_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 6px; padding: 4px; font-size: inherit; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-)
-_CANCEL_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #c42b1c; border: 1px solid #3c3c3c; "
-    "border-radius: 6px; padding: 4px; font-size: inherit; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-)
 
 _SANITIZER_TAG_RE = re.compile(
     r"^\[The following is (?:a tool execution result|output from an EXTERNAL MCP server)"
@@ -340,14 +339,6 @@ class RikuganPanelCore(QWidget):
             # Runtime init completed but no skills found; stop polling.
             self._stop_skills_refresh_timer()
 
-    _MODE_BAR_STYLE = (
-        "QTabBar { background: #2d2d2d; border: none; border-bottom: 1px solid #3c3c3c; }"
-        "QTabBar::tab { background: #2d2d2d; color: #808080; padding: 4px 16px; "
-        "border: none; border-bottom: 2px solid transparent; font-size: inherit; }"
-        "QTabBar::tab:selected { color: #d4d4d4; border-bottom: 2px solid #4ec9b0; }"
-        "QTabBar::tab:hover:!selected { color: #d4d4d4; }"
-    )
-
     def _build_ui(self) -> None:
         self.setObjectName("rikugan_panel")
         self._current_theme = self._config.theme
@@ -361,7 +352,7 @@ class RikuganPanelCore(QWidget):
         # Hidden for IDA which uses a separate dockable form for tools.
         self._mode_bar = QTabBar()
         self._mode_bar.setObjectName("mode_bar")
-        self._mode_bar.setStyleSheet(self._MODE_BAR_STYLE)
+        self._mode_bar.setStyleSheet(get_mode_bar_style())
         self._mode_bar.setExpanding(False)
         self._mode_bar.setDrawBase(False)
         self._mode_bar.addTab("Chat")
@@ -427,17 +418,7 @@ class RikuganPanelCore(QWidget):
         self._tab_bar.add_tab_requested.connect(self._on_new_tab)
         self._tab_bar.export_tab_requested.connect(self._on_export_tab)
         self._tab_bar.fork_tab_requested.connect(self._on_fork_tab)
-        self._tab_widget.setStyleSheet(
-            "QTabWidget::pane { border: none; }"
-            "QTabBar { background: #1e1e1e; border: none; }"
-            "QTabBar::tab { background: #252526; color: #cccccc; padding: 2px 8px; "
-            "border: none; border-right: 1px solid #3c3c3c; "
-            "font-size: inherit; max-width: 140px; }"
-            "QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; }"
-            "QTabBar::tab:hover { background: #2d2d2d; }"
-            "QTabBar::close-button { image: none; border: none; padding: 1px; }"
-            "QTabBar::close-button:hover { background: #c42b1c; border-radius: 2px; }"
-        )
+        self._tab_widget.setStyleSheet(get_tab_widget_style())
         self._tab_bar.setExpanding(False)
         self._tab_bar.setVisible(False)  # hidden until 2+ tabs
 
@@ -445,7 +426,7 @@ class RikuganPanelCore(QWidget):
         """Create the horizontal splitter (chat | mutation log) and add to layout."""
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.setHandleWidth(1)
-        self._main_splitter.setStyleSheet("QSplitter::handle { background: #3c3c3c; }")
+        self._main_splitter.setStyleSheet(get_splitter_handle_style())
         self._main_splitter.addWidget(self._tab_widget)
 
         self._mutation_panel = MutationLogPanel()
@@ -481,34 +462,34 @@ class RikuganPanelCore(QWidget):
         self._send_btn = QPushButton("Send")
         self._send_btn.setObjectName("send_button")
         self._send_btn.setFixedWidth(64)
-        self._send_btn.setStyleSheet(_SMALL_BTN_STYLE)
+        self._send_btn.setStyleSheet(get_small_btn_style())
         self._send_btn.clicked.connect(self._on_send_clicked)
         btn_layout.addWidget(self._send_btn)
         self._cancel_btn = QPushButton("Stop")
         self._cancel_btn.setObjectName("cancel_button")
         self._cancel_btn.setFixedWidth(64)
-        self._cancel_btn.setStyleSheet(_CANCEL_BTN_STYLE)
+        self._cancel_btn.setStyleSheet(get_cancel_btn_style())
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._on_cancel)
         btn_layout.addWidget(self._cancel_btn)
         self._new_btn = QPushButton("New")
         self._new_btn.setFixedWidth(64)
-        self._new_btn.setStyleSheet(_SMALL_BTN_STYLE)
+        self._new_btn.setStyleSheet(get_small_btn_style())
         self._new_btn.clicked.connect(self._on_new_tab)
         btn_layout.addWidget(self._new_btn)
         self._export_btn = QPushButton("Export")
         self._export_btn.setFixedWidth(64)
-        self._export_btn.setStyleSheet(_SMALL_BTN_STYLE)
+        self._export_btn.setStyleSheet(get_small_btn_style())
         self._export_btn.clicked.connect(self._on_export_current)
         btn_layout.addWidget(self._export_btn)
         self._settings_btn = QPushButton("Settings")
         self._settings_btn.setFixedWidth(64)
-        self._settings_btn.setStyleSheet(_SMALL_BTN_STYLE)
+        self._settings_btn.setStyleSheet(get_small_btn_style())
         self._settings_btn.clicked.connect(self._on_settings)
         btn_layout.addWidget(self._settings_btn)
         self._mutations_btn = QPushButton("Mutations")
         self._mutations_btn.setFixedWidth(64)
-        self._mutations_btn.setStyleSheet(_SMALL_BTN_STYLE)
+        self._mutations_btn.setStyleSheet(get_small_btn_style())
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
         self._mutations_btn.setVisible(False)  # shown when first mutation is recorded
@@ -516,7 +497,7 @@ class RikuganPanelCore(QWidget):
 
         self._tools_btn = QPushButton("Tools")
         self._tools_btn.setFixedWidth(64)
-        self._tools_btn.setStyleSheet(_SMALL_BTN_STYLE)
+        self._tools_btn.setStyleSheet(get_small_btn_style())
         self._tools_btn.setCheckable(True)
         self._tools_btn.clicked.connect(self._on_toggle_tools)
         btn_layout.addWidget(self._tools_btn)
@@ -619,7 +600,7 @@ class RikuganPanelCore(QWidget):
         if session.subagent_logs:
             dlg = QDialog(self)
             dlg.setWindowTitle("Export Options")
-            dlg.setStyleSheet("QDialog { background: #1e1e1e; }")
+            dlg.setStyleSheet(get_message_dialog_style())
             layout = QVBoxLayout(dlg)
             cb = QCheckBox(f"Include subagent logs ({len(session.subagent_logs)} subagent runs)")
             cb.setChecked(True)
