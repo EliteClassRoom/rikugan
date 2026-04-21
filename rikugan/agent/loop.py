@@ -381,6 +381,7 @@ class AgentLoop:
         self._tool_approval_queue: queue.Queue[str] = (
             parent_loop._tool_approval_queue if parent_loop else queue.Queue(maxsize=1)
         )
+        self._approval_queue: queue.Queue[str] = parent_loop._approval_queue if parent_loop else queue.Queue(maxsize=1)
         self._always_allow_scripts: bool = parent_loop._always_allow_scripts if parent_loop else False
         self.plan_mode = False
 
@@ -461,6 +462,15 @@ class AgentLoop:
         """Submit tool approval decision: 'allow', 'allow_all', or 'deny'."""
         self._drain_queue(self._tool_approval_queue)
         self._tool_approval_queue.put(decision)
+
+    def submit_approval(self, decision: str) -> None:
+        """Submit orchestra delegation approval decision: 'approve' or 'deny'."""
+        self._drain_queue(self._approval_queue)
+        self._approval_queue.put(decision)
+
+    def get_approval_queue(self) -> queue.Queue[str]:
+        """Return the orchestra approval queue for UI routing."""
+        return self._approval_queue
 
     def _check_cancelled(self) -> None:
         if self._cancelled.is_set():

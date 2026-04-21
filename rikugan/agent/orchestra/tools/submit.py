@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 SUBMIT_SCHEMA = {
     "type": "function",
     "function": {
@@ -30,18 +28,3 @@ SUBMIT_SCHEMA = {
         },
     },
 }
-
-
-def handle_submit(tc_id: str, arguments: dict[str, Any]) -> tuple[str, bool]:
-    """Handle submit tool invocation."""
-    reasoning = arguments.get("reasoning", "")
-    result = arguments.get("result", "")
-
-    if not reasoning:
-        return ("Error: 'reasoning' is required for submit.", True)
-
-    output = f"## Final Result\n\n{reasoning}"
-    if result:
-        output += f"\n\n## Answer\n\n{result}"
-
-    return (output, False)

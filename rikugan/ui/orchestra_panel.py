@@ -181,7 +181,10 @@ class OrchestraPanel(QWidget):
                 self._on_kill_callback(agent_id)
 
     def _on_refresh(self) -> None:
-        pass
+        """Refresh the delegation tree from the subagent manager."""
+        # Delegate to the kill callback if set — it handles tree refresh
+        if hasattr(self, "_on_kill_callback") and self._on_kill_callback:
+            self._on_kill_callback("refresh")
 
     def set_kill_callback(self, callback) -> None:
         self._on_kill_callback = callback

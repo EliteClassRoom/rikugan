@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 ORCHESTRA_CONFIG_DEFAULT = Path(__file__).parent.parent.parent.parent / "orchestra.toml"
-SubAgentModel = Literal[
+
+# Default model list — used as enum in delegate_task schema when config has no sub_models.
+DEFAULT_SUB_MODELS = [
     "claude-sonnet-4-20250514",
     "claude-haiku-4-20250514",
     "gpt-4o-mini",
@@ -38,8 +39,12 @@ class SubAgentSpec:
     mode: str = ""
 
     def __post_init__(self) -> None:
+        from ...core.sanitize import strip_injection_markers
+
+        if self.instruction:
+            self.instruction = strip_injection_markers(self.instruction)
         if not self.name:
-            first_line = self.instruction.strip().split("\n")[0][:50]
+            first_line = self.instruction.strip().split("\n")[0][:50] if self.instruction else ""
             self.name = first_line or "SubAgent"
 
 
@@ -48,18 +53,17 @@ class OrchestraConfig:
     """Configuration for the OrchestraMainAgent orchestrator."""
 
     main_model: str = "claude-sonnet-4-20250514"
-    sub_models: list[str] = field(
-        default_factory=lambda: [
-            "claude-sonnet-4-20250514",
-            "claude-haiku-4-20250514",
-            "gpt-4o-mini",
-        ]
-    )
+    sub_models: list[str] = field(default_factory=lambda: DEFAULT_SUB_MODELS.copy())
     max_delegations: int = 5
     context_window: int = 100
     enable_context_sharing: bool = True
     model_pricing: dict[str, tuple[float, float]] = field(default_factory=dict)
     default_tools: dict[str, list[str]] = field(default_factory=dict)
+
+    @property
+    def model_enum(self) -> list[str]:
+        """Return the model list for JSON schema enum (sub_models or defaults)."""
+        return self.sub_models if self.sub_models else DEFAULT_SUB_MODELS
 
     @classmethod
     def load(cls, path: Path | None = None) -> OrchestraConfig:
@@ -90,9 +94,13 @@ class OrchestraConfig:
             if isinstance(tools_list, list):
                 default_tools[category] = list(tools_list)
 
+        loaded_sub_models = orchestra.get("sub_models")
+        if loaded_sub_models is None:
+            loaded_sub_models = DEFAULT_SUB_MODELS.copy()
+
         return cls(
             main_model=orchestra.get("main_model", "claude-sonnet-4-20250514"),
-            sub_models=orchestra.get("sub_models", ["claude-sonnet-4-20250514"]),
+            sub_models=loaded_sub_models,
             max_delegations=orchestra.get("max_delegations", 5),
             context_window=orchestra.get("context_window", 100),
             enable_context_sharing=orchestra.get("enable_context_sharing", True),

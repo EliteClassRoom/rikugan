@@ -37,6 +37,7 @@ class A2ATask:
     id: str
     agent_name: str
     prompt: str
+    context: str = ""
     status: A2ATaskStatus = A2ATaskStatus.PENDING
     result: str = ""
     error: str = ""

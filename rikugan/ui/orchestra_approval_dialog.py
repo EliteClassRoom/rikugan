@@ -8,11 +8,13 @@ from ..ui.qt_compat import (
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QHBoxLayout,
     QLabel,
     QScrollArea,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    Signal,
 )
 from .styles import (
     get_delegation_approval_widget_style,
@@ -123,8 +125,8 @@ class DelegationApprovalWidget(QFrame):
     Use this when the approval should be shown inline rather than as a modal dialog.
     """
 
-    approved = None
-    denied = None
+    approved = Signal(str, str)  # (task_name, decision)
+    denied = Signal(str, str)  # (task_name, decision)
 
     def __init__(
         self,
@@ -161,6 +163,27 @@ class DelegationApprovalWidget(QFrame):
         instruction_preview.setStyleSheet(get_delegation_preview_style())
         instruction_preview.setWordWrap(True)
         layout.addWidget(instruction_preview)
+
+        # Buttons
+        from ..ui.qt_compat import QPushButton
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        approve_btn = QPushButton("Approve")
+        approve_btn.setObjectName("approve_btn")
+        approve_btn.clicked.connect(self._on_approve)
+        deny_btn = QPushButton("Deny")
+        deny_btn.setObjectName("deny_btn")
+        deny_btn.clicked.connect(self._on_deny)
+        btn_layout.addWidget(approve_btn)
+        btn_layout.addWidget(deny_btn)
+        layout.addLayout(btn_layout)
+
+    def _on_approve(self) -> None:
+        self.approved.emit(self._task_name, "approve")
+
+    def _on_deny(self) -> None:
+        self.denied.emit(self._task_name, "deny")
 
     def get_spec(self) -> dict[str, Any]:
         return {

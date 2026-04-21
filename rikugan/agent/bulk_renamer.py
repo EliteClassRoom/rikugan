@@ -179,7 +179,7 @@ class BulkRenamerEngine:
             self._jobs.append(job)
             self._original_names[job.address] = job.current_name
 
-    def start(self, deep: bool = False) -> None:
+    def start(self, deep: bool = False, preload_on_main_thread: bool = False) -> None:
         """Start the renaming engine in a background thread.
 
         Parameters
@@ -187,11 +187,21 @@ class BulkRenamerEngine:
         deep : bool
             If True, use deep analysis mode (one subagent per function).
             If False, use quick mode (batch prompting).
+        preload_on_main_thread : bool
+            If True, run decompilation synchronously on the main thread
+            (via QTimer.singleShot) before the worker thread starts.
+            Use this when the host (e.g. IDA Pro) requires all API calls
+            on the main thread. The widget calls this with preload=True
+            and waits for completion before starting the worker pool.
         """
         self._cancel.clear()
         self._paused.set()
+        if deep:
+            target = self._run_deep_preloaded if preload_on_main_thread else self._run_deep
+        else:
+            target = self._run_quick
         self._thread = threading.Thread(
-            target=self._run_deep if deep else self._run_quick,
+            target=target,
             daemon=True,
             name="rikugan-bulk-renamer",
         )
@@ -204,6 +214,63 @@ class BulkRenamerEngine:
             return self._event_queue.get_nowait()
         except queue.Empty:
             return None
+
+    def preload_decompilation(self) -> int:
+        """Preload decompilation for all pending jobs synchronously on the main thread.
+
+        Returns the number of jobs successfully decompiled. Use this before calling
+        ``start(preload_on_main_thread=True)`` so worker threads never call host APIs.
+        """
+        pending = self._pending_jobs()
+        decompiled_count = 0
+        for job in pending:
+            if self._cancel.is_set():
+                break
+            self._paused.wait()
+            if self._cancel.is_set():
+                break
+
+            job.status = RenameStatus.DECOMPILING
+            self._event_queue.put(
+                RenameEvent(
+                    type=RenameEventType.JOB_STARTED,
+                    address=job.address,
+                    current_name=job.current_name,
+                )
+            )
+            try:
+                decomp = self._tools.execute(
+                    "decompile_function",
+                    {"address": f"0x{job.address:x}"},
+                )
+                job.decompiled_code = decomp
+
+                disasm = ""
+                try:
+                    disasm = self._tools.execute(
+                        "read_disassembly",
+                        {"address": f"0x{job.address:x}", "count": 100},
+                    )
+                except Exception:
+                    pass
+
+                if disasm:
+                    job.decompiled_code += f"\n\n---\n// Disassembly:\n{disasm}"
+                decompiled_count += 1
+            except Exception as e:
+                job.status = RenameStatus.FAILED
+                job.error = str(e)
+                self._event_queue.put(
+                    RenameEvent(
+                        type=RenameEventType.JOB_ERROR,
+                        address=job.address,
+                        current_name=job.current_name,
+                        error=str(e),
+                    )
+                )
+                log_error(f"Preload decompile failed for 0x{job.address:x}: {e}")
+
+        return decompiled_count
 
     def pause(self) -> None:
         """Pause the renaming engine."""
@@ -284,12 +351,17 @@ class BulkRenamerEngine:
     _MAX_FUNC_CHARS = 6_000  # cap per-function (decomp + disasm combined)
 
     def _run_quick(self) -> None:
-        """Quick mode: parallel sub-batches, each with a clean LLM context."""
+        """Quick mode: parallel sub-batches, each with a clean LLM context.
+
+        When jobs already have `decompiled_code` set (preloaded via
+        ``preload_decompilation()``), decompilation is skipped and
+        workers only run the LLM call + rename.
+        """
         pending = self._pending_jobs()
         total = len(pending)
         mgr = self._subagent_manager
 
-        # --- Phase 1: decompile all functions (sequential, needs host thread) ---
+        # --- Phase 1: decompile any jobs not yet preloaded (main-thread safe) ---
         decompiled: list[tuple[RenameJob, str]] = []
         for job in pending:
             if self._cancel.is_set():
@@ -297,6 +369,15 @@ class BulkRenamerEngine:
             self._paused.wait()
             if self._cancel.is_set():
                 break
+
+            # Skip if already preloaded by preload_decompilation()
+            if job.decompiled_code:
+                part = f"// Function at 0x{job.address:x} (current name: {job.current_name})\n"
+                part += f"// Decompiled:\n{job.decompiled_code}\n"
+                if len(part) > self._MAX_FUNC_CHARS:
+                    part = part[: self._MAX_FUNC_CHARS] + "\n// ... (truncated)\n"
+                decompiled.append((job, part))
+                continue
 
             job.status = RenameStatus.DECOMPILING
             self._event_queue.put(
@@ -736,6 +817,162 @@ class BulkRenamerEngine:
             )
         )
         log_info("Bulk renamer deep mode finished")
+
+    def _run_deep_preloaded(self) -> None:
+        """Deep mode with preloaded decompilation — workers never call host APIs.
+
+        Decompilation was done synchronously on the main thread via
+        ``preload_decompilation()`` before this method is called.
+        Workers only run the subagent analysis + rename.
+        """
+        from .subagent import SubagentRunner  # deferred to avoid circular import
+
+        pending = self._pending_jobs()
+        total = len(pending)
+        completed_count = 0
+        rename_pattern = re.compile(r"RENAME:\s*0x([0-9a-fA-F]+)\s+(\S+)")
+        mgr = self._subagent_manager
+
+        def _analyze_one(job: RenameJob) -> None:
+            nonlocal completed_count
+
+            if self._cancel.is_set():
+                return
+
+            self._paused.wait()
+            if self._cancel.is_set():
+                return
+
+            agent_name = f"agent_{job.current_name}"
+
+            agent_id = None
+            if mgr is not None:
+                agent_id = mgr.register(
+                    name=agent_name,
+                    task=f"Deep rename analysis for {job.current_name} at 0x{job.address:x}",
+                    agent_type="bulk_rename(deep)",
+                    category="bulk_rename",
+                )
+
+            job.status = RenameStatus.ANALYZING
+            self._update_mgr_agent(agent_id, "running", "", 0)
+
+            task = (
+                f"{DEEP_ANALYSIS_PROMPT}\n"
+                f"// Function at 0x{job.address:x} (current name: {job.current_name})\n"
+                f"{job.decompiled_code}"
+            )
+
+            final_text = ""
+            turn_count = 0
+            try:
+                for event in SubagentRunner(
+                    provider=self._provider,
+                    tool_registry=self._tools,
+                    config=self._config,
+                    host_name=self._host_name,
+                    skill_registry=self._skills,
+                ).run_task(task, max_turns=10):
+                    if self._cancel.is_set():
+                        self._update_mgr_agent(agent_id, "cancelled", "Cancelled", turn_count)
+                        return
+                    if event.type.value == "turn_end":
+                        turn_count += 1
+                    if event.type.value == "text_done" and event.text:
+                        final_text = event.text
+            except Exception as e:
+                job.status = RenameStatus.FAILED
+                job.error = str(e)
+                self._event_queue.put(
+                    RenameEvent(
+                        type=RenameEventType.JOB_ERROR,
+                        address=job.address,
+                        current_name=job.current_name,
+                        error=str(e),
+                    )
+                )
+                self._update_mgr_agent(agent_id, "failed", str(e), turn_count)
+                return
+
+            match = rename_pattern.search(final_text)
+            if not match:
+                job.status = RenameStatus.FAILED
+                job.error = "No RENAME line found in subagent output"
+                self._event_queue.put(
+                    RenameEvent(
+                        type=RenameEventType.JOB_ERROR,
+                        address=job.address,
+                        current_name=job.current_name,
+                        error=job.error,
+                    )
+                )
+                self._update_mgr_agent(agent_id, "failed", job.error, turn_count)
+                return
+
+            new_name = match.group(2)
+            job.new_name = new_name
+            job.status = RenameStatus.RENAMING
+
+            try:
+                self._tools.execute(
+                    "rename_function",
+                    {"address": f"0x{job.address:x}", "new_name": new_name},
+                )
+                job.status = RenameStatus.COMPLETED
+                self._event_queue.put(
+                    RenameEvent(
+                        type=RenameEventType.JOB_COMPLETED,
+                        address=job.address,
+                        current_name=job.current_name,
+                        new_name=new_name,
+                    )
+                )
+                log_debug(f"Deep renamed (preloaded) 0x{job.address:x}: {job.current_name!r} -> {new_name!r}")
+                self._update_mgr_agent(agent_id, "completed", f"Renamed to {new_name}", turn_count)
+            except Exception as e:
+                job.status = RenameStatus.FAILED
+                job.error = str(e)
+                self._event_queue.put(
+                    RenameEvent(
+                        type=RenameEventType.JOB_ERROR,
+                        address=job.address,
+                        current_name=job.current_name,
+                        error=str(e),
+                    )
+                )
+                log_error(f"Deep rename failed for 0x{job.address:x}: {e}")
+                self._update_mgr_agent(agent_id, "failed", str(e), turn_count)
+
+            completed_count += 1
+            self._event_queue.put(
+                RenameEvent(
+                    type=RenameEventType.BATCH_PROGRESS,
+                    completed=completed_count,
+                    total=total,
+                )
+            )
+
+        with ThreadPoolExecutor(
+            max_workers=self._max_workers,
+            thread_name_prefix="rikugan-deep-rename",
+        ) as executor:
+            futures = [executor.submit(_analyze_one, job) for job in pending]
+            for future in futures:
+                try:
+                    future.result()
+                except Exception as e:
+                    log_error(f"Deep rename worker error: {e}")
+
+        _FINISHED = {RenameStatus.COMPLETED, RenameStatus.FAILED, RenameStatus.SKIPPED}
+        finished = sum(1 for j in self._jobs if j.status in _FINISHED)
+        self._event_queue.put(
+            RenameEvent(
+                type=RenameEventType.ALL_DONE,
+                completed=finished,
+                total=total,
+            )
+        )
+        log_info("Bulk renamer deep mode (preloaded) finished")
 
     def _update_mgr_agent(
         self,

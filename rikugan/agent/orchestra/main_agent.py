@@ -27,7 +27,7 @@ from .prompts import (
     build_pricing_table,
 )
 from .subagent_factory import SubAgentFactory
-from .tools import COMPLETE_SCHEMA, DELEGATE_TASK_SCHEMA, SUBMIT_SCHEMA
+from .tools import COMPLETE_SCHEMA, SUBMIT_SCHEMA
 
 
 class OrchestraMainAgent:
@@ -85,6 +85,10 @@ class OrchestraMainAgent:
 
         self._pending_delegate_id: str | None = None
         self._pending_delegate_spec: dict[str, Any] | None = None
+
+        # Share the approval queue with the parent AgentLoop so the UI can
+        # route orchestra approvals through the same channel as tool approvals.
+        self._approval_queue = parent_loop.get_approval_queue() if parent_loop else queue.Queue(maxsize=1)
 
     def cancel(self) -> None:
         """Cancel the current run."""
@@ -176,8 +180,76 @@ class OrchestraMainAgent:
         """Get the tool schema including orchestra orchestration tools."""
         base_schema = list(self.tools.to_provider_format())
 
+        # Build model enum dynamically from orchestra config to avoid
+        # hardcoding model names in the schema.
+        model_enum = self.orchestra_config.sub_models or []
+
+        delegate_schema = {
+            "type": "function",
+            "function": {
+                "name": "delegate_task",
+                "description": (
+                    "Delegate a subtask to a specialized sub-agent. "
+                    "The sub-agent will be created with the four-tuple φ = <I, C, T, M>: "
+                    "- I: Your instruction describing the task "
+                    "- C: Context you provide with relevant binary information "
+                    "- T: Tools you specify from the available tool list "
+                    "- M: Model you select for the sub-agent "
+                    "Optionally set 'mode' to run the sub-agent in a specific mode "
+                    "(exploration, plan, research) for structured workflows. "
+                    "This tool requires user approval before the sub-agent can be spawned."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "Brief name for this subtask (displayed in UI).",
+                        },
+                        "instruction": {
+                            "type": "string",
+                            "description": "Detailed instruction for the sub-agent explaining what to do.",
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": "Relevant context from the main task (binary info, position, etc.).",
+                        },
+                        "tools": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of tool names to make available to the sub-agent.",
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Model to use for this sub-agent.",
+                            "enum": model_enum,
+                        },
+                        "max_steps": {
+                            "type": "integer",
+                            "description": "Maximum turns for the sub-agent (default: 20).",
+                            "default": 20,
+                        },
+                        "mode": {
+                            "type": "string",
+                            "description": (
+                                "Mode to run the sub-agent in. "
+                                "Valid values: 'exploration' or 'explore' (autonomous read-only investigation), "
+                                "'plan' (generate plan, get approval, execute steps), "
+                                "'research' (exploration + write markdown notes), "
+                                "'normal' or '' (standard agent loop). "
+                                "Defaults to 'normal' if not specified."
+                            ),
+                            "enum": ["exploration", "explore", "plan", "research", "normal", ""],
+                            "default": "",
+                        },
+                    },
+                    "required": ["task", "instruction", "tools", "model"],
+                },
+            },
+        }
+
         orchestra_tools = [
-            DELEGATE_TASK_SCHEMA,
+            delegate_schema,
             SUBMIT_SCHEMA,
             COMPLETE_SCHEMA,
         ]
@@ -240,7 +312,13 @@ class OrchestraMainAgent:
 
         self._check_cancelled()
 
-        decision = self._approval_queue.get(timeout=300)
+        try:
+            decision = self._approval_queue.get(timeout=300)
+        except queue.Empty:
+            from ...core.errors import CancellationError
+
+            raise CancellationError("Orchestra approval timeout (user did not respond)") from None
+
         self._pending_delegate_id = None
         self._pending_delegate_spec = None
 
@@ -283,6 +361,7 @@ class OrchestraMainAgent:
 
     def _handle_submit(self, tc_id: str, args: dict[str, Any]) -> str:
         """Handle submit tool call."""
+        self._check_cancelled()
         reasoning = args.get("reasoning", "")
         result = args.get("result", "")
 
@@ -297,6 +376,7 @@ class OrchestraMainAgent:
 
     def _handle_complete(self, tc_id: str, args: dict[str, Any]) -> str:
         """Handle complete tool call."""
+        self._check_cancelled()
         answer = args.get("answer", "")
 
         if not answer:

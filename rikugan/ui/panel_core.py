@@ -517,6 +517,7 @@ class RikuganPanelCore(QWidget):
         chat_view.setProperty("tab_id", tab_id)  # O(1) lookup in _tab_id_at_index
         chat_view.tool_approval_submitted.connect(self._on_tool_approval)
         chat_view.user_answer_submitted.connect(self._on_user_answer_submitted)
+        chat_view.orchestra_approval_decided.connect(self._on_orchestra_approval)
         self._chat_views[tab_id] = chat_view
         index = self._tab_widget.addTab(chat_view, label)
         self._tab_widget.setCurrentIndex(index)
@@ -1020,6 +1021,14 @@ class RikuganPanelCore(QWidget):
         if runner:
             runner.agent_loop.submit_tool_approval(decision)
 
+    def _on_orchestra_approval(self, tool_call_id: str, decision: str) -> None:
+        """Forward orchestra delegation approval to the agent loop."""
+        runner = self._ctrl.get_runner()
+        if runner:
+            runner.agent_loop.submit_approval(decision)
+        self._pending_answer = False
+        self._awaiting_button_approval = False
+
     def _on_user_answer_submitted(self, answer: str) -> None:
         """Handle a button click from UserQuestionWidget (plan/save/ask_user)."""
         if not self._pending_answer:
@@ -1363,7 +1372,16 @@ class RikuganPanelCore(QWidget):
         rename_jobs = [RenameJob(address=j["address"], current_name=j["current_name"]) for j in jobs]
         engine.enqueue(rename_jobs)
         self._renamer_engine = engine
-        engine.start(deep=(mode == "deep"))
+
+        # Preload decompilation on the main thread before starting worker pool.
+        # This ensures all IDA API calls happen on the main thread; workers
+        # only run LLM calls and the final rename tool (which is also safe).
+        def _preload_and_start() -> None:
+            engine.preload_decompilation()
+            engine.start(deep=(mode == "deep"), preload_on_main_thread=True)
+
+        # Defer to next event-loop tick so the UI remains responsive
+        QTimer.singleShot(0, _preload_and_start)
 
     def _on_renamer_pause(self) -> None:
         engine = getattr(self, "_renamer_engine", None)

@@ -51,6 +51,7 @@ class ChatView(QScrollArea):
 
     tool_approval_submitted = Signal(str, str)  # (tool_call_id, "allow"/"deny")
     user_answer_submitted = Signal(str)  # chosen option / typed answer
+    orchestra_approval_decided = Signal(str, str)  # (tool_call_id, "approve"/"deny")
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
@@ -410,14 +411,37 @@ class ChatView(QScrollArea):
     def _handle_question_event(self, event: TurnEvent) -> None:
         self._hide_thinking()
         self._reset_tool_run()
+        is_orchestra = event.metadata.get("orchestra_delegate") if event.metadata else False
+
         if event.type == TurnEventType.SAVE_APPROVAL_REQUEST:
             options = ["Save All", "Discard All"]
         else:  # USER_QUESTION
-            options = event.metadata.get("options", [])
-        widget = UserQuestionWidget(event.text, options)
-        widget.option_selected.connect(self._on_user_answer)
+            options = event.metadata.get("options", []) if event.metadata else []
+
+        if is_orchestra:
+            from .orchestra_approval_dialog import DelegationApprovalWidget
+
+            delegate_spec = (event.metadata or {}).get("delegate_spec", {})
+            widget = DelegationApprovalWidget(
+                task_name=delegate_spec.get("task", "Unknown Task"),
+                instruction=delegate_spec.get("instruction", ""),
+                context=delegate_spec.get("context", ""),
+                tools=delegate_spec.get("tools", []),
+                model=delegate_spec.get("model", ""),
+                max_steps=delegate_spec.get("max_steps", 20),
+            )
+            widget.approved.connect(lambda _, d="approve": self._on_orchestra_approval(event.tool_call_id, d))
+            widget.denied.connect(lambda _, d="deny": self._on_orchestra_approval(event.tool_call_id, d))
+        else:
+            widget = UserQuestionWidget(event.text, options)
+            widget.option_selected.connect(self._on_user_answer)
+
         self._insert_widget(widget)
         self._scroll_to_bottom()
+
+    def _on_orchestra_approval(self, tool_call_id: str, decision: str) -> None:
+        """Forward orchestra delegation approval decision to the panel/controller."""
+        self.orchestra_approval_decided.emit(tool_call_id, decision)
 
     def _on_tool_approval(self, tool_call_id: str, decision: str) -> None:
         """Forward tool approval decision to the panel/controller."""

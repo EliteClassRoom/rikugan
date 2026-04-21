@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import queue
-from typing import Any
-
 DELEGATE_TASK_SCHEMA = {
     "type": "function",
     "function": {
@@ -43,11 +40,6 @@ DELEGATE_TASK_SCHEMA = {
                 "model": {
                     "type": "string",
                     "description": "Model to use for this sub-agent.",
-                    "enum": [
-                        "claude-sonnet-4-20250514",
-                        "claude-haiku-4-20250514",
-                        "gpt-4o-mini",
-                    ],
                 },
                 "max_steps": {
                     "type": "integer",
@@ -72,44 +64,3 @@ DELEGATE_TASK_SCHEMA = {
         },
     },
 }
-
-
-def handle_delegate_task(
-    tc_id: str,
-    arguments: dict[str, Any],
-    approval_queue: queue.Queue[str],
-) -> tuple[str, bool]:
-    """Handle delegate_task tool invocation.
-
-    This tool requires user approval before the sub-agent can be spawned.
-    The approval is done by passing the spec to the UI via the approval_queue.
-
-    Returns:
-        (content, is_error) tuple
-    """
-    task = arguments.get("task", "")
-    instruction = arguments.get("instruction", "")
-    context = arguments.get("context", "")
-    tools = arguments.get("tools", [])
-    model = arguments.get("model", "")
-    max_steps = arguments.get("max_steps", 20)
-
-    if not instruction:
-        return ("Error: 'instruction' is required for delegate_task.", True)
-    if not task:
-        return ("Error: 'task' is required for delegate_task.", True)
-    if not model:
-        return ("Error: 'model' is required for delegate_task.", True)
-
-    spec_json = {
-        "task": task,
-        "instruction": instruction,
-        "context": context,
-        "tools": tools,
-        "model": model,
-        "max_steps": max_steps,
-    }
-
-    approval_queue.put(f"DELEGATE_TASK:{tc_id}:{spec_json}")
-
-    return (f"Delegation request sent for approval: {task}", False)

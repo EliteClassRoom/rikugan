@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 COMPLETE_SCHEMA = {
     "type": "function",
     "function": {
@@ -25,13 +23,3 @@ COMPLETE_SCHEMA = {
         },
     },
 }
-
-
-def handle_complete(tc_id: str, arguments: dict[str, Any]) -> tuple[str, bool]:
-    """Handle complete tool invocation."""
-    answer = arguments.get("answer", "")
-
-    if not answer:
-        return ("Error: 'answer' is required for complete.", True)
-
-    return (f"## Answer\n\n{answer}", False)
