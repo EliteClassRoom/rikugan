@@ -117,6 +117,9 @@ class AgentTreeWidget(QWidget):
         self._agents: dict[str, AgentInfo] = {}
         # Map agent_id -> QTreeWidgetItem
         self._items: dict[str, QTreeWidgetItem] = {}
+        # Incremental status counters
+        self._running_count: int = 0
+        self._completed_count: int = 0
 
     def _on_kill_selected(self) -> None:
         """Cancel the currently selected agent(s)."""
@@ -151,6 +154,13 @@ class AgentTreeWidget(QWidget):
             to_remove = [aid for aid, info in self._agents.items() if info.status in _FINISHED]
 
         for agent_id in to_remove:
+            # Decrement counters for removed agent
+            info = self._agents.get(agent_id)
+            if info:
+                if info.status == "RUNNING":
+                    self._running_count -= 1
+                elif info.status == "COMPLETED":
+                    self._completed_count -= 1
             item = self._items.pop(agent_id, None)
             if item is not None:
                 idx = self._tree.indexOfTopLevelItem(item)
@@ -162,6 +172,18 @@ class AgentTreeWidget(QWidget):
 
     def update_agent(self, info: AgentInfo) -> None:
         """Add or update a tree item for the given agent."""
+        # Get old status for counter adjustment
+        old_status = None
+        if info.agent_id in self._agents:
+            old_status = self._agents[info.agent_id].status
+
+        # Decrement old counters
+        if old_status == "RUNNING":
+            self._running_count -= 1
+        elif old_status == "COMPLETED":
+            self._completed_count -= 1
+
+        # Update agent info
         self._agents[info.agent_id] = info
 
         if info.agent_id in self._items:
@@ -184,6 +206,12 @@ class AgentTreeWidget(QWidget):
         from .qt_compat import QColor
 
         item.setForeground(2, QColor(color))
+
+        # Increment new counters
+        if info.status == "RUNNING":
+            self._running_count += 1
+        elif info.status == "COMPLETED":
+            self._completed_count += 1
 
         # Apply current category filter to this item
         filter_text = self._filter_combo.currentText()
@@ -231,9 +259,7 @@ class AgentTreeWidget(QWidget):
 
     def _update_status_counts(self) -> None:
         """Refresh the running / completed counts label."""
-        running = sum(1 for a in self._agents.values() if a.status == "RUNNING")
-        completed = sum(1 for a in self._agents.values() if a.status == "COMPLETED")
-        self._status_label.setText(f"{running} running / {completed} completed")
+        self._status_label.setText(f"{self._running_count} running / {self._completed_count} completed")
 
     @staticmethod
     def _format_elapsed(seconds: float) -> str:

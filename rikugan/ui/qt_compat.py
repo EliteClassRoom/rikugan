@@ -64,8 +64,10 @@ if QT_BINDING == "PySide6":
         QColor,
         QFont,
         QIntValidator,
+        QPalette,
         QSyntaxHighlighter,
         QTextCharFormat,
+        QTextCursor,
     )
     from PySide6.QtWidgets import (
         QAbstractItemView,
@@ -113,8 +115,10 @@ else:
         QColor,
         QFont,
         QIntValidator,
+        QPalette,
         QSyntaxHighlighter,
         QTextCharFormat,
+        QTextCursor,
     )
     from PyQt5.QtWidgets import (  # noqa: F401
         QAbstractItemView,

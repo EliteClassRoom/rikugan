@@ -18,9 +18,13 @@ from .qt_compat import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPalette,
     QPushButton,
     QSizePolicy,
     Qt,
+    QColor,
+    QTextCursor,
+    QTextEdit,
     QTimer,
     QToolButton,
     QVBoxLayout,
@@ -298,11 +302,16 @@ class UserMessageWidget(QFrame):
 class AssistantMessageWidget(QFrame):
     """Displays an assistant message with markdown support and streaming."""
 
+    # Block-level markdown markers that require full re-render
+    _BLOCK_MARKERS = ('```', '# ', '## ', '### ', '- ', '* ', '> ', '\n\n', '---', '***')
+
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("message_assistant")
         self.setStyleSheet("QFrame#message_assistant { border-radius: 8px; padding: 8px; margin: 4px 8px 4px 8px; }")
+        self.setMinimumHeight(150)
         self._text = ""
+        self._in_code_block = False  # Track if we're inside a code block
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -312,23 +321,77 @@ class AssistantMessageWidget(QFrame):
         self._role_label.setProperty("class", "assistant_label")
         layout.addWidget(self._role_label)
 
-        self._content = QLabel("")
-        self._content.setWordWrap(True)
+        self._content = QTextEdit()
+        self._content.setReadOnly(True)
+        self._content.setMinimumHeight(120)
         self._content.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
+        self._content.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._content.document().setDocumentMargin(0)
+        # Make QTextEdit look like the old QLabel - transparent background, no border
+        self._content.viewport().setAutoFillBackground(False)
+        transparent = self._content.palette()
+        transparent.setColor(QPalette.ColorRole.Base, QColor(0, 0, 0, 0))
+        self._content.setPalette(transparent)
+        self._content.setFrameShape(QFrame.Shape.NoFrame)
         self._content.setObjectName("message_content")
+        self._content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self._content)
 
     def append_text(self, text: str) -> None:
-        """Append text (for streaming)."""
+        """Append text (for streaming) using incremental HTML append."""
         self._text += text
-        self._content.setText(md_to_html(self._text))
+
+        # Handle code block state transitions
+        if '```' in text:
+            # Toggle based on parity of fence count
+            count = text.count('```')
+            if count % 2 == 1:
+                self._in_code_block = not self._in_code_block
+            if not self._in_code_block:
+                self._content.setHtml(md_to_html(self._text))
+                return
+
+        # If we're inside a code block, escape and append directly
+        if self._in_code_block:
+            escaped = self._escape_html(text)
+            cursor = self._content.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertHtml(escaped)
+            self._content.setTextCursor(cursor)
+            return
+
+        # Normal text - use simple append if no block markers
+        if self._is_simple_text(text):
+            escaped = self._escape_html(text)
+            cursor = self._content.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertHtml(escaped)
+            self._content.setTextCursor(cursor)
+        else:
+            # Complex markdown (headers, lists) - fall back to full render
+            self._content.setHtml(md_to_html(self._text))
 
     def set_text(self, text: str) -> None:
         """Set final text (rendered as markdown)."""
         self._text = text
-        self._content.setText(md_to_html(text))
+        self._in_code_block = False  # Reset state
+        self._content.setHtml(md_to_html(text))
+
+    @staticmethod
+    def _is_simple_text(text: str) -> bool:
+        """Check if text contains no block-level markdown."""
+        return not any(m in text for m in AssistantMessageWidget._BLOCK_MARKERS)
+
+    @staticmethod
+    def _escape_html(text: str) -> str:
+        """Escape text for HTML display."""
+        return (text
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;'))
 
 
 class UserQuestionWidget(QFrame):

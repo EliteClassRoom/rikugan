@@ -30,7 +30,13 @@ class _SkillPopup(QFrame):
         self.setStyleSheet(
             "QFrame#skill_popup { border: 1px solid; border-radius: 4px; padding: 2px; }"
             "QLabel { padding: 3px 8px; }"
-            'QLabel[selected="true"] { border-radius: 3px; }'
+            "QLabel#skill_popup_label[selected=\"true\"] {"
+            "    background-color: palette(highlight);"
+            "    color: palette(highlightedText);"
+            "}"
+            "QLabel#skill_popup_label[selected=\"false\"] {"
+            "    background-color: transparent;"
+            "}"
         )
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(2, 2, 2, 2)
@@ -51,6 +57,7 @@ class _SkillPopup(QFrame):
 
         for slug in slugs:
             lbl = QLabel(f"/{slug}")
+            lbl.setObjectName("skill_popup_label")
             self._labels.append(lbl)
             self._layout.addWidget(lbl)
 
@@ -59,9 +66,12 @@ class _SkillPopup(QFrame):
 
     def _update_highlight(self) -> None:
         for i, lbl in enumerate(self._labels):
-            lbl.setProperty("selected", "true" if i == self._selected_idx else "false")
-            lbl.style().unpolish(lbl)
-            lbl.style().polish(lbl)
+            is_selected = (i == self._selected_idx)
+            was_selected = lbl.property("selected") == "true"
+            if was_selected != is_selected:
+                lbl.setProperty("selected", "true" if is_selected else "false")
+                lbl.style().unpolish(lbl)
+                lbl.style().polish(lbl)
 
     def move_selection(self, delta: int) -> None:
         if not self._slugs:

@@ -34,7 +34,7 @@ def _load_persistent_memory(idb_dir: str = "") -> str | None:
         return None
 
     try:
-        with open(md_path, encoding="utf-8") as f:
+        with open(md_path, encoding="utf-8", errors="replace") as f:
             lines = []
             for i, line in enumerate(f):
                 if i >= _MAX_MEMORY_LINES:

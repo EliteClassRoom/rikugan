@@ -374,7 +374,7 @@ class RikuganPanelCore(QWidget):
         self._build_tab_widget()
         self._build_main_splitter(chat_layout)
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
-        chat_layout.addWidget(self._build_input_section())
+        self._build_chat_input_splitter(chat_layout)
         self._mode_stack.addWidget(chat_page)
 
         # --- Page 1: Tools (lazily populated on first switch) ---
@@ -438,6 +438,18 @@ class RikuganPanelCore(QWidget):
         self._main_splitter.setStretchFactor(1, 1)
 
         layout.addWidget(self._main_splitter, 1)
+
+    def _build_chat_input_splitter(self, layout: QVBoxLayout) -> None:
+        """Create the vertical splitter between chat view and input area for resizing."""
+        self._chat_input_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._chat_input_splitter.setHandleWidth(3)
+        self._chat_input_splitter.setStyleSheet(get_splitter_handle_style())
+        self._chat_input_splitter.addWidget(self._main_splitter)
+        self._chat_input_splitter.addWidget(self._build_input_section())
+        # Give chat area 3x more space than input area initially
+        self._chat_input_splitter.setStretchFactor(0, 3)
+        self._chat_input_splitter.setStretchFactor(1, 1)
+        layout.addWidget(self._chat_input_splitter, 1)
 
     def _build_input_section(self) -> QWidget:
         """Build the bottom input area with text field and action buttons."""
@@ -969,7 +981,7 @@ class RikuganPanelCore(QWidget):
             return
         self._polling = True
         try:
-            for _ in range(20):
+            for _ in range(10):
                 event = self._ctrl.get_event(timeout=0)
                 if event is None:
                     if not self._ctrl.is_agent_running:

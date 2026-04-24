@@ -18,6 +18,8 @@ from .message_widgets import (
     ThinkingWidget,
     UserMessageWidget,
     UserQuestionWidget,
+    _ThinkingBlock,
+    _split_thinking,
 )
 from .plan_view import PlanView
 from .qt_compat import (
@@ -72,6 +74,7 @@ class ChatView(QScrollArea):
 
         # Track current assistant widget for streaming
         self._current_assistant: AssistantMessageWidget | None = None
+        self._message_thinking: _ThinkingBlock | None = None  # For message content thinking
         self._tool_widgets: dict[str, ToolCallWidget] = {}
         self._thinking: ThinkingWidget | None = None
         self._thinking_shown_at: float = 0.0
@@ -97,6 +100,10 @@ class ChatView(QScrollArea):
         self._thinking_hide_timer = QTimer(self)
         self._thinking_hide_timer.setSingleShot(True)
         self._thinking_hide_timer.timeout.connect(self._force_hide_thinking)
+
+        # Batched session restore state
+        self._pending_restore: list[Message] = []
+        self._restore_chunk_size = 10
 
     def add_user_message(self, text: str) -> None:
         widget = UserMessageWidget(text)
@@ -256,12 +263,42 @@ class ChatView(QScrollArea):
             if self._current_assistant is None:
                 self._current_assistant = AssistantMessageWidget()
                 self._insert_widget(self._current_assistant)
-            self._current_assistant.append_text(event.text)
+
+            # Split text into thinking and visible parts
+            thinking_text, visible_text = _split_thinking(event.text)
+
+            # Show thinking in collapsible block
+            if thinking_text:
+                if self._message_thinking is None:
+                    self._message_thinking = _ThinkingBlock()
+                    self._insert_widget(self._message_thinking)
+                self._message_thinking.set_thinking(thinking_text, in_progress=True)
+
+            # Show visible text in message widget
+            if visible_text:
+                self._current_assistant.append_text(visible_text)
+
             self._scroll_to_bottom()
         else:  # TEXT_DONE
             if self._current_assistant is not None:
-                self._current_assistant.set_text(event.text)
+                # Final render - extract and handle thinking if any
+                thinking_text, visible_text = _split_thinking(event.text)
+
+                if thinking_text:
+                    # Finalize thinking block
+                    if self._message_thinking is None:
+                        self._message_thinking = _ThinkingBlock()
+                        self._insert_widget(self._message_thinking)
+                    self._message_thinking.set_thinking(thinking_text, in_progress=False)
+
+                if visible_text:
+                    self._current_assistant.set_text(visible_text)
+                elif not thinking_text:
+                    # No visible text at all, just render normally
+                    self._current_assistant.set_text(event.text)
+
             self._current_assistant = None
+            self._message_thinking = None
 
     def _handle_tool_event(self, event: TurnEvent) -> None:
         etype = event.type
@@ -452,23 +489,29 @@ class ChatView(QScrollArea):
         self.user_answer_submitted.emit(answer)
 
     def restore_from_messages(self, messages: list[Message]) -> None:
-        """Replay saved Message objects into the chat view."""
+        """Replay saved Message objects into the chat view (batched to keep UI responsive)."""
         self.clear_chat()
+        self._pending_restore = list(messages)
+        QTimer.singleShot(0, self._restore_next_chunk)
 
-        for msg in messages:
+    def _restore_next_chunk(self) -> None:
+        """Restore a chunk of messages, yielding to event loop between chunks."""
+        chunk_size = min(self._restore_chunk_size, len(self._pending_restore))
+        for _ in range(chunk_size):
+            if not self._pending_restore:
+                break
+            msg = self._pending_restore.pop(0)
             if msg.role == Role.USER:
                 if _is_hidden_system_user_message(msg.content):
                     continue
                 self._reset_tool_run()
                 self.add_user_message(msg.content)
-
             elif msg.role == Role.ASSISTANT:
                 self._reset_tool_run()
                 if msg.content:
                     w = AssistantMessageWidget()
                     w.set_text(msg.content)
                     self._insert_widget(w)
-
                 for tc in msg.tool_calls:
                     tw = ToolCallWidget(tc.name, tc.id)
                     try:
@@ -479,7 +522,6 @@ class ChatView(QScrollArea):
                     tw.mark_done()
                     self._tool_widgets[tc.id] = tw
                     self._register_tool_widget(tc.name, tc.id, tw)
-
             elif msg.role == Role.TOOL:
                 self._reset_tool_run()
                 for tr in msg.tool_results:
@@ -490,13 +532,19 @@ class ChatView(QScrollArea):
                     if group:
                         group.notify_result(tr.is_error)
 
-        self._current_assistant = None
-        self._reset_tool_run()
-        self._scroll_to_bottom()
+        # If more messages remain, schedule next chunk
+        if self._pending_restore:
+            QTimer.singleShot(0, self._restore_next_chunk)
+        else:
+            # Restore complete
+            self._current_assistant = None
+            self._reset_tool_run()
+            self._scroll_to_bottom()
 
     def clear_chat(self) -> None:
         self._force_hide_thinking()
         self._thinking_hide_timer.stop()
+        self._pending_restore.clear()
         while self._layout.count() > 1:
             item = self._layout.takeAt(0)
             widget = item.widget()
@@ -531,8 +579,12 @@ class ChatView(QScrollArea):
         return sb.maximum() - sb.value() < 60
 
     def _scroll_to_bottom(self) -> None:
-        if self._is_near_bottom():
-            self._scroll_timer.start()
+        if not self._is_near_bottom():
+            return
+        # Don't restart an already-running timer - Qt coalesces the start() calls
+        if self._scroll_timer.isActive():
+            return
+        self._scroll_timer.start()
 
     def _do_scroll(self) -> None:
         sb = self.verticalScrollBar()
