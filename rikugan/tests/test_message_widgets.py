@@ -16,7 +16,7 @@ class TestSplitThinking(unittest.TestCase):
         """Test extraction of a single basic thinking block."""
         from ui.message_widgets import _split_thinking
 
-        text = "<think>Let me analyze this function's purpose.</think>The function is a handler."
+        text = "<think>Let me analyze this function's purpose.The function is a handler."
         thinking, visible = _split_thinking(text)
         self.assertEqual(thinking, "Let me analyze this function's purpose.")
         self.assertEqual(visible, "The function is a handler.")
@@ -25,7 +25,7 @@ class TestSplitThinking(unittest.TestCase):
         """Test thinking block with text before and after."""
         from ui.message_widgets import _split_thinking
 
-        text = "Let me check this. <think>Checking the binary structure.</think>And here's the result."
+        text = "Let me check this. <think>Checking the binary structure.And here's the result."
         thinking, visible = _split_thinking(text)
         self.assertEqual(thinking, "Checking the binary structure.")
         self.assertEqual(visible, "Let me check this. And here's the result.")
@@ -34,7 +34,7 @@ class TestSplitThinking(unittest.TestCase):
         """Test multiple thinking blocks get joined with newlines."""
         from ui.message_widgets import _split_thinking
 
-        text = "<think>First thought.</think>Something.<think>Second thought.</think>End."
+        text = "<think>First thought.Something.<think>Second thought.End."
         thinking, visible = _split_thinking(text)
         self.assertEqual(thinking, "First thought.\n\nSecond thought.")
         self.assertEqual(visible, "Something.End.")
@@ -70,7 +70,7 @@ class TestSplitThinking(unittest.TestCase):
         """Test thinking block with no content."""
         from ui.message_widgets import _split_thinking
 
-        text = "<think></think>No thinking content."
+        text = "<think>No thinking content."
         thinking, visible = _split_thinking(text)
         self.assertEqual(thinking, "")
         self.assertEqual(visible, "No thinking content.")
@@ -79,19 +79,11 @@ class TestSplitThinking(unittest.TestCase):
         """Test thinking block containing markdown-like content."""
         from ui.message_widgets import _split_thinking
 
-        text = "<think>**analysis**: Looking at *function* `main`.</think>Output here."
+        text = "<think>**analysis**: Looking at *function* `main`.Output here."
         thinking, visible = _split_thinking(text)
         self.assertIn("**analysis**:", thinking)
         self.assertIn("Output here.", visible)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
-# ---------------------------------------------------------------------------
-# UI / structural tests for AssistantMessageWidget
-# ---------------------------------------------------------------------------
 
 
 class TestAssistantMessageWidgetUI(unittest.TestCase):
@@ -193,4 +185,3 @@ class TestAssistantMessageWidgetUI(unittest.TestCase):
 
         w = AssistantMessageWidget()
         self.assertTrue(w._content.isReadOnly())
-

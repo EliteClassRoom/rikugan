@@ -24,7 +24,11 @@ class MCPManager:
 
     Servers are started in background threads and their tools are
     registered into the Rikugan ToolRegistry as they come online.
+    
+    This class can be used as a singleton via `get_instance()`.
     """
+
+    _instance: MCPManager | None = None
 
     def __init__(self):
         self._configs: list[MCPServerConfig] = []
@@ -32,6 +36,18 @@ class MCPManager:
         self._lock = threading.Lock()
         self._shut_down = False
         self._generation = 0  # incremented on each start/reload cycle
+        MCPManager._instance = self
+
+    @classmethod
+    def get_instance(cls) -> MCPManager:
+        """Get the singleton MCPManager instance.
+
+        Returns the global MCPManager if one exists.
+        Raises RuntimeError if no manager has been created.
+        """
+        if cls._instance is None:
+            raise RuntimeError("MCPManager has not been initialized")
+        return cls._instance
 
     def load_config(self, path: str = "") -> int:
         """Load MCP config. Returns number of enabled servers found."""

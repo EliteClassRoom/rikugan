@@ -48,6 +48,7 @@ def _is_hidden_system_user_message(content: str) -> bool:
     return content.lstrip().startswith("[SYSTEM]")
 
 
+
 class ChatView(QScrollArea):
     """Scrollable chat area that renders TurnEvents into widgets."""
 
@@ -104,6 +105,10 @@ class ChatView(QScrollArea):
         # Batched session restore state
         self._pending_restore: list[Message] = []
         self._restore_chunk_size = 10
+
+        # Thinking block buffering for proper ordering
+        self._think_buffer: str = ""  # Accumulated text while waiting for <think> to close
+        self._waiting_think_close: bool = False  # True when we have <think> but not yet
 
     def add_user_message(self, text: str) -> None:
         widget = UserMessageWidget(text)
@@ -260,23 +265,53 @@ class ChatView(QScrollArea):
         self._hide_thinking()
         self._reset_tool_run()
         if event.type == TurnEventType.TEXT_DELTA:
-            if self._current_assistant is None:
-                self._current_assistant = AssistantMessageWidget()
-                self._insert_widget(self._current_assistant)
+            text = event.text
 
-            # Split text into thinking and visible parts
-            thinking_text, visible_text = _split_thinking(event.text)
-
-            # Show thinking in collapsible block
-            if thinking_text:
-                if self._message_thinking is None:
-                    self._message_thinking = _ThinkingBlock()
-                    self._insert_widget(self._message_thinking)
-                self._message_thinking.set_thinking(thinking_text, in_progress=True)
-
-            # Show visible text in message widget
-            if visible_text:
-                self._current_assistant.append_text(visible_text)
+            if self._waiting_think_close:
+                # Buffer text until </think> arrives
+                self._think_buffer += text
+                if "</think>" in text:
+                    # Complete — parse accumulated buffer
+                    thinking_text, visible_text = _split_thinking(self._think_buffer)
+                    self._waiting_think_close = False
+                    if thinking_text:
+                        if self._message_thinking is None:
+                            self._message_thinking = _ThinkingBlock()
+                            self._insert_widget(self._message_thinking)
+                        self._message_thinking.set_thinking(thinking_text, in_progress=False)
+                    if visible_text:
+                        if self._current_assistant is None:
+                            self._current_assistant = AssistantMessageWidget()
+                            self._insert_widget(self._current_assistant)
+                        self._current_assistant.append_text(visible_text)
+            elif "<think>" in text and "</think>" not in text:
+                # Opening <think> without closing — start buffering
+                self._waiting_think_close = True
+                self._think_buffer = text
+                thinking_text, visible_text = _split_thinking(text)
+                if thinking_text:
+                    if self._message_thinking is None:
+                        self._message_thinking = _ThinkingBlock()
+                        self._insert_widget(self._message_thinking)
+                    self._message_thinking.set_thinking(thinking_text, in_progress=True)
+                if visible_text:
+                    if self._current_assistant is None:
+                        self._current_assistant = AssistantMessageWidget()
+                        self._insert_widget(self._current_assistant)
+                    self._current_assistant.append_text(visible_text)
+            else:
+                # Normal text (no thinking, or complete <think>...</think> in one delta)
+                thinking_text, visible_text = _split_thinking(text)
+                if thinking_text:
+                    if self._message_thinking is None:
+                        self._message_thinking = _ThinkingBlock()
+                        self._insert_widget(self._message_thinking)
+                    self._message_thinking.set_thinking(thinking_text, in_progress=False)
+                if visible_text:
+                    if self._current_assistant is None:
+                        self._current_assistant = AssistantMessageWidget()
+                        self._insert_widget(self._current_assistant)
+                    self._current_assistant.append_text(visible_text)
 
             self._scroll_to_bottom()
         else:  # TEXT_DONE
@@ -299,6 +334,8 @@ class ChatView(QScrollArea):
 
             self._current_assistant = None
             self._message_thinking = None
+            self._think_buffer = ""
+            self._waiting_think_close = False
 
     def _handle_tool_event(self, event: TurnEvent) -> None:
         etype = event.type
@@ -509,8 +546,18 @@ class ChatView(QScrollArea):
             elif msg.role == Role.ASSISTANT:
                 self._reset_tool_run()
                 if msg.content:
+                    thinking_text, visible_text = _split_thinking(msg.content)
+
+                    if thinking_text:
+                        tb = _ThinkingBlock()
+                        tb.set_thinking(thinking_text, in_progress=False)
+                        self._insert_widget(tb)
+
                     w = AssistantMessageWidget()
-                    w.set_text(msg.content)
+                    w.set_text(visible_text if visible_text else msg.content)
+                    self._insert_widget(w)
+                else:
+                    w = AssistantMessageWidget()
                     self._insert_widget(w)
                 for tc in msg.tool_calls:
                     tw = ToolCallWidget(tc.name, tc.id)
@@ -545,12 +592,15 @@ class ChatView(QScrollArea):
         self._force_hide_thinking()
         self._thinking_hide_timer.stop()
         self._pending_restore.clear()
+        self._think_buffer = ""
+        self._waiting_think_close = False
         while self._layout.count() > 1:
             item = self._layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
         self._current_assistant = None
+        self._message_thinking = None
         self._tool_widgets.clear()
         self._plan_view = None
         self._reset_tool_run()

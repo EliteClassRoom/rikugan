@@ -30,7 +30,7 @@ def _unwrap_exception(exc: BaseException) -> str:
     hiding the actual cause behind "unhandled errors in a TaskGroup (N sub-exception)".
     """
     # Python 3.11+ ExceptionGroup
-    if isinstance(exc, BaseExceptionGroup):  # type: ignore[name-defined]
+    if sys.version_info >= (3, 11) and isinstance(exc, BaseExceptionGroup):
         parts = []
         for sub in exc.exceptions:
             parts.append(_unwrap_exception(sub))
@@ -165,6 +165,8 @@ class MCPClient:
 
         try:
             result = self._run_coro(self._async_call_tool(name, arguments), timeout=timeout)
+        except asyncio.CancelledError:
+            raise
         except MCPTimeoutError:
             raise
         except MCPError:
@@ -199,11 +201,12 @@ class MCPClient:
 
         # Extract text content
         parts = []
-        for item in result.content:
-            if hasattr(item, "text"):
-                parts.append(item.text)
-            else:
-                parts.append(str(item))
+        if result.content:
+            for item in result.content:
+                if hasattr(item, "text"):
+                    parts.append(item.text)
+                else:
+                    parts.append(str(item))
         raw = "\n".join(parts) if parts else str(result)
 
         # MCP results are from external servers — sanitize before they

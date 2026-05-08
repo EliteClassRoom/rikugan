@@ -243,6 +243,7 @@ class RikuganPanelCore(QWidget):
         self._pending_answer = False
         self._awaiting_button_approval = False
         self._is_shutdown = False
+        self._starting_agent = False  # guard: QTimer-deferred start_agent pending
         self._ui_hooks_factory = ui_hooks_factory
         self._ui_hooks = None
         self._tools_form_factory = tools_form_factory
@@ -802,6 +803,7 @@ class RikuganPanelCore(QWidget):
         if self._is_shutdown:
             return
         self._is_shutdown = True
+        self._starting_agent = False  # prevent any deferred start from firing
         try:
             tools_form = getattr(self, "_tools_form", None)
             tools_panel = getattr(self, "_tools_panel", None)
@@ -869,8 +871,8 @@ class RikuganPanelCore(QWidget):
             if runner:
                 runner.agent_loop.submit_user_answer(text)
             return
-        # Queue while the agent is actively running.
-        if self._ctrl.is_agent_running:
+        # Queue while the agent is actively running (or starting).
+        if self._ctrl.is_agent_running or self._starting_agent:
             self._ctrl.queue_message(text)
             chat_view.add_queued_message(text)
             return
@@ -887,6 +889,7 @@ class RikuganPanelCore(QWidget):
             return
         self._pending_answer = False
         self._awaiting_button_approval = False
+        self._starting_agent = False
         self._ctrl.cancel()
         # Remove [queued] widgets from the active chat view
         chat_view = self._active_chat_view()
@@ -946,19 +949,30 @@ class RikuganPanelCore(QWidget):
             return
         chat_view.add_user_message(user_message)
         self._set_running(True)
+        self._starting_agent = True
 
         # Update tab label after first user message
         self._update_tab_label(self._ctrl.active_tab_id)
 
-        error = self._ctrl.start_agent(user_message)
-        if error:
-            chat_view.add_error_message(error)
-            self._set_running(False)
-            return
+        # Defer agent startup to the next event-loop iteration so that
+        # provider SDK imports (httpx/h2/ssl C-extensions) happen outside
+        # Qt signal dispatch, avoiding the Shiboken UAF crash in IDA Pro.
+        def _do_start():
+            if self._is_shutdown:
+                return
+            if not self._starting_agent:
+                return  # cancelled before deferred start fired
+            self._starting_agent = False
+            error = self._ctrl.start_agent(user_message)
+            if error:
+                chat_view.add_error_message(error)
+                self._set_running(False)
+                return
+            self._ensure_poll_timer()
+            assert self._poll_timer is not None
+            self._poll_timer.start(50)
 
-        self._ensure_poll_timer()
-        assert self._poll_timer is not None
-        self._poll_timer.start(50)
+        QTimer.singleShot(0, _do_start)
 
     def _ensure_poll_timer(self) -> None:
         if self._poll_timer is not None:
@@ -1065,6 +1079,7 @@ class RikuganPanelCore(QWidget):
         # buttons are stale and free-text input must be restored.
         self._pending_answer = False
         self._awaiting_button_approval = False
+        self._starting_agent = False
 
         self._ctrl.on_agent_finished()
         # Remove any [queued] widgets since the queue was cleared.

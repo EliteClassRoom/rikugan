@@ -6,6 +6,7 @@ Wires Binary Ninja-specific tool modules into the shared ToolRegistry.
 from __future__ import annotations
 
 from ...core.thread_safety import idasync
+from ...tools import web
 from ...tools.registry import ToolRegistry
 from . import (  # type: ignore[assignment]
     annotations,
@@ -37,6 +38,7 @@ _TOOL_MODULES = (
     il,
     il_analysis,
     il_transform,
+    web,
 )
 
 
