@@ -169,13 +169,28 @@ class LLMProvider(ABC):
     def ensure_ready(self) -> None:
         """Pre-initialize the provider (imports, client objects, etc.).
 
+        Temporarily bypasses Shiboken's ``__import__`` hook during SDK
+        import to prevent UAF crashes in IDA Pro (Python > 3.10).
+        PySide6 modules are already loaded by IDA's own UI, so using
+        ``importlib.__import__`` (CPython's standard import) during this
+        window is safe — SDK packages and their C-extension dependencies
+        (httpx, h2, ssl, ...) do not need Shiboken type wrapping.
+
         MUST be called on the main thread before handing the provider to a
         background thread.  Python 3.14 crashes when heavy C-extension
         packages (httpx, h2, ssl ...) are first imported from a non-main
         thread, so providers that lazy-import SDK packages override
         ``_init_client`` to force the import on the caller's thread.
         """
-        self._init_client()
+        import builtins
+        import importlib
+
+        saved_import = builtins.__import__
+        builtins.__import__ = importlib.__import__
+        try:
+            self._init_client()
+        finally:
+            builtins.__import__ = saved_import
 
     def _init_client(self) -> None:
         """Pre-import SDK and create client. Delegates to ``_get_client()``."""
