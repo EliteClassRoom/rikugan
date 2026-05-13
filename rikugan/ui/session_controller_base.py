@@ -51,6 +51,7 @@ class SessionControllerBase:
         self._provider_registry = ProviderRegistry()
         self._provider_registry.register_custom_providers(list(config.custom_providers.keys()))
         self._tool_registry = tool_registry_factory()
+        self._sync_web_tool_config()
         self._skill_registry = SkillRegistry()
         self._mcp_manager = MCPManager()
         self._idb_path = _normalize_db_path(database_path_getter())
@@ -72,6 +73,15 @@ class SessionControllerBase:
 
         self._runner: BackgroundAgentRunner | None = None
         self._pending_messages: list[str] = []
+
+    def _sync_web_tool_config(self) -> None:
+        """Expose the active runtime config to MiniMax-backed web tools."""
+        try:
+            from ..tools import web
+
+            web.set_runtime_config(self.config)
+        except Exception as e:
+            log_debug(f"Failed to sync web tool config: {e}")
 
     def _initialize_runtime(self) -> None:
         """Load heavy runtime components off the UI path."""
@@ -274,6 +284,12 @@ class SessionControllerBase:
             # Delay only the first agent start if background init is still running.
             self._runtime_init_done.wait(timeout=10.0)
 
+        # Declare provider-dependent tool availability so the tool schema
+        # sent to the LLM only lists tools that the active provider supports.
+        self._sync_web_tool_config()
+        is_minimax = self.config.provider.name == "minimax"
+        self._tool_registry.set_capabilities({"minimax_provider": is_minimax})
+
         try:
             provider = self._provider_registry.get_or_create(
                 self.config.provider.name,
@@ -419,6 +435,7 @@ class SessionControllerBase:
         self._active_tab_id = tab_id
 
     def update_settings(self) -> None:
+        self._sync_web_tool_config()
         # Re-register custom providers in case user added/removed one
         self._provider_registry.register_custom_providers(list(self.config.custom_providers.keys()))
         for session in self._sessions.values():

@@ -114,9 +114,13 @@ class ToolRegistry:
         self._schema_cache = None  # invalidate — available tools may have changed
 
     def _available(self, defn: ToolDefinition) -> bool:
-        """Check if all requirements of a tool definition are met."""
+        """Check if all requirements of a tool definition are met.
+
+        Requirements default to False when not explicitly declared —
+        tools must opt-in via ``set_capabilities()``.
+        """
         for req in defn.requires:
-            if not self._capabilities.get(req, True):
+            if not self._capabilities.get(req, False):
                 return False
         return True
 
@@ -141,7 +145,7 @@ class ToolRegistry:
         if defn.handler is None:
             raise ToolError(f"Tool {name} has no handler", tool_name=name)
         if not self._available(defn):
-            missing = [r for r in defn.requires if not self._capabilities.get(r, True)]
+            missing = [r for r in defn.requires if not self._capabilities.get(r, False)]
             raise ToolError(
                 f"Tool {name} unavailable — requires: {', '.join(missing)}",
                 tool_name=name,

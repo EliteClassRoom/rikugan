@@ -12,33 +12,54 @@ from __future__ import annotations
 
 import base64
 import os
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import requests
 
 from ..core.errors import ToolError
-from ..core.logging import log_debug, log_error
+from ..core.logging import log_debug
 from .base import tool
+
+if TYPE_CHECKING:
+    from ..core.config import RikuganConfig
 
 # Tool constants
 WEB_SEARCH_TIMEOUT = 30.0
 UNDERSTAND_IMAGE_TIMEOUT = 60.0
 DEFAULT_API_HOST = "https://api.minimax.io"
+_runtime_config: RikuganConfig | None = None
 
 
-def _get_minimax_auth() -> tuple[str, str, str] | tuple[None, None, None]:
-    """Read MiniMax API key and host from persisted config.
+def set_runtime_config(config: RikuganConfig | None) -> None:
+    """Provide the active in-memory config for web tools.
+
+    Web tools execute from worker threads and cannot receive the session config
+    as a normal tool argument.  The session controller injects the active config
+    here so MiniMax auth uses decrypted/current settings instead of reloading a
+    potentially stale or encrypted copy from disk.
+    """
+    global _runtime_config
+    _runtime_config = config
+
+
+def _get_minimax_auth(
+    config: RikuganConfig | None = None,
+) -> tuple[str, str, str] | tuple[None, None, None]:
+    """Read MiniMax API key and host from the active runtime config.
 
     Returns (api_key, api_host, model_name) if MiniMax is the active
     provider and an API key is configured, or (None, None, None) otherwise.
     """
-    from ..core.config import RikuganConfig
+    if config is None:
+        config = _runtime_config
+    if config is None:
+        from ..core.config import RikuganConfig
 
-    try:
-        config = RikuganConfig.load_or_create()
-    except Exception as e:
-        log_debug(f"Failed to load config for MiniMax auth: {e}")
-        return None, None, None
+        try:
+            config = RikuganConfig.load_or_create()
+        except Exception as e:
+            log_debug(f"Failed to load config for MiniMax auth: {e}")
+            return None, None, None
 
     # Only available when MiniMax is the active provider
     if config.provider.name != "minimax":
@@ -50,11 +71,23 @@ def _get_minimax_auth() -> tuple[str, str, str] | tuple[None, None, None]:
     if not api_key:
         return None, None, None
 
-    # Strip /anthropic suffix from api_base to get the REST host
-    api_base = minimax_cfg.get("api_base", "") or DEFAULT_API_HOST
-    api_host = api_base.replace("/anthropic", "").rstrip("/")
+    # Determine the REST API host.  Prefer the stored api_base
+    # (both from the providers snapshot and the active provider),
+    # strip any /anthropic suffix, and fall back to the global host.
+    raw_base = (
+        minimax_cfg.get("api_base", "")
+        or config.provider.api_base
+        or DEFAULT_API_HOST
+    )
+    api_host = raw_base.replace("/anthropic", "").rstrip("/")
 
-    model_name = config.provider.model or minimax_cfg.get("model", "MiniMax-M2.5")
+    # Model name: prefer provider-level, then providers dict,
+    # then the hard-coded default.
+    model_name = (
+        config.provider.model
+        or minimax_cfg.get("model")
+        or "MiniMax-M2.5"
+    )
 
     return api_key, api_host, model_name
 
@@ -74,7 +107,7 @@ def _call_minimax_api(endpoint: str, payload: dict, timeout: float) -> dict:
         ToolError: If MiniMax is not the active provider, auth fails,
                    or the API returns an error.
     """
-    api_key, api_host, model = _get_minimax_auth()
+    api_key, api_host, _model = _get_minimax_auth()
 
     if api_key is None:
         raise ToolError(
@@ -99,20 +132,20 @@ def _call_minimax_api(endpoint: str, payload: dict, timeout: float) -> dict:
         raise ToolError(
             f"MiniMax API timed out after {timeout:.0f}s",
             tool_name="web_search",
-        )
+        ) from None
     except requests.RequestException as e:
         raise ToolError(
             f"MiniMax API request failed: {e}",
             tool_name="web_search",
-        )
+        ) from e
 
     try:
         data = response.json()
-    except ValueError:
+    except ValueError as e:
         raise ToolError(
             f"MiniMax API returned non-JSON response: {response.text[:200]}",
             tool_name="web_search",
-        )
+        ) from e
 
     # Check for API-level errors
     base_resp = data.get("base_resp", {})
@@ -160,7 +193,7 @@ def _process_image_source(image_source: str) -> str:
             raise ToolError(
                 f"Failed to download image from URL: {e}",
                 tool_name="understand_image",
-            )
+            ) from e
 
         image_data = img_response.content
         content_type = img_response.headers.get("content-type", "").lower()
@@ -190,7 +223,7 @@ def _process_image_source(image_source: str) -> str:
         raise ToolError(
             f"Failed to read image file: {e}",
             tool_name="understand_image",
-        )
+        ) from e
 
     lower = image_source.lower()
     if lower.endswith(".png"):
@@ -214,18 +247,17 @@ def _process_image_source(image_source: str) -> str:
 @tool(
     name="web_search",
     description=(
-        "Search the web for information using MiniMax. Use this when you need "
-        "current events, technical documentation, or other information from the "
-        "internet. Only works when MiniMax is the active provider."
+        "Search the web for information. Use this when you need current events, "
+        "technical documentation, or other information from the internet."
     ),
     category="web",
+    requires=["minimax_provider"],
     timeout=WEB_SEARCH_TIMEOUT,
 )
 def web_search(query: Annotated[str, "The search query to find information"]) -> str:
     """Search the web via MiniMax's coding_plan/search API.
 
     Returns organic search results with titles, links, and snippets.
-    Only available when MiniMax is configured as the active LLM provider.
     """
     log_debug(f"web_search: query={query!r}")
 
@@ -267,11 +299,12 @@ def web_search(query: Annotated[str, "The search query to find information"]) ->
 @tool(
     name="understand_image",
     description=(
-        "Analyze an image using MiniMax's vision API. Provide an image URL, "
+        "Analyze an image using AI vision. Provide an image URL, "
         "local file path, or base64 data, and a prompt describing what to "
-        "analyze. Only works when MiniMax is the active provider."
+        "analyze."
     ),
     category="web",
+    requires=["minimax_provider"],
     timeout=UNDERSTAND_IMAGE_TIMEOUT,
 )
 def understand_image(
@@ -285,7 +318,6 @@ def understand_image(
     """Analyze an image via MiniMax's coding_plan/vlm API.
 
     Converts URLs and local files to base64 data URLs before sending.
-    Only available when MiniMax is configured as the active LLM provider.
     """
     log_debug(f"understand_image: image_len={len(image)}, query={query!r}")
 

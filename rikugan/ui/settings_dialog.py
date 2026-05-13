@@ -83,7 +83,7 @@ class _ModelFetcher:
         # Python 3.14 crashes when heavy C-extension packages are first
         # imported from a background thread.
         try:
-            provider = self._registry.create(
+            provider = self._registry.new_instance(
                 provider_name,
                 api_key=api_key,
                 api_base=api_base,
@@ -618,7 +618,7 @@ class SettingsDialog(QDialog):
         base = self._api_base_edit.text().strip()
 
         try:
-            provider = self._registry.create(provider_name, api_key=explicit_key, api_base=base)
+            provider = self._registry.new_instance(provider_name, api_key=explicit_key, api_base=base)
             label, status_type = provider.auth_status()
             self._resolved_token = provider.api_key
         except Exception as e:
