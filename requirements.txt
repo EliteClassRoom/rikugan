@@ -5,3 +5,4 @@ mcp>=1.0.0
 tomli>=2.0.0
 cryptography>=43.0.0
 ida-domain>=0.1.0
+html2text>=2024.2.26

@@ -16,14 +16,118 @@ triggers:
   - ida_domain
   - ida release notes
   - ida version
+  - ida example
+  - idapython example
+  - ida scripting
+  - how do i read bytes
+  - how to iterate functions
+  - how to rename
+  - how to create structure
+  - how to use decompiler
+  - how to find xrefs
 author: Rikugan
-version: 1.0
+version: 2.0
 allowed_tools:
   - web_fetch
-  - mcp_fetch
+  - execute_python
+  - decompile_function
+  - get_decompiler_variables
+  - get_pseudocode
+  - list_functions
+  - search_functions
+  - get_function_info
+  - list_strings
+  - search_strings
+  - get_string_at
+  - read_bytes
+  - read_disassembly
+  - read_function_disassembly
+  - get_instruction_info
+  - set_comment
+  - set_function_comment
+  - set_type
+  - rename_function
+  - rename_address
+  - rename_variable
+  - xrefs_to
+  - xrefs_from
+  - function_xrefs
 ---
 
-Task: IDA Documentation Search. You are helping the user find information in official IDA Pro documentation.
+Task: IDA Documentation Search & Script Writing. You are helping the user find information in official IDA Pro documentation and write correct IDAPython scripts.
+
+## Your Workflow
+
+When the user asks about IDA functionality or wants to write an IDAPython script:
+
+### Step 1 — Identify the Task
+Understand what the user wants to accomplish:
+- Read data at an address? → `ida_bytes` module
+- Iterate over functions? → `idautils.Functions()` or Domain API
+- Rename something? → `ida_name` or Domain API `db.names`
+- Use the decompiler? → `ida_hexrays`
+- Analyze xrefs? → Domain API `db.xrefs`
+- Create structures? → `ida_typeinf` (IDA 9+)
+- Find strings? → Domain API `db.strings`
+
+### Step 2 — Fetch the Relevant Documentation
+
+**For IDAPython Examples (recommended first step):**
+```
+web_fetch(url="https://docs.hex-rays.com/developer/idapython/idapython-examples", format="markdown")
+```
+Browse the examples index to find a category matching the user's task (UI, Disassembly, Decompilation, Debugger, Types, Miscellaneous).
+
+**For specific example source code:**
+Fetch from the official IDA SDK GitHub repo:
+```
+web_fetch(url="https://raw.githubusercontent.com/HexRaysSA/ida-sdk/main/src/plugins/idapython/examples/<category>/<example>.py")
+```
+Example categories: `debugger`, `decompiler`, `disassembler`, `idbs`, `misc`, `types`, `ui`
+
+**For IDAPython API Reference:**
+```
+web_fetch(url="https://python.docs.hex-rays.com/ida_<module>/index.html", format="markdown")
+```
+For example: `ida_bytes`, `ida_funcs`, `ida_hexrays`, `ida_kernwin`, `ida_typeinf`, `idautils`
+
+**For a specific function:**
+```
+web_fetch(url="https://python.docs.hex-rays.com/ida_bytes/index.html#ida_bytes.get_byte", format="markdown")
+```
+
+**For Domain API (IDA 9.1+, simpler interface):**
+```
+web_fetch(url="https://ida-domain.docs.hex-rays.com/examples/", format="markdown")
+web_fetch(url="https://ida-domain.docs.hex-rays.com/getting_started/", format="markdown")
+```
+
+**For Release Notes (API changes):**
+```
+web_fetch(url="https://docs.hex-rays.com/release-notes/9_2.md", format="markdown")
+```
+
+### Step 3 — Read and Understand the Example/Code
+Parse the fetched content:
+- Identify the key API calls used
+- Note the function signatures
+- Understand the pattern/approach
+
+### Step 4 — Write the Script
+Use `execute_python` tool to write and run the IDAPython script:
+- Use the API calls from the documentation
+- Follow the patterns from the examples
+- Include proper error handling
+
+### Step 5 — Validate Against API Docs
+After writing the script, fetch the relevant API reference page to verify:
+- Function names are correct
+- Parameter types match
+- Return values are handled properly
+
+```
+web_fetch(url="https://python.docs.hex-rays.com/ida_<module>/index.html", format="markdown")
+```
 
 ## Available Documentation Sources
 
@@ -34,18 +138,18 @@ Navigation: Module index at root, individual module pages (e.g., ida_bytes, ida_
 Search tip: Append /genindex.html for full-text search
 
 ### 2. IDAPython Examples
-URL: https://docs.hex-rays.com/developer-guide/idapython/idapython-examples
+URL: https://docs.hex-rays.com/developer/idapython/idapython-examples
 Purpose: Real-world code samples organized by category and difficulty
 Categories: UI, Disassembly, Decompilation, Debugger, Types, Miscellaneous
 Each example lists: source code link, APIs used, difficulty level
 
 ### 3. IDAPython Getting Started
-URL: https://docs.hex-rays.com/developer-guide/idapython/idapython-getting-started
+URL: https://docs.hex-rays.com/developer/idapython/idapython-getting-started
 Purpose: Beginner-friendly introduction with basic code snippets
 Covers: Common variables (ea, BADADDR), basic operations per topic
 
 ### 4. IDAPython Porting Guide (IDA 8.x → 9.0)
-URL: https://docs.hex-rays.com/developer-guide/idapython/idapython-porting-guide-ida-9
+URL: https://docs.hex-rays.com/developer/idapython/idapython-porting-guide-ida-9
 Purpose: API changes and migration instructions
 
 ### 5. C++ SDK Reference
@@ -109,9 +213,9 @@ Source code URL pattern: https://github.com/HexRaysSA/ida-sdk/blob/main/src/plug
 
 ### Finding Code Examples
 1. Main examples page:
-   URL: https://docs.hex-rays.com/developer-guide/idapython/idapython-examples
+   URL: https://docs.hex-rays.com/developer/idapython/idapython-examples
 2. For category-specific examples (e.g., UI):
-   URL: https://docs.hex-rays.com/developer-guide/idapython/idapython-examples#ui
+   URL: https://docs.hex-rays.com/developer/idapython/idapython-examples#ui
 3. GitHub source (replace version in path):
    https://github.com/HexRaysSA/IDAPython/tree/9.0sp1/examples/<category>/<example>.py
 
@@ -119,13 +223,6 @@ Source code URL pattern: https://github.com/HexRaysSA/ida-sdk/blob/main/src/plug
 1. Main documentation: https://ida-domain.docs.hex-rays.com/
 2. Getting started: https://ida-domain.docs.hex-rays.com/getting_started/
 3. Examples by task: https://ida-domain.docs.hex-rays.com/examples/
-   - Database Operations
-   - Function Analysis
-   - String Analysis
-   - Bytes Analysis
-   - Type Analysis
-   - Cross-Reference Analysis
-   - Hooks/Event Handling
 4. API Reference: https://ida-domain.docs.hex-rays.com/usage/
 
 ### Finding Release Notes
@@ -134,7 +231,7 @@ Source code URL pattern: https://github.com/HexRaysSA/ida-sdk/blob/main/src/plug
 3. For version comparison, fetch relevant release notes and compare API sections
 
 ### Finding Getting Started Content
-URL: https://docs.hex-rays.com/developer-guide/idapython/idapython-getting-started
+URL: https://docs.hex-rays.com/developer/idapython/idapython-getting-started
 Sections: Basics, Code snippets by topic
 
 ### Finding IDA SDK GitHub Examples
@@ -142,23 +239,27 @@ Sections: Basics, Code snippets by topic
 2. For specific category (e.g., types): https://github.com/HexRaysSA/ida-sdk/tree/main/src/plugins/idapython/examples/types
 3. For specific source code: https://github.com/HexRaysSA/ida-sdk/blob/main/src/plugins/idapython/examples/<category>/<example>.py
 
-## Workflow for Answering User Questions
+## Common Patterns
 
-When the user asks about IDA functionality:
-
-1. Identify the topic (module, function, concept)
-2. Determine if Domain API (IDA 9.1+) is appropriate (simpler, high-level tasks)
-3. Select appropriate documentation source
-4. Fetch relevant page(s) using web_fetch or mcp_fetch tool
-5. Extract and summarize the relevant information
-6. Provide code example if available
+| Task | IDAPython | Domain API (IDA 9.1+) |
+|------|-----------|----------------------|
+| Iterate functions | `idautils.Functions()` | `db.functions` |
+| Read bytes | `ida_bytes.get_byte(ea)` | `db.read(ea, size)` |
+| Get xrefs | `idautils.XrefsTo(ea)` | `db.xrefs.to(ea)` |
+| Rename | `ida_name.set_name(ea, name)` | `db.names[ea] = name` |
+| Create struct | `ida_typeinf.tinfo_t.create_udt()` | `db.types.create_struct()` |
+| Decompile | `ida_hexrays.decompile(ea)` | `db.decompile(ea)` |
+| Find strings | `idautils.Strings()` | `db.strings` |
 
 ## Important Notes
 
 - For IDA 9.1+, consider Domain API first for simpler, more Pythonic interface
-- Always verify function signatures against the IDAPython Reference
+- Always verify function signatures against the IDAPython Reference after writing a script
 - Examples in "idapython-examples" are from the IDA GitHub repository and may be version-specific
 - For IDA 9.x API changes, check the Porting Guide
 - When unsure which module to use, start with idautils (high-level) or idc (IDC compatibility)
-- Domain API sits on top of IDAPython - they can be used together
+- Domain API sits on top of IDAPython — they can be used together
 - IDA SDK GitHub examples are production-quality and tested by Hex-Rays
+- GitHub raw content is rate-limited at ~60 requests/hour unauthenticated — batch reads when possible
+- Hex-Rays docs pages are large GitBook pages. Use `format='markdown'` and read in chunks with `offset`/`limit` (default 7400 chars per call). The `markdown` format will extract the documentation body from the page.
+- When format='markdown' returns mostly CSS/JS, try format='html' and look for `<main>` or `<article>` sections.

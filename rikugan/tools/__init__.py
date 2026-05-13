@@ -5,6 +5,6 @@ Host-specific tool implementations live in their respective packages:
   - rikugan.binja.tools (Binary Ninja)
 """
 
-from . import base
-from . import functions
-from . import web  # Web search and image understanding tools
+from . import base, functions, web, web_fetch
+
+__all__ = ["base", "functions", "web", "web_fetch"]

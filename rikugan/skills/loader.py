@@ -103,7 +103,7 @@ def _split_frontmatter(text: str) -> tuple:
 
     Returns ("", text) if no frontmatter markers found.
     """
-    stripped = text.lstrip("\n")
+    stripped = text.lstrip("\ufeff\n")  # strip BOM (if present) + leading newlines
     if not stripped.startswith("---"):
         return ("", text)
 
@@ -156,7 +156,7 @@ class SkillDefinition:
 def _load_body(md_path: str) -> str:
     """Read the body (everything after frontmatter) from a SKILL.md file."""
     try:
-        with open(md_path, encoding="utf-8") as f:
+        with open(md_path, encoding="utf-8-sig") as f:
             text = f.read()
     except OSError as e:
         raise SkillError(f"Cannot read skill file {md_path}: {e}") from e
@@ -196,7 +196,7 @@ def _load_references(skill_dir: str) -> str:
                 continue
             fpath = os.path.join(directory, fname)
             try:
-                with open(fpath, encoding="utf-8") as f:
+                with open(fpath, encoding="utf-8-sig") as f:
                     content = f.read().strip()
                 if content:
                     parts.append(f"## Reference: {fname}\n{content}")
@@ -241,7 +241,7 @@ def discover_skills(skills_dir: str) -> list[SkillDefinition]:
             continue
 
         try:
-            with open(md_path, encoding="utf-8") as f:
+            with open(md_path, encoding="utf-8-sig") as f:
                 text = f.read()
 
             fm_text, body_text = _split_frontmatter(text)

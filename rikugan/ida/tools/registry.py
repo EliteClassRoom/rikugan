@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from rikugan.core.host import HAS_HEXRAYS
 from rikugan.core.thread_safety import idasync
-from rikugan.tools import web
+from rikugan.tools import web, web_fetch
 from rikugan.tools.registry import ToolRegistry
 
 from . import (
@@ -34,6 +34,7 @@ _TOOL_MODULES = (
     scripting,
     microcode,
     web,
+    web_fetch,
 )
 
 

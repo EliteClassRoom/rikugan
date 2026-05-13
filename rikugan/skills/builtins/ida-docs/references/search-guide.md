@@ -50,7 +50,7 @@
 4. Note the recommended modules/functions
 
 ### 4. Code Examples Search
-1. Go to: https://docs.hex-rays.com/developer-guide/idapython/idapython-examples
+1. Go to: https://docs.hex-rays.com/developer/idapython/idapython-examples
 2. Find category matching your task
 3. Browse examples by difficulty level
 4. Click example to see details (source code, APIs used)
@@ -58,7 +58,7 @@
 ### 5. Full-Text Search
 Use browser search (Ctrl+F) on:
 - https://python.docs.hex-rays.com/genindex.html for API search
-- https://docs.hex-rays.com/developer-guide/idapython/idapython-examples for examples
+- https://docs.hex-rays.com/developer/idapython/idapython-examples for examples
 
 ### 6. Release Notes Search
 1. Go to: https://docs.hex-rays.com/release-notes
@@ -79,9 +79,9 @@ Use browser search (Ctrl+F) on:
 |-----------------|--------|------------|
 | Function signature | ida_bytes.get_byte | https://python.docs.hex-rays.com/ida_bytes/index.html#ida_bytes.get_byte |
 | Module overview | ida_hexrays | https://python.docs.hex-rays.com/ida_hexrays/index.html |
-| Code example | Custom action | https://docs.hex-rays.com/developer-guide/idapython/idapython-examples#actions |
-| Migration | IDA 8 to 9 | https://docs.hex-rays.com/developer-guide/idapython/idapython-porting-guide-ida-9 |
-| Getting started | First steps | https://docs.hex-rays.com/developer-guide/idapython/idapython-getting-started |
+| Code example | Custom action | https://docs.hex-rays.com/developer/idapython/idapython-examples#actions |
+| Migration | IDA 8 to 9 | https://docs.hex-rays.com/developer/idapython/idapython-porting-guide-ida-9 |
+| Getting started | First steps | https://docs.hex-rays.com/developer/idapython/idapython-getting-started |
 | Domain API intro | High-level API | https://ida-domain.docs.hex-rays.com/ |
 | Domain API examples | Task examples | https://ida-domain.docs.hex-rays.com/examples/ |
 | IDA 9.2 release notes | Version info | https://docs.hex-rays.com/release-notes/9_2.md |
@@ -89,11 +89,11 @@ Use browser search (Ctrl+F) on:
 | GitHub SDK example | UI action | https://github.com/HexRaysSA/ida-sdk/tree/main/src/plugins/idapython/examples/ui |
 | GitHub SDK source | Custom action | https://github.com/HexRaysSA/ida-sdk/blob/main/src/plugins/idapython/examples/ui/actions.py |
 
-## Fetching Documentation in Sub-Agent
+## Fetching Documentation
 
-When the sub-agent needs to fetch documentation:
+When you need to fetch documentation:
 
-1. Use web_fetch or mcp_fetch tool with the appropriate URL
+1. Use the `web_fetch` tool with the appropriate URL
 2. Parse the returned content for relevant information
 3. Extract code snippets if available
 4. Summarize findings for the user
@@ -102,6 +102,9 @@ Example fetch calls:
 ```
 # IDAPython API
 web_fetch(url="https://python.docs.hex-rays.com/ida_bytes/index.html", format="markdown")
+
+# IDAPython Examples Index
+web_fetch(url="https://docs.hex-rays.com/developer/idapython/idapython-examples", format="markdown")
 
 # Domain API
 web_fetch(url="https://ida-domain.docs.hex-rays.com/examples/", format="markdown")
