@@ -16,3 +16,5 @@ build/
 .claude/
 .desloppify/
 scorecard.png
+
+.kilo/plans/
