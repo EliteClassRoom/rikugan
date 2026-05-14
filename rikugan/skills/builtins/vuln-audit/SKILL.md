@@ -1,80 +1,99 @@
 ---
 name: Vulnerability Audit
-description: Security audit — buffer overflows, format strings, integer issues, memory safety
-tags: [vulnerability, security, audit, exploit]
+description: Binary vulnerability audit — source-to-sink taint analysis, buffer overflows, format strings, integer issues, memory safety, command injection, type confusion, and parser/network/driver bug classes
+tags: [vulnerability, security, audit, exploit, buffer-overflow, format-string, integer-overflow, memory-safety, taint, source-sink]
+triggers: [vulnerability, vuln, audit, exploit, exploitable, buffer overflow, format string, memory corruption, integer overflow, use-after-free, command injection, type confusion, find bugs, security review]
+mode: plan
 ---
-Task: Security Vulnerability Audit. You are auditing a binary for exploitable vulnerabilities.
+Task: Binary Vulnerability Audit. Audit the binary for exploitable vulnerabilities using evidence-backed source-to-sink reasoning. Every finding must identify an attacker-controlled source, a reachable sink, the missing or incorrect validation, exploitability constraints, and false-positive checks. Do not report speculation as fact.
 
-## Approach
+Detailed vulnerability classes, source/validator/sink tables, platform branches, and host-specific evidence tools are in the auto-loaded references:
 
-Systematic, evidence-based. Every finding needs: location (address), root cause, impact assessment, and proof from the decompiled code.
+- `references/common.md` — vulnerability model, false-positive gates, severity rules, and report template.
+- `references/ida/tools.md` — IDA/Hex-Rays evidence workflow.
+- `references/binja/tools.md` — Binary Ninja IL/SSA/CFG evidence workflow.
 
-## Phase 1: Attack Surface Mapping
+## Read-Only Discipline
 
-1. `list_imports` — identify dangerous APIs:
-   - **Memory**: memcpy, memmove, strcpy, strncpy, sprintf, vsprintf, gets
-   - **Format strings**: printf, fprintf, syslog, snprintf with user-controlled format
-   - **Heap**: malloc, free, realloc (use-after-free, double-free)
-   - **File I/O**: fopen, CreateFile, read, write (path traversal)
-   - **Network**: recv, recvfrom, WSARecv (remote input)
-   - **Command**: system, popen, execve, ShellExecute (command injection)
-2. `list_exports` — identify entry points accessible to attackers
-3. `search_strings` — look for format strings, SQL patterns, command templates
+This is a **read-only** audit by default:
 
-## Phase 2: Input Tracing
+- Do **not** rename, retype, comment, or patch anything unless the user explicitly asks.
+- If annotations would help, propose them first and wait for approval.
+- Prefer built-in read tools (`get_binary_info`, `list_segments`, `list_imports`, `list_exports`, `decompile_function`, `xrefs_to`, `function_xrefs`) over `execute_python`.
+- Use `execute_python` only for bounded helper analysis, such as integer-limit calculations, decoding constants, or checking simple constraints when built-in tools are insufficient.
 
-For each dangerous API found:
-1. `xrefs_to` on the import — find all call sites
-2. `decompile_function` on each caller
-3. Trace backwards: where does the buffer/size/format argument come from?
-4. Is it user-controlled? (network input, file input, IPC, environment)
-5. Are there bounds checks between input and dangerous API?
+## Mandatory Workflow
 
-## Phase 3: Vulnerability Classes
+### Phase 0: Binary and Platform Triage
 
-**Buffer Overflow (Stack)**
-- Fixed-size stack buffer + unbounded copy (strcpy, sprintf, gets)
-- Size parameter larger than destination buffer
-- Off-by-one in loop bounds writing to stack buffer
+Collect this before deep analysis; run these in parallel when the tool runner supports it:
 
-**Buffer Overflow (Heap)**
-- malloc(user_size) without upper bound check
-- memcpy into heap buffer with unchecked length
-- Integer overflow in size calculation → small allocation, large copy
+1. `get_binary_info` — file format, architecture, bitness, entry point, function count, and file type hints.
+2. `list_segments` — segment ranges and permissions. Flag W+X memory and unusual executable data.
+3. `list_imports` — input APIs, allocator/copy APIs, process launch, crypto, file, network, IPC, and kernel/driver interfaces.
+4. `list_exports` — externally reachable entry points.
 
-**Format String**
-- printf(user_input) without format specifier
-- syslog, fprintf with attacker-controlled first argument
+Only discuss mitigation state (NX/DEP, ASLR, stack cookies, CFG, seccomp, RELRO, PIE) when tool output or binary metadata provides direct evidence. Otherwise mark it as unknown.
 
-**Integer Overflow/Underflow**
-- Arithmetic on user-controlled sizes before allocation
-- Signed/unsigned comparison mismatches in bounds checks
-- Multiplication overflow in array index calculations
+If the binary appears packed or heavily obfuscated (very few functions, very few strings, odd executable data, misleading pseudocode), recommend `/deobfuscation` first and avoid vulnerability claims from unreliable code.
 
-**Use-After-Free**
-- free() followed by continued use of the pointer
-- Dangling pointers in linked structures after partial cleanup
-- Race conditions in multi-threaded free/use paths
+### Phase 1: Choose the Audit Branch
 
-**Command Injection**
-- system() / popen() with string concatenation from user input
-- ShellExecute with user-controlled arguments
+Branch the audit based on target type:
 
-**Type Confusion**
-- Cast between incompatible struct types
-- Virtual function table corruption paths
-- Union member access after wrong variant initialization
+- User-mode PE/ELF executable: entry point, command-line/config/file/network inputs.
+- Shared library/plugin: every export and registered callback is a potential entry point.
+- Daemon/service: socket accept/read loops, dispatchers, privilege-dropping, and restart behavior.
+- Kernel driver: prefer `/driver-analysis`; if continuing here, focus on IOCTL/IRP buffers and user-pointer handling.
+- Firmware/embedded: packet parsers, MMIO, custom allocators, reboot/DoS paths, debug interfaces.
+- Parser/codec: length fields, decompression sizes, recursive parsing, table indices, integer overflow before allocation.
 
-## Phase 4: Report
+### Phase 2: Prove Source-to-Sink
 
-For each finding:
+For each suspected issue:
+
+1. Pick a source: export, entry point, callback, network/file/IPC read, environment/config read, IOCTL buffer, or parser input.
+2. Use `xrefs_to` and `function_xrefs` to map callers/callees and place the path in context.
+3. Decompile the relevant function with `decompile_function` or `get_pseudocode`.
+4. Identify buffers, arguments, local variables, and size values with `get_decompiler_variables` when available.
+5. Trace attacker-controlled buffer and length variables through transformations and validators.
+6. Identify the exact sink and call/address where unsafe use occurs.
+7. Identify the exact missing, wrong, or bypassable check.
+8. Verify reachability from a realistic attacker-controlled entry path.
+9. Report only when the evidence supports a plausible vulnerability. Otherwise label the item `NEEDS VERIFICATION` or omit it.
+
+### Phase 3: Apply Confidence and False-Positive Gates
+
+Every reported finding must pass these gates:
+
+- Attacker-controlled or realistic local input reaches the code path.
+- The path is reachable from an entry point, export, callback, source API, or protocol handler.
+- There is a concrete sink or unsafe operation at an address.
+- A required bounds, type, lifetime, authorization, or state check is absent, incorrect, or bypassable.
+- The impact is plausible under the target architecture and known mitigations.
+
+Confidence levels:
+
+- `CONFIRMED`: complete source-to-sink evidence.
+- `LIKELY`: strong evidence with one unresolved assumption.
+- `NEEDS VERIFICATION`: suspicious pattern, not a vulnerability claim.
+
+### Phase 4: Report
+
+Use this finding template:
+
+```text
+[SEVERITY][CONFIDENCE] CWE-NNN: Title
+
+Location:      function_name at 0xADDRESS, sink/call at 0xADDRESS
+Reachability:  entry/export/source -> call_chain -> vulnerable_function
+Source:        attacker-controlled buffer/length/config/command at 0xADDRESS
+Sink:          API or memory operation at 0xADDRESS
+Missing check: exact absent or incorrect condition
+Evidence:      short pseudocode/disassembly snippet with addresses
+Exploitability: constraints, mitigations, reliability, required attacker position
+False-positive checks performed: ...
+Remediation:   concrete fix
 ```
-[SEVERITY] Vulnerability Type at 0xADDRESS
-Function: function_name
-Root cause: <description>
-Input path: <how attacker-controlled data reaches the vulnerable point>
-Impact: <what an attacker can achieve>
-Evidence: <relevant decompiled code snippet>
-```
 
-Severity levels: CRITICAL (remote code execution), HIGH (local code execution, info leak), MEDIUM (DoS, limited info leak), LOW (theoretical, requires unlikely conditions).
+End with a summary table sorted by severity and confidence. If no confirmed or likely vulnerabilities are found, say so explicitly and include residual risk / hardening notes instead of inventing findings.
