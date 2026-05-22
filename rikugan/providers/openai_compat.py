@@ -20,13 +20,13 @@ class OpenAICompatProvider(OpenAIProvider):
         api_base: str = "",
         model: str = "",
         provider_name: str = "openai_compat",
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(api_key=api_key, model=model, **kwargs)
         self.api_base = api_base
         self._provider_name = provider_name
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         if self._client is None:
             try:
                 openai = importlib.import_module("openai")

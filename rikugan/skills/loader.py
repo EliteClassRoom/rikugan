@@ -175,18 +175,17 @@ def _load_body(md_path: str) -> str:
 def _load_references(skill_dir: str) -> str:
     """Load .md files from <skill>/references/ and concatenate them.
 
-    Also loads host-specific references from <skill>/references/ida/ or
-    <skill>/references/binja/ depending on the active host, so generic
+    Also loads host-specific references from <skill>/references/ida/ depending on the active host, so generic
     skills can ship separate reference docs per tool without injecting
     both into the context.
     """
-    from ..core.host import HOST_BINARY_NINJA, HOST_IDA, host_kind
+    from ..core.host import HOST_IDA, host_kind
 
     refs_dir = os.path.join(skill_dir, "references")
     if not os.path.isdir(refs_dir):
         return ""
 
-    _HOST_SUBDIR = {HOST_IDA: "ida", HOST_BINARY_NINJA: "binja"}
+    _HOST_SUBDIR = {HOST_IDA: "ida"}
 
     parts: list[str] = []
 

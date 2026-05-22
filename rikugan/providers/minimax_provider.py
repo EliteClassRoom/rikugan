@@ -28,8 +28,8 @@ class MiniMaxProvider(AnthropicProvider):
         api_key: str = "",
         api_base: str = "",
         model: str = "MiniMax-M2.5",
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         # Bypass AnthropicProvider.__init__ — MiniMax uses plain API keys only,
         # no OAuth keychain lookup.
         LLMProvider.__init__(
@@ -56,7 +56,7 @@ class MiniMaxProvider(AnthropicProvider):
             supports_cache_control=False,
         )
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         if self._client is None:
             try:
                 anthropic = importlib.import_module("anthropic")
@@ -73,7 +73,7 @@ class MiniMaxProvider(AnthropicProvider):
             )
         return self._client
 
-    def auth_status(self):
+    def auth_status(self) -> tuple[str, str]:
         if self.api_key:
             return "API Key", "ok"
         return "", "none"
@@ -145,7 +145,7 @@ class MiniMaxProvider(AnthropicProvider):
 
     def _build_request_kwargs(
         self,
-        messages,
+        messages: list[Any],
         tools: list[dict[str, Any]] | None,
         temperature: float,
         max_tokens: int,

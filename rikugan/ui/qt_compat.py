@@ -1,6 +1,6 @@
 """Qt compatibility layer for Rikugan.
 
-IDA 9.x 64-bit and Binary Ninja ship PySide6 (Qt6).  IDA 9.1 32-bit on
+IDA 9.x 64-bit ships PySide6 (Qt6).  IDA 9.1 32-bit on
 Windows still uses Qt5 — its process has Qt5Core.dll loaded.  Importing
 PySide6 in that environment loads Qt6 DLLs alongside Qt5, which triggers a
 ``FAST_FAIL_FATAL_APP_EXIT`` crash inside ``QWidgetPrivate::QWidgetPrivate``
@@ -59,7 +59,7 @@ QT_BINDING: str = _detect_binding()
 # ---------------------------------------------------------------------------
 
 if QT_BINDING == "PySide6":
-    from PySide6.QtCore import QObject, Qt, QTimer, QThread, Signal
+    from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
     from PySide6.QtGui import (
         QColor,
         QFont,
@@ -109,7 +109,7 @@ if QT_BINDING == "PySide6":
         QWidget,
     )
 else:
-    from PyQt5.QtCore import QObject, QThread, Qt, QTimer  # noqa: F401
+    from PyQt5.QtCore import QObject, Qt, QThread, QTimer  # noqa: F401
     from PyQt5.QtCore import pyqtSignal as Signal  # noqa: F401
     from PyQt5.QtGui import (  # noqa: F401
         QColor,

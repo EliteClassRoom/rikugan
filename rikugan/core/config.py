@@ -52,7 +52,7 @@ class RikuganConfig:
     exploration_turn_limit: int = 100  # max turns in exploration phase before forcing transition
     max_retries: int = 3  # max retries on rate-limit / transient API errors
     silent_retry_mode: bool = False  # show loading indicator instead of error messages on retry
-    theme: str = "ida"  # "ida", "binja", "dark", or "light" — "ida" follows host theme
+    theme: str = "ida"  # "ida", "dark", or "light" — "ida" follows host theme
     font_family: str = ""  # empty = inherit from host; set to override (e.g. "Consolas")
     font_size_override: int = 0  # 0 = inherit from host; set to override point size
 
@@ -209,7 +209,11 @@ class RikuganConfig:
             "encrypt_api_keys",
         ):
             if k in data:
-                setattr(self, k, data[k])
+                val = data[k]
+                # Normalize unknown/legacy theme to "ida"
+                if k == "theme" and val not in {"ida", "dark", "light"}:
+                    val = "ida"
+                setattr(self, k, val)
 
     def has_encrypted_keys(self) -> bool:
         """True if the config was loaded with encrypted keys pending decryption."""

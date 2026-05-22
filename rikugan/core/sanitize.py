@@ -534,7 +534,7 @@ _IOC_CATEGORY_PATTERNS: dict[str, list[re.Pattern]] = {
 }
 
 
-def _parse_hexdump_line(line: str):
+def _parse_hexdump_line(line: str) -> tuple[str, bytes, str] | None:
     """Parse a hexdump line → (prefix, byte_values, trailing) or None."""
     m = _HEXDUMP_LINE_RE.match(line)
     if not m:

@@ -225,7 +225,6 @@ echo [*] Skills:  %SKILLS_DIR%\
 echo.
 echo [*] Open IDA and press Ctrl+Shift+I to start Rikugan.
 echo [*] First run: click Settings to configure your LLM provider and API key.
-echo [*] For Binary Ninja installation, run install_binaryninja.bat
 
 endlocal
 exit /b 0

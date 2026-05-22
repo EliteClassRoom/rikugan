@@ -10,7 +10,7 @@ import importlib
 from typing import Any
 
 from rikugan.ui.panel_core import RikuganPanelCore
-from rikugan.ui.qt_compat import QApplication, QT_BINDING, QVBoxLayout, QWidget
+from rikugan.ui.qt_compat import QT_BINDING, QApplication, QVBoxLayout, QWidget
 
 from .actions import RikuganUIHooks
 from .session_controller import IdaSessionController
@@ -226,14 +226,10 @@ class RikuganPanel(idaapi.PluginForm):
 
         # Apply a minimal targeted stylesheet — only Rikugan's custom widgets.
         # Everything else inherits IDA's Qt stylesheet.
-        bg = _rgb_to_hex(c["background"])
         surface = _rgb_to_hex(c["surface"])
         surface_variant = _rgb_to_hex(c["surface_variant"])
         border = _rgb_to_hex(c["border"])
-        text_secondary = _rgb_to_hex(c["text_secondary"])
         accent = _rgb_to_hex(c["accent"])
-        code_block_bg = _rgb_to_hex(c["code_block_bg"])
-        code_text = _rgb_to_hex(c["code_text"])
 
         minimal_style = f"""
         QFrame#thinking_block {{

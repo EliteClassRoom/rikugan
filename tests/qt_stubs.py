@@ -84,8 +84,10 @@ _GUI_NAMES = [
     "QColor",
     "QFont",
     "QIntValidator",
+    "QPalette",
     "QSyntaxHighlighter",
     "QTextCharFormat",
+    "QTextCursor",
 ]
 
 
@@ -113,6 +115,7 @@ def ensure_pyside6_stubs() -> None:
             Qt=_sentinel,
             QObject=_qt_class("QObject"),
             QTimer=_qt_class("QTimer"),
+            QThread=_qt_class("QThread"),
         ),
     )
     sys.modules.setdefault(

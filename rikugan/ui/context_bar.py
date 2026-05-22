@@ -5,9 +5,7 @@ from __future__ import annotations
 import importlib
 
 from ..core.host import (
-    get_binary_ninja_view,
     get_current_address,
-    is_binary_ninja,
     is_ida,
 )
 from ..core.logging import log_debug
@@ -35,24 +33,6 @@ def _function_name_at(ea: int) -> str | None:
             func = ida_funcs.get_func(ea)
             if func:
                 return ida_name.get_name(func.start_ea)
-        except Exception:
-            return None
-
-    if is_binary_ninja():
-        bv = get_binary_ninja_view()
-        if bv is None:
-            return None
-        try:
-            get_func_at = getattr(bv, "get_function_at", None)
-            if callable(get_func_at):
-                func = get_func_at(ea)
-                if func is not None:
-                    return getattr(func, "name", None)
-            get_containing = getattr(bv, "get_functions_containing", None)
-            if callable(get_containing):
-                funcs = list(get_containing(ea))
-                if funcs:
-                    return getattr(funcs[0], "name", None)
         except Exception:
             return None
 

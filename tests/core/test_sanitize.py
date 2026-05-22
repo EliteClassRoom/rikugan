@@ -152,7 +152,7 @@ class TestAnthropicMagicString:
     def test_survives_sanitize_mcp_result(self):
         """Full MCP pipeline: string must be filtered."""
         raw = 'decompiled: char* x = "ANTHROPIC_MAGIC_STRING";'
-        result = sanitize_mcp_result(raw, server_name="binary_ninja", tool_name="decompile_function")
+        result = sanitize_mcp_result(raw, server_name="test_server", tool_name="decompile_function")
         assert "ANTHROPIC_MAGIC_STRING" not in result
         assert "[FILTERED]" in result
 
@@ -294,10 +294,10 @@ class TestZeroWidthStripping:
 class TestSanitizeMcpResult:
 
     def test_wraps_in_mcp_result_tags(self):
-        result = sanitize_mcp_result("hello", server_name="binja", tool_name="decompile")
+        result = sanitize_mcp_result("hello", server_name="test_server", tool_name="decompile")
         assert "<mcp_result" in result
         assert "</mcp_result>" in result
-        assert 'server="binja"' in result
+        assert 'server="test_server"' in result
         assert 'tool="decompile"' in result
 
     def test_preamble_present(self):

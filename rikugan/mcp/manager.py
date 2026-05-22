@@ -24,7 +24,7 @@ class MCPManager:
 
     Servers are started in background threads and their tools are
     registered into the Rikugan ToolRegistry as they come online.
-    
+
     This class can be used as a singleton via `get_instance()`.
     """
 

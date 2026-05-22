@@ -51,6 +51,7 @@ class TokenUsage:
         cache_creation_tokens = self.cache_creation_tokens or 0
         return (prompt_token) + (cache_read) + (cache_creation_tokens)
 
+
 @dataclass
 class Message:
     role: Role

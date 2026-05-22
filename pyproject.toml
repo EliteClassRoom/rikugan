@@ -7,7 +7,6 @@ select = ["E", "W", "F", "I", "UP", "B", "RUF"]
 ignore = ["E501", "B008", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
-"rikugan/binja/**" = ["F401", "E741"]
 "rikugan/ida/**" = ["F401"]
 "rikugan/core/sanitize.py" = ["RUF003"]
 "rikugan/tools/functions.py" = ["RUF001"]

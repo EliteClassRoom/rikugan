@@ -1,4 +1,4 @@
-"""Host-matrix tests: verify shared contracts under standalone, IDA-mocked, and BN-mocked modes.
+"""Host-matrix tests: verify shared contracts under standalone and IDA-mocked modes.
 
 These tests ensure that host-agnostic abstractions (host detection, thread
 dispatch, tool registry dispatch_wrapper) behave correctly under each host
@@ -20,9 +20,8 @@ class TestHostDetectionFlags(unittest.TestCase):
 
     def test_flags_are_bool(self):
         """Host flags should be bool, regardless of host stubs."""
-        from rikugan.core.host import IDA_AVAILABLE, BINARY_NINJA_AVAILABLE, HAS_HEXRAYS
+        from rikugan.core.host import IDA_AVAILABLE, HAS_HEXRAYS
         self.assertIsInstance(IDA_AVAILABLE, bool)
-        self.assertIsInstance(BINARY_NINJA_AVAILABLE, bool)
         self.assertIsInstance(HAS_HEXRAYS, bool)
 
     def test_hexrays_requires_ida(self):
@@ -32,9 +31,10 @@ class TestHostDetectionFlags(unittest.TestCase):
             self.assertTrue(IDA_AVAILABLE)
 
     def test_mutual_exclusion(self):
-        """IDA and BN cannot both be the active host at once."""
-        from rikugan.core.host import is_ida, is_binary_ninja
-        self.assertFalse(is_ida() and is_binary_ninja())
+        """host_kind returns a single valid value."""
+        from rikugan.core.host import host_kind, HOST_IDA, HOST_STANDALONE
+        result = host_kind()
+        self.assertIn(result, (HOST_IDA, HOST_STANDALONE))
 
 
 # ---------------------------------------------------------------------------
@@ -176,32 +176,6 @@ class TestIdasyncWithMockedHosts(unittest.TestCase):
             if original_kw is not None:
                 ts.ida_kernwin = original_kw
 
-    def test_bn_main_thread_direct(self):
-        """On BN main thread, idasync should call directly."""
-        import rikugan.core.thread_safety as ts
-
-        original_ida = ts._IDA_AVAILABLE
-        original_bn = ts._BN_AVAILABLE
-        original_mt = getattr(ts, "bn_mainthread", None)
-        try:
-            ts._IDA_AVAILABLE = False
-            ts._BN_AVAILABLE = True
-            ts.bn_mainthread = MagicMock()
-
-            @ts.idasync
-            def my_tool():
-                return 99
-
-            # On main thread, should call directly
-            result = my_tool()
-            self.assertEqual(result, 99)
-        finally:
-            ts._IDA_AVAILABLE = original_ida
-            ts._BN_AVAILABLE = original_bn
-            if original_mt is not None:
-                ts.bn_mainthread = original_mt
-            else:
-                ts.bn_mainthread = None
 
 
 # ---------------------------------------------------------------------------

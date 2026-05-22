@@ -507,7 +507,7 @@ td code{font-size:.82rem}
 <section class="section" id="overview">
   <div class="section-num">01</div>
   <h2>High-Level Overview</h2>
-  <p>Rikugan is a <strong>generator-based agentic loop</strong> embedded inside IDA Pro and Binary Ninja. The agent runs in a background thread and communicates with the Qt UI via a stream of <code>TurnEvent</code> objects. All host API calls (IDA/BN) are marshalled to the main thread via <code>@idasync</code>.</p>
+  <p>Rikugan is a <strong>generator-based agentic loop</strong> embedded inside IDA Pro. The agent runs in a background thread and communicates with the Qt UI via a stream of <code>TurnEvent</code> objects. All host API calls are marshalled to the main thread via <code>@idasync</code>.</p>
 
   <div class="arch-box">
     <div class="arch-item"><div class="ai">&#x1F9E0;</div><div class="at">Agent Loop</div><div class="ad">Generator yields TurnEvents, handles tool calls, manages state</div></div>
@@ -736,7 +736,6 @@ class ToolDefinition:
       <tr><td>Types</td><td><code>create_struct</code>, <code>modify_struct</code>, <code>set_function_prototype</code></td></tr>
       <tr><td>Scripting</td><td><code>execute_python</code> (requires approval)</td></tr>
       <tr><td>Microcode <span style="color:var(--text-dim)">(IDA)</span></td><td><code>get_microcode</code>, <code>nop_microcode</code></td></tr>
-      <tr><td>IL <span style="color:var(--text-dim)">(BN)</span></td><td><code>get_il</code>, <code>get_cfg</code>, <code>il_replace_expr</code>, <code>il_set_condition</code>, <code>nop_instructions</code>, <code>patch_branch</code></td></tr>
     </table>
   </div>
 
@@ -762,7 +761,7 @@ result = future.result(timeout=timeout)  # default 30s</code></pre>
     </div>
     <div class="arch-item" style="text-align:left">
       <div class="at" style="color:var(--accent-3)">save_memory</div>
-      <div class="ad" style="margin-top:8px">Persists a fact to <code>RIKUGAN.md</code> in the IDB/BNDB directory. Categories: <code>function_purpose</code>, <code>architecture</code>, <code>naming_convention</code>, <code>prior_analysis</code>, <code>general</code>.</div>
+      <div class="ad" style="margin-top:8px">Persists a fact to <code>RIKUGAN.md</code> in the IDB directory. Categories: <code>function_purpose</code>, <code>architecture</code>, <code>naming_convention</code>, <code>prior_analysis</code>, <code>general</code>.</div>
     </div>
     <div class="arch-item" style="text-align:left">
       <div class="at" style="color:var(--accent-5)">spawn_subagent</div>
@@ -807,7 +806,6 @@ Task: Analyze this binary as potential malware.
   <ol>
     <li><strong>Built-in skills:</strong> <code>rikugan/skills/builtins/*/SKILL.md</code></li>
     <li><strong>User skills (IDA Pro):</strong> <code>~/.idapro/rikugan/skills/*/SKILL.md</code> (Linux / macOS) · <code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\skills\*\SKILL.md</code> (Windows)</li>
-    <li><strong>User skills (Binary Ninja):</strong> <code>~/.binaryninja/rikugan/skills/*/SKILL.md</code> (Linux) · <code>~/Library/Application Support/Binary Ninja/rikugan/skills/*/SKILL.md</code> (macOS) · <code>%APPDATA%\Binary Ninja\rikugan\skills\*\SKILL.md</code> (Windows)</li>
   </ol>
   <p>Reference files in <code>references/*.md</code> subdirectories are automatically appended to the skill body.</p>
 
@@ -821,10 +819,8 @@ Task: Analyze this binary as potential malware.
     <div class="skill-item"><span class="skill-slug">/ctf</span><span class="skill-desc">CTF challenge solving</span></div>
     <div class="skill-item"><span class="skill-slug">/generic-re</span><span class="skill-desc">General reverse engineering</span></div>
     <div class="skill-item"><span class="skill-slug">/ida-scripting</span><span class="skill-desc">IDAPython API reference</span></div>
-    <div class="skill-item"><span class="skill-slug">/binja-scripting</span><span class="skill-desc">BN Python API reference</span></div>
     <div class="skill-item"><span class="skill-slug">/modify</span><span class="skill-desc">Autonomous binary modification</span></div>
     <div class="skill-item"><span class="skill-slug">/smart-patch-ida</span><span class="skill-desc">IDA-specific patching</span></div>
-    <div class="skill-item"><span class="skill-slug">/smart-patch-binja</span><span class="skill-desc">BN-specific patching</span></div>
   </div>
 </section>
 
@@ -1053,7 +1049,7 @@ class MutationRecord:
   <p><strong>Files:</strong> <code>rikugan/agent/system_prompt.py</code>, <code>rikugan/agent/loop.py</code></p>
 
   <h3>RIKUGAN.md</h3>
-  <p>A per-binary Markdown file stored alongside the IDB/BNDB. It acts as cross-session memory.</p>
+  <p>A per-binary Markdown file stored alongside the IDB. It acts as cross-session memory.</p>
   <ul>
     <li><strong>Location:</strong> <code>&lt;idb_directory&gt;/RIKUGAN.md</code></li>
     <li><strong>Loading:</strong> First 200 lines loaded into the system prompt</li>
@@ -1174,7 +1170,7 @@ class SessionState:
         <linearGradient id="g5" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#50c878" stop-opacity=".15"/><stop offset="100%" stop-color="#50c878" stop-opacity=".05"/></linearGradient>
       </defs>
       <rect x="40" y="10" width="420" height="48" rx="8" fill="url(#g1)" stroke="#7c6aef" stroke-opacity=".3"/>
-      <text x="250" y="38" text-anchor="middle" fill="#7c6aef" font-family="Inter,sans-serif" font-size="12" font-weight="600">Host-specific base prompt (ida.py / binja.py)</text>
+      <text x="250" y="38" text-anchor="middle" fill="#7c6aef" font-family="Inter,sans-serif" font-size="12" font-weight="600">Host-specific base prompt (ida.py)</text>
 
       <rect x="40" y="68" width="420" height="48" rx="8" fill="url(#g2)" stroke="#e06090" stroke-opacity=".3"/>
       <text x="250" y="96" text-anchor="middle" fill="#e06090" font-family="Inter,sans-serif" font-size="12" font-weight="600">Persistent Memory (RIKUGAN.md, first 200 lines)</text>
@@ -1216,10 +1212,6 @@ class SessionState:
 
   <div class="showcase-gallery">
     <div>
-      <div class="showcase-label">Binary Ninja</div>
-      <img src="assets/binja_showcase.png" alt="Rikugan in Binary Ninja" loading="lazy">
-    </div>
-    <div>
       <div class="showcase-label">IDA Pro</div>
       <img src="assets/ida_showcase.png" alt="Rikugan in IDA Pro" loading="lazy">
     </div>
@@ -1259,7 +1251,7 @@ class SessionState:
   </div>
 
   <h3>IDA API Marshalling</h3>
-  <p>IDA Pro requires all API calls on the main thread. The <code>@idasync</code> decorator marshalls calls via <code>ida_kernwin.execute_sync()</code>. Binary Ninja tools run directly &mdash; BN's API is thread-safe.</p>
+  <p>IDA Pro requires all API calls on the main thread. The <code>@idasync</code> decorator marshalls calls via <code>ida_kernwin.execute_sync()</code>.</p>
 
   <h3>User Answer/Approval Queues</h3>
   <p>Two <code>queue.Queue(maxsize=1)</code> instances:</p>

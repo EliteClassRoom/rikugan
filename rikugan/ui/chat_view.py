@@ -18,8 +18,8 @@ from .message_widgets import (
     ThinkingWidget,
     UserMessageWidget,
     UserQuestionWidget,
-    _ThinkingBlock,
     _split_thinking,
+    _ThinkingBlock,
 )
 from .plan_view import PlanView
 from .qt_compat import (
@@ -46,7 +46,6 @@ def _is_hidden_system_user_message(content: str) -> bool:
     if not content:
         return False
     return content.lstrip().startswith("[SYSTEM]")
-
 
 
 class ChatView(QScrollArea):

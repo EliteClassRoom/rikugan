@@ -30,12 +30,12 @@ from .base import LLMProvider
 class GeminiProvider(LLMProvider):
     """Adapter for Google Gemini via the google-genai SDK."""
 
-    def __init__(self, api_key: str = "", model: str = "gemini-2.0-flash", **kwargs):
+    def __init__(self, api_key: str = "", model: str = "gemini-2.0-flash", **kwargs: Any) -> None:
         api_key = api_key or os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
         super().__init__(api_key=api_key, model=model)
         self._types: Any = None  # google.genai.types module
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         if self._client is None:
             try:
                 genai = importlib.import_module("google.genai")
@@ -238,7 +238,7 @@ class GeminiProvider(LLMProvider):
         max_tokens: int,
         system: str,
         tools: list[dict[str, Any]] | None = None,
-    ):
+    ) -> Any:
         """Build a ``GenerateContentConfig``."""
         types = self._types
         kwargs: dict[str, Any] = {
@@ -271,7 +271,7 @@ class GeminiProvider(LLMProvider):
         """Invoke the Gemini generate_content API."""
         return client.models.generate_content(**kwargs)
 
-    def _normalize_response(self, response) -> Message:
+    def _normalize_response(self, response: Any) -> Message:
         text = ""
         tool_calls = []
         raw_parts = list(response.candidates[0].content.parts)

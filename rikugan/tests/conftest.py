@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 # Detect the Qt binding without requiring the full 'rikugan' package prefix.
-# The panel runs in hosts (IDA / Binary Ninja) that already load a Qt binding;
+# The panel runs in IDA Pro which already loads a Qt binding;
 # we reuse the same compatibility layer that the panel uses.
 try:
     from rikugan.ui.qt_compat import QApplication

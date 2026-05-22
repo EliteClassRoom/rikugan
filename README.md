@@ -1,8 +1,6 @@
 # Rikugan (六眼)
 
-A reverse-engineering agent for **IDA Pro** and **Binary Ninja** that integrates a multi-provider LLM directly into your analysis UI. This project was vibecoded together with my friend, Claude Code.
-
-![alt text](assets/binja_showcase.png)
+A reverse-engineering agent for **IDA Pro** that integrates a multi-provider LLM directly into your analysis UI. This project was vibecoded together with my friend, Claude Code.
 
 ![alt text](assets/ida_showcase.png)
 
@@ -10,7 +8,7 @@ A reverse-engineering agent for **IDA Pro** and **Binary Ninja** that integrates
 
 ## Install
 
-Auto-detects IDA Pro, Binary Ninja, or both.
+Auto-detects IDA Pro.
 
 **Linux / macOS:**
 ```bash
@@ -39,7 +37,7 @@ The agent really ***lives*** and ***breathes*** reversing.
 
 ## Features
 
-**60+ tools** covering navigation, decompiler, disassembly, cross-references, strings, annotations, types, scripting, and host-specific IL/microcode manipulation. The agent always asks permission before running scripts and will never execute the target binary. Full tool reference in the [docs](https://rikugan.reversing.codes/docs.html).
+**60+ tools** covering navigation, decompiler, disassembly, cross-references, strings, annotations, types, scripting, and microcode manipulation. The agent always asks permission before running scripts and will never execute the target binary. Full tool reference in the [docs](https://rikugan.reversing.codes/docs.html).
 
 **Exploration** — Inspired by how code agents work, but applied to binaries. The orchestrator maps the binary (imports, exports, strings, key functions), then spawns isolated subagents to analyze in parallel. Each reports back, and the orchestrator synthesizes a complete picture.
 
@@ -53,7 +51,7 @@ The agent really ***lives*** and ***breathes*** reversing.
 |:--:|
 |`/modify make this maze game easy, let me pass through walls`|
 
-**Deobfuscation** (Experimental, Binary Ninja) — The `/deobfuscation` skill activates plan mode to recognize and remove control flow flattening, opaque predicates, MBA expressions, and junk code using IL read/write primitives.
+**Deobfuscation** (Experimental) — The `/deobfuscation` skill activates plan mode to recognize and remove control flow flattening, opaque predicates, MBA expressions, and junk code using microcode read/write primitives.
 
 |![](assets/cff_remove_example.gif)|
 |:--:|
@@ -84,7 +82,7 @@ Also supports any OpenAI-compatible endpoint and Ollama for local models.
 
 ## Requirements
 
-- IDA Pro 9.0+ with Hex-Rays decompiler or Binary Ninja (UI mode)
+- IDA Pro 9.0+ with Hex-Rays decompiler
 - Python 3.10+
 - At least one LLM provider
 - Windows, macOS, or Linux
@@ -97,7 +95,7 @@ If you'd asked me last year what I thought about AI doing reverse engineering, I
 
 For that reason, I decided to invest this year in researching this topic. It's amazing what we can build with agentic coding — it's surreal how quickly I'm learning topics that I simply "didn't have time" to study before.
 
-Rikugan is just one of many projects I've built in the last three months. The first version was built in a single night. Within two days it already supported both IDA and Binary Ninja. Within three days, it was essentially what you see here, with only minor tweaks since.
+Rikugan is just one of many projects I've built in the last three months. The first version was built in a single night. Within three days, it was essentially what you see here, with only minor tweaks since.
 
 This is a work in progress with many areas for improvement. I took care to ensure this wouldn't be another AI slop project, but I'm certain there is still room to grow. I hope you use it for good. If you find bugs, have suggestions, or want quality-of-life improvements, please open an issue.
 

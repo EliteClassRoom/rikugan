@@ -890,15 +890,6 @@ def apply_type_to_variable(
             except Exception as fb_e:
                 log_debug(f"modify_user_lvars callback failed for '{var_name}': {fb_e}")
 
-            # Approach 3: in-memory only (last resort, won't persist)
-            try:
-                ok3 = lv.set_lvar_type(tif)
-                if ok3:
-                    lv.set_user_type()
-                    return f"Set type of '{var_name}' to '{type_str}' (in-memory, may not persist)"
-            except Exception as e:
-                log_debug(f"set_lvar_type fallback failed for '{var_name}': {e}")
-
             return f"Failed to retype '{var_name}' \u2014 try right-click \u2192 Set lvar type in the decompiler"
 
     return f"Variable '{var_name}' not found in 0x{ea:x}"
@@ -1074,3 +1065,50 @@ def import_type_from_library(
             return f"Imported '{type_name}' from '{til_name}'"
 
     return f"Type '{type_name}' not found in '{til_name}'"
+
+
+@tool(category="types")
+def get_function_prototype(
+    address: Annotated[str, "Function address (hex string)"],
+) -> str:
+    """Get the current function prototype.
+
+    Returns a raw C declaration string suitable for mutation pre-state capture.
+    """
+    ea = parse_addr(address)
+    if idc is None:
+        return ""
+    tif = ida_typeinf.tinfo_t()
+    if idc.get_tinfo(tif, ea):
+        proto = str(tif)
+        return proto if proto else ""
+    return ""
+
+
+@tool(category="types")
+def get_variable_type(
+    func_address: Annotated[str, "Function address (hex string)"],
+    var_name: Annotated[str, "Variable name in the decompiler"],
+) -> str:
+    """Get the current type of a local variable.
+
+    Returns a raw type string suitable for mutation pre-state capture.
+    Requires Hex-Rays decompiler.
+    """
+    if not _HAS_HEXRAYS:
+        return ""
+    if ida_typeinf is None:
+        return ""
+
+    ea = parse_addr(func_address)
+    try:
+        cfunc = ida_hexrays.decompile(ea)
+    except Exception:
+        return ""
+
+    for lv in cfunc.get_lvars():
+        if lv.name == var_name:
+            t = lv.type()
+            return str(t) if t else ""
+
+    return ""

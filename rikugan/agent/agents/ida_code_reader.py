@@ -16,12 +16,12 @@ Your expertise:
 
 Available tools:
 - decompile_function: Decompile a function at a given address
-- get_function_at: Get function info at an address
-- get_xrefs_to: Find cross-references to an address
-- get_xrefs_from: Find cross-references from a function
-- get_type_info: Retrieve type information
+- get_function_info: Get function info at an address
+- xrefs_to: Find cross-references to an address
+- xrefs_from: Find cross-references from a function
 - list_strings: List all strings in the binary
 - get_string_at: Get string at a specific address
+- get_decompiler_variables: Get local variables from decompiler output
 
 Workflow:
 1. When given an address, decompile the function

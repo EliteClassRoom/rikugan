@@ -13,6 +13,7 @@ from ..core.errors import ToolError, ToolNotFoundError, ToolValidationError
 from ..core.logging import log_debug
 from .base import ToolDefinition
 from .cache import ToolResultCache
+from .coercion import coerce_bool
 
 # Default timeout for tool execution (seconds).  Per-tool overrides via ToolDefinition.timeout.
 _DEFAULT_TOOL_TIMEOUT = 30.0
@@ -46,11 +47,11 @@ class ToolRegistry:
         LLMs sometimes send integers as strings (e.g. "30" instead of 30).
         Walk the parameter schema and cast values to their declared types.
         """
-        if not defn.parameters or not arguments:
-            return arguments
+        coerced = dict(arguments)
+        if not defn.parameters or not coerced:
+            return coerced
 
         param_types = {p.name: p.type for p in defn.parameters}
-        coerced = dict(arguments)
 
         for key, value in coerced.items():
             expected = param_types.get(key)
@@ -63,22 +64,32 @@ class ToolRegistry:
                     if isinstance(value, bool):
                         coerced[key] = int(value)
                     elif not isinstance(value, int):
-                        # Handle "30", "30.0", "0x1e" etc.
+                        # Handle "30", "30.0", etc.
                         coerced[key] = int(float(value))
                 elif expected == "number" and not isinstance(value, (int, float)):
                     coerced[key] = float(value)
                 elif expected == "boolean" and not isinstance(value, bool):
-                    # Coerce int 0/1 and string "true"/"false"
-                    if isinstance(value, int):
-                        coerced[key] = bool(value)
-                    else:
-                        coerced[key] = str(value).lower() in ("true", "1", "yes")
+                    coerced[key] = coerce_bool(value)
                 elif expected == "string" and not isinstance(value, str):
                     coerced[key] = str(value)
             except (ValueError, TypeError) as e:
                 log_debug(f"_coerce_arguments: coercion failed for {key!r}: {e}")  # handler will raise validation error
 
         return coerced
+
+    def coerce_arguments_for(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Return *arguments* coerced to match the schema registered for *name*.
+
+        This is the public entry point for callers that need a single
+        normalized argument dict for pre-state capture, execution,
+        reverse-record building, and post-state verification.
+
+        Raises :class:`ToolNotFoundError` when *name* is not registered.
+        """
+        defn = self._tools.get(name)
+        if defn is None:
+            raise ToolNotFoundError(f"Tool not found: {name}", tool_name=name)
+        return self._coerce_arguments(defn, arguments)
 
     def register(self, defn: ToolDefinition) -> None:
         self._tools[defn.name] = defn

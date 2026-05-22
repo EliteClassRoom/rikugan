@@ -16,11 +16,11 @@ Your expertise:
 - Identifying obfuscation and anti-disassembly techniques
 
 Available tools:
-- fetch_disassembly: Get disassembly at an address
-- get_function_at: Get function info at an address
-- get_function_cfg: Get control flow graph
-- get_xrefs_to / get_xrefs_from: Analyze cross-references
-- get_basic_blocks: Get basic blocks of a function
+- read_disassembly: Get disassembly at an address
+- read_function_disassembly: Get full function disassembly
+- get_function_info: Get function info at an address
+- xrefs_to / xrefs_from: Analyze cross-references
+- function_xrefs: Get callers and callees of a function
 - list_functions: List all functions
 - get_string_at: Get string constants referenced
 

@@ -19,7 +19,7 @@ def format_function_summary(
     callers: list[str],
     callees: list[str],
 ) -> str:
-    """Format a function info summary string (shared between IDA and BN tools)."""
+    """Format a function info summary string shared by function tools."""
     parts = [
         f"Name: {name}",
         f"Address: 0x{start:x} \u2013 0x{end:x}",
@@ -127,3 +127,18 @@ def search_functions(
     if not results:
         return f"No functions matching '{query}'"
     return f"Found {len(results)} function(s):\n" + "\n".join(results)
+
+
+@tool(category="functions")
+def get_function_name(
+    address: Annotated[str, "Function address (hex string)"],
+) -> str:
+    """Get the current name of a function at an address.
+
+    Returns a raw name string suitable for mutation pre-state capture.
+    """
+    ea = parse_addr(address)
+    func = ida_funcs.get_func(ea)
+    if func is None:
+        return ""
+    return ida_name.get_name(func.start_ea) or ""

@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import sys
-import types
 import unittest
 from unittest.mock import MagicMock, patch
 
 from tests.qt_stubs import ensure_pyside6_stubs
+
 ensure_pyside6_stubs()
 
-sys.modules.setdefault("binaryninja", types.ModuleType("binaryninja"))
-
-from rikugan.ui.context_bar import _function_name_at, ContextBar  # noqa: E402
-
+from rikugan.ui.context_bar import ContextBar, _function_name_at  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helper: create a ContextBar without calling __init__
@@ -127,36 +123,7 @@ class TestSetModel(unittest.TestCase):
 
 class TestFunctionNameAt(unittest.TestCase):
     def test_returns_none_in_standalone_mode(self):
-        with patch("rikugan.ui.context_bar.is_ida", return_value=False), \
-             patch("rikugan.ui.context_bar.is_binary_ninja", return_value=False):
-            result = _function_name_at(0x1000)
-            self.assertIsNone(result)
-
-    def test_returns_none_when_binary_ninja_no_bv(self):
-        with patch("rikugan.ui.context_bar.is_ida", return_value=False), \
-             patch("rikugan.ui.context_bar.is_binary_ninja", return_value=True), \
-             patch("rikugan.ui.context_bar.get_binary_ninja_view", return_value=None):
-            result = _function_name_at(0x1000)
-            self.assertIsNone(result)
-
-    def test_returns_function_name_via_get_function_at(self):
-        mock_bv = MagicMock()
-        mock_func = MagicMock()
-        mock_func.name = "target_fn"
-        mock_bv.get_function_at.return_value = mock_func
-        with patch("rikugan.ui.context_bar.is_ida", return_value=False), \
-             patch("rikugan.ui.context_bar.is_binary_ninja", return_value=True), \
-             patch("rikugan.ui.context_bar.get_binary_ninja_view", return_value=mock_bv):
-            result = _function_name_at(0x1000)
-            self.assertEqual(result, "target_fn")
-
-    def test_returns_none_when_get_function_at_returns_none(self):
-        mock_bv = MagicMock()
-        mock_bv.get_function_at.return_value = None
-        mock_bv.get_functions_containing.return_value = []
-        with patch("rikugan.ui.context_bar.is_ida", return_value=False), \
-             patch("rikugan.ui.context_bar.is_binary_ninja", return_value=True), \
-             patch("rikugan.ui.context_bar.get_binary_ninja_view", return_value=mock_bv):
+        with patch("rikugan.ui.context_bar.is_ida", return_value=False):
             result = _function_name_at(0x1000)
             self.assertIsNone(result)
 

@@ -1,1 +1,1 @@
-"""Host-specific system prompt modules for Rikugan."""
+"""IDA Pro system prompt modules for Rikugan."""

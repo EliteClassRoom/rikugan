@@ -74,20 +74,12 @@ def _get_minimax_auth(
     # Determine the REST API host.  Prefer the stored api_base
     # (both from the providers snapshot and the active provider),
     # strip any /anthropic suffix, and fall back to the global host.
-    raw_base = (
-        minimax_cfg.get("api_base", "")
-        or config.provider.api_base
-        or DEFAULT_API_HOST
-    )
+    raw_base = minimax_cfg.get("api_base", "") or config.provider.api_base or DEFAULT_API_HOST
     api_host = raw_base.replace("/anthropic", "").rstrip("/")
 
     # Model name: prefer provider-level, then providers dict,
     # then the hard-coded default.
-    model_name = (
-        config.provider.model
-        or minimax_cfg.get("model")
-        or "MiniMax-M2.5"
-    )
+    model_name = config.provider.model or minimax_cfg.get("model") or "MiniMax-M2.5"
 
     return api_key, api_host, model_name
 
@@ -310,8 +302,7 @@ def web_search(query: Annotated[str, "The search query to find information"]) ->
 def understand_image(
     image: Annotated[
         str,
-        "Image to analyze: a URL (http://... or https://...), "
-        "a local file path, or a base64 data URL (data:...).",
+        "Image to analyze: a URL (http://... or https://...), a local file path, or a base64 data URL (data:...).",
     ],
     query: Annotated[str, "Question or analysis request about the image"],
 ) -> str:

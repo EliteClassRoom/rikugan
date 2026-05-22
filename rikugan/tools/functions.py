@@ -19,7 +19,7 @@ def format_function_summary(
     callers: list[str],
     callees: list[str],
 ) -> str:
-    """Format a function info summary string (shared between IDA and BN tools)."""
+    """Format a function info summary string shared by function tools."""
     parts = [
         f"Name: {name}",
         f"Address: 0x{start:x} \u2013 0x{end:x}",

@@ -15,6 +15,7 @@ from typing import ClassVar
 
 from .markdown import md_to_html
 from .qt_compat import (
+    QColor,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -22,7 +23,6 @@ from .qt_compat import (
     QPushButton,
     QSizePolicy,
     Qt,
-    QColor,
     QTextCursor,
     QTextEdit,
     QTimer,
@@ -212,7 +212,7 @@ class CollapsibleSection(QFrame):
 class ThinkingWidget(QFrame):
     """Animated thinking indicator shown while the LLM is processing."""
 
-    _STAR_FRAMES = ["✳", "✴", "✵", "✶"]
+    _STAR_FRAMES: ClassVar[tuple[str, ...]] = ("✳", "✴", "✵", "✶")
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
@@ -303,7 +303,7 @@ class AssistantMessageWidget(QFrame):
     """Displays an assistant message with markdown support and streaming."""
 
     # Block-level markdown markers that require full re-render
-    _BLOCK_MARKERS = ('```', '# ', '## ', '### ', '- ', '* ', '> ', '\n\n', '---', '***')
+    _BLOCK_MARKERS = ("```", "# ", "## ", "### ", "- ", "* ", "> ", "\n\n", "---", "***")
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
@@ -344,9 +344,9 @@ class AssistantMessageWidget(QFrame):
         self._text += text
 
         # Handle code block state transitions
-        if '```' in text:
+        if "```" in text:
             # Toggle based on parity of fence count
-            count = text.count('```')
+            count = text.count("```")
             if count % 2 == 1:
                 self._in_code_block = not self._in_code_block
             if not self._in_code_block:
@@ -387,11 +387,7 @@ class AssistantMessageWidget(QFrame):
     @staticmethod
     def _escape_html(text: str) -> str:
         """Escape text for HTML display."""
-        return (text
-            .replace('&', '&amp;')
-            .replace('<', '&lt;')
-            .replace('>', '&gt;')
-            .replace('"', '&quot;'))
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 class UserQuestionWidget(QFrame):

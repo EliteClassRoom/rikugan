@@ -18,6 +18,7 @@ from ..core.errors import (
     ProviderError,
     RateLimitError,
     ToolError,
+    ToolNotFoundError,
 )
 from ..core.logging import log_debug, log_error, log_info
 from ..core.sanitize import (
@@ -30,6 +31,7 @@ from ..core.types import Message, Role, TokenUsage, ToolCall, ToolResult
 from ..providers.base import LLMProvider
 from ..skills.registry import SkillRegistry
 from ..state.session import SessionState
+from ..tools.coercion import coerce_bool
 from ..tools.registry import ToolRegistry
 from .context_window import ContextWindowManager
 from .exploration_mode import (
@@ -59,6 +61,63 @@ _MEMORY_HEADER = (
     "This file persists across sessions. "
     "The agent reads the first 200 lines into its system prompt.\n\n"
 )
+
+# High-confidence mutating tools for which post-state verification runs.
+_VERIFY_MUTATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "rename_function",
+        "rename_address",
+        "set_comment",
+        "set_function_comment",
+        "set_pseudocode_comment",
+    }
+)
+
+
+_FAILURE_PREFIXES = (
+    "failed",
+    "error:",
+    "error ",
+    "decompilation failed",
+    "decompilation returned none",
+    "no function",
+    "no segment",
+    "no decompilation",
+    "hex-rays not available",
+    "hex-rays decompiler not available",
+    "ida_typeinf not available",
+    "idc module not available",
+)
+
+_FAILURE_SUBSTRINGS = (
+    " not found",
+    " not available",
+    "outside function",
+    "outside segment",
+)
+
+
+def _result_indicates_failure(result: str) -> bool:
+    """Heuristic check: does the tool result string indicate a clear failure?"""
+    if not isinstance(result, str):
+        return False
+    lower = result.strip().lower()
+    if lower.startswith(_FAILURE_PREFIXES):
+        return True
+    return any(needle in lower for needle in _FAILURE_SUBSTRINGS)
+
+
+@dataclasses.dataclass(frozen=True)
+class _MutationVerification:
+    """Result of post-state mutation verification.
+
+    *ok* is ``True`` when the mutating tool is confirmed to have
+    succeeded.  *reason* carries a human-readable explanation when
+    ``ok`` is ``False``.
+    """
+
+    ok: bool
+    reason: str = ""
 
 
 @dataclasses.dataclass
@@ -564,7 +623,7 @@ class AgentLoop:
         if self.session.idb_path:
             idb_dir = os.path.dirname(self.session.idb_path)
         if not idb_dir:
-            yield TurnEvent.text_done("No IDB/BNDB path set — persistent memory is not available.")
+            yield TurnEvent.text_done("No IDB path set — persistent memory is not available.")
             return
 
         md_path = os.path.join(idb_dir, "RIKUGAN.md")
@@ -700,9 +759,9 @@ class AgentLoop:
 
         # Check IDB path for persistent memory
         if self.session.idb_path:
-            ok.append(f"IDB/BNDB: {self.session.idb_path}")
+            ok.append(f"IDB: {self.session.idb_path}")
         else:
-            issues.append("No IDB/BNDB path — persistent memory disabled")
+            issues.append("No IDB path — persistent memory disabled")
 
         # Format output
         lines = ["**Rikugan Doctor**\n"]
@@ -1018,18 +1077,20 @@ class AgentLoop:
             return f"Run Python code ({len(lines)} lines):\n{preview}\n..."
         if name in ("rename_function",):
             return f"Rename function {args.get('old_name', '?')} → {args.get('new_name', '?')}"
-        if name in ("rename_variable", "rename_single_variable"):
-            return f"Rename variable {args.get('variable_name', '?')} → {args.get('new_name', '?')}"
+        if name in ("rename_variable",):
+            return (
+                f"Rename variable {args.get('old_name', args.get('variable_name', '?'))} → {args.get('new_name', '?')}"
+            )
         if name in ("set_comment", "set_function_comment"):
-            return f"Set comment at {args.get('address', args.get('function_name', '?'))}"
+            return f"Set comment at {args.get('address', '?')}"
         if name in ("set_type", "set_function_prototype"):
-            return f"Set type at {args.get('ea', args.get('name_or_address', '?'))}"
-        if name in ("nop_microcode", "nop_instructions"):
-            return f"NOP instructions at {args.get('address', args.get('ea', '?'))}"
+            return f"Set type at {args.get('address', '?')}"
+        if name in ("nop_microcode",):
+            return f"NOP instructions at {args.get('address', args.get('func_address', '?'))}"
         if name in ("create_struct", "create_enum"):
             return f"Create {name.split('_')[1]} '{args.get('name', '?')}'"
-        if name in ("decompile_function", "fetch_disassembly"):
-            return f"Decompile/disassemble {args.get('name', args.get('address', '?'))}"
+        if name in ("decompile_function", "read_disassembly"):
+            return f"Decompile/disassemble {args.get('address', args.get('name', '?'))}"
         # Generic
         summary_parts = []
         for k in ("name", "address", "ea", "target", "query"):
@@ -1169,7 +1230,7 @@ class AgentLoop:
         else:
             idb_dir = os.path.dirname(self.session.idb_path) if self.session.idb_path else ""
             if not idb_dir:
-                content = "Error: No IDB/BNDB path set; cannot determine where to save memory."
+                content = "Error: No IDB path set; cannot determine where to save memory."
                 is_err = True
             else:
                 md_path = os.path.join(idb_dir, "RIKUGAN.md")
@@ -1280,6 +1341,117 @@ class AgentLoop:
         yield TurnEvent.tool_result_event(tc.id, tc.name, content, False)
         return tr
 
+    def _verify_mutation(self, tool_name: str, args: dict[str, Any], result: str) -> _MutationVerification:
+        """Verify that a mutating tool actually succeeded.
+
+        Returns a :class:`_MutationVerification` whose *ok* attribute is
+        ``True`` only when the tool is confirmed to have succeeded.
+
+        Uses a two-pass strategy for the high-confidence mutation tools
+        listed in ``_VERIFY_MUTATION_TOOLS``:
+
+        1. **String heuristic** — the result text is checked for clear
+           failure indicators (``"Failed"``, ``"Decompilation failed"``,
+           etc.).
+        2. **Post-state verification** — the matching getter tool is
+           called and the returned value is compared exactly against the
+           expected mutation result.  If the getter is missing or throws,
+           verification fails (does not fall back to string heuristic).
+
+        For tools not in ``_VERIFY_MUTATION_TOOLS``, only the string
+        heuristic is used.
+
+        This method never raises — all exceptions are caught and
+        returned as a failed verification result.
+        """
+        # --- Pass 1: string heuristic ---
+        if _result_indicates_failure(result):
+            return _MutationVerification(False, "result indicates failure")
+
+        # --- Pass 2: post-state verification (high-confidence tools only) ---
+        if tool_name not in _VERIFY_MUTATION_TOOLS:
+            return _MutationVerification(True)
+
+        try:
+            if tool_name == "rename_function":
+                addr = args.get("address", "")
+                new_name = args.get("new_name", "")
+                actual = self.tools.execute("get_function_name", {"address": addr})
+                return _MutationVerification(
+                    str(actual) == str(new_name),
+                    f"expected {new_name!r}, got {str(actual)!r}",
+                )
+
+            elif tool_name == "rename_address":
+                addr = args.get("address", "")
+                new_name = args.get("new_name", "")
+                actual = self.tools.execute("get_address_name", {"address": addr})
+                return _MutationVerification(
+                    str(actual) == str(new_name),
+                    f"expected {new_name!r}, got {str(actual)!r}",
+                )
+
+            elif tool_name == "set_comment":
+                addr = args.get("address", "")
+                comment = args.get("comment", "")
+                if not isinstance(comment, str):
+                    comment = str(comment)
+                repeatable = coerce_bool(args.get("repeatable", False))
+                actual = self.tools.execute("get_comment", {"address": addr, "repeatable": repeatable})
+                return _MutationVerification(
+                    str(actual) == comment,
+                    f"expected {comment!r}, got {str(actual)!r}",
+                )
+
+            elif tool_name == "set_function_comment":
+                addr = args.get("address", "")
+                comment = args.get("comment", "")
+                if not isinstance(comment, str):
+                    comment = str(comment)
+                repeatable = coerce_bool(args.get("repeatable", False))
+                actual = self.tools.execute("get_function_comment", {"address": addr, "repeatable": repeatable})
+                return _MutationVerification(
+                    str(actual) == comment,
+                    f"expected {comment!r}, got {str(actual)!r}",
+                )
+
+            elif tool_name == "set_pseudocode_comment":
+                raw = self.tools.execute(
+                    "get_pseudocode_comment_state",
+                    {
+                        "func_address": args.get("func_address", ""),
+                        "target_address": args.get("target_address", ""),
+                    },
+                )
+                try:
+                    state = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    return _MutationVerification(False, "malformed pseudocode comment state JSON")
+                if not isinstance(state, dict):
+                    return _MutationVerification(False, "pseudocode comment state is not a dict")
+                if state.get("ok") is not True:
+                    return _MutationVerification(False, "pseudocode comment state ok is not True")
+                comment = args.get("comment", "")
+                if not isinstance(comment, str):
+                    comment = str(comment)
+                actual = state.get("comment", "")
+                if not isinstance(actual, str):
+                    return _MutationVerification(False, "pseudocode comment state comment is not a string")
+                return _MutationVerification(
+                    actual == comment,
+                    f"expected {comment!r}, got {actual!r}",
+                )
+
+        except ToolNotFoundError as exc:
+            return _MutationVerification(False, f"verification getter missing: {exc}")
+        except ToolError as exc:
+            return _MutationVerification(False, f"verification getter failed: {exc}")
+        except Exception as exc:
+            log_debug(f"mutation post-state verification failed for {tool_name}: {exc}")
+            return _MutationVerification(False, f"verification exception: {type(exc).__name__}")
+
+        return _MutationVerification(True)
+
     def _execute_single_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle approval gating, mutation tracking, and execution of a real tool."""
         # Profile: block denied tools at execution time (defense-in-depth —
@@ -1313,23 +1485,42 @@ class AgentLoop:
                 return tr
 
         pre_state: dict[str, Any] = {}
+        exec_args: dict[str, Any] = dict(tc.arguments)
         if is_mutating:
+            exec_args = self.tools.coerce_arguments_for(tc.name, tc.arguments)
             pre_state = capture_pre_state(
                 tc.name,
-                tc.arguments,
+                exec_args,
                 lambda name, args: self.tools.execute(name, args),
             )
 
         log_debug(f"Executing tool {tc.name}")
         try:
-            result = self.tools.execute(tc.name, tc.arguments)
+            result = self.tools.execute(tc.name, exec_args)
             is_error = False
             # Hysteresis: decrement instead of resetting so a single success
             # after several failures doesn't fully clear the counter.
             self._consecutive_errors = max(0, self._consecutive_errors - 1)
             if is_mutating:
-                record = build_reverse_record(tc.name, tc.arguments, pre_state)
-                if record is not None:
+                record = build_reverse_record(tc.name, exec_args, pre_state)
+                verification = self._verify_mutation(tc.name, exec_args, result)
+                if not verification.ok:
+                    # Post-state verification failed — do not append to the
+                    # undo stack.  Log the reason so it is still available
+                    # for debugging but does not consume /undo slots.
+                    log_debug(f"mutation recording skipped for {tc.name}: {verification.reason}")
+                elif not record.reversible:
+                    # Successful mutation but non-reversible — emit a UI-only
+                    # diagnostic event but do NOT append to the undo stack.
+                    log_debug(f"mutation not added to undo stack because it is not reversible: {record.description}")
+                    yield TurnEvent.mutation_recorded(
+                        tool_name=record.tool_name,
+                        description=record.description,
+                        reversible=record.reversible,
+                        reverse_tool=record.reverse_tool,
+                        reverse_args=record.reverse_arguments,
+                    )
+                else:
                     self._mutation_log.append(record)
                     log_debug(f"Mutation recorded: {record.description}")
                     yield TurnEvent.mutation_recorded(
@@ -1435,8 +1626,8 @@ class AgentLoop:
                             "Load a skill's full prompt and reference material into context. "
                             "Call this when the user's request matches a skill's domain "
                             "(e.g., activate 'malware-analysis' for malware tasks, "
-                            "'vuln-audit' for security audits, 'ida-scripting' or "
-                            "'binja-scripting' when you need to write scripts). "
+                            "'vuln-audit' for security audits, 'ida-scripting' "
+                            "when you need to write scripts). "
                             "The skill body will be returned so you can follow its methodology."
                         ),
                         "parameters": {

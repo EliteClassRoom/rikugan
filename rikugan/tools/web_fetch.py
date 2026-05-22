@@ -54,14 +54,7 @@ def _is_private_ip(value: str) -> bool:
         ip = ipaddress.ip_address(value.strip())
     except ValueError:
         return False
-    return (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
 
 
 def _is_safe_url(url: str) -> tuple[bool, str]:
@@ -286,7 +279,7 @@ def web_fetch(
     max_bytes: Annotated[
         int,
         "Maximum raw response size in bytes. Increase if fetching large documentation pages. "
-        f"Default: {WEB_FETCH_DEFAULT_MAX_BYTES // (1024*1024)} MB. Maximum: {WEB_FETCH_HARD_MAX_BYTES // (1024*1024)} MB.",
+        f"Default: {WEB_FETCH_DEFAULT_MAX_BYTES // (1024 * 1024)} MB. Maximum: {WEB_FETCH_HARD_MAX_BYTES // (1024 * 1024)} MB.",
     ] = WEB_FETCH_DEFAULT_MAX_BYTES,
 ) -> str:
     """Fetch a URL and return its content in the requested format.
@@ -382,8 +375,7 @@ def web_fetch(
         result_chunk = result[offset : offset + limit]
 
     header = (
-        f"[Fetched {url}; total chars: {total_chars:,}; "
-        f"showing offset {offset}-{min(offset + limit, total_chars)}]"
+        f"[Fetched {url}; total chars: {total_chars:,}; showing offset {offset}-{min(offset + limit, total_chars)}]"
     )
 
     if not result_chunk and total_chars > 0:

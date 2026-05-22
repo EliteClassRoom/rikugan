@@ -36,7 +36,7 @@ def _resolve_host_sink() -> Callable[[str, int], None] | None:
         return _host_sink
 
     try:
-        from .host import BINARY_NINJA_AVAILABLE, IDA_AVAILABLE
+        from .host import IDA_AVAILABLE
     except Exception:
         return None
 
@@ -56,28 +56,6 @@ def _resolve_host_sink() -> Callable[[str, int], None] | None:
             return _host_sink
         except ImportError as exc:
             sys.stderr.write(f"[Rikugan] ida_kernwin import failed: {exc}\n")
-
-    if BINARY_NINJA_AVAILABLE:
-        try:
-            import importlib
-
-            _bn_log = importlib.import_module("binaryninja.log")
-
-            def _bn_sink(msg: str, levelno: int) -> None:
-                try:
-                    if levelno >= logging.ERROR:
-                        _bn_log.log_error(msg)
-                    elif levelno >= logging.WARNING:
-                        _bn_log.log_warn(msg)
-                    else:
-                        _bn_log.log_info(msg)
-                except Exception as e:
-                    sys.stderr.write(f"[Rikugan] binaryninja log emit failed: {e}\n")
-
-            _host_sink = _bn_sink
-            return _host_sink
-        except ImportError as exc:
-            sys.stderr.write(f"[Rikugan] binaryninja.log import failed: {exc}\n")
 
     return None
 
@@ -120,10 +98,12 @@ class _FlushFileHandler(logging.FileHandler):
 
     def emit(self, record: logging.LogRecord) -> None:
         super().emit(record)
-        try:
-            self.stream.flush()
-        except OSError:
-            pass
+        stream = self.stream
+        if stream is not None:
+            try:
+                stream.flush()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------

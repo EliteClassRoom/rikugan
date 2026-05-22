@@ -117,7 +117,7 @@ class TestModelFetcherPoll(unittest.TestCase):
 class TestModelFetcherFetch(unittest.TestCase):
     def test_fetch_error_when_create_fails(self):
         registry = MagicMock()
-        registry.create.side_effect = RuntimeError("boom")
+        registry.new_instance.side_effect = RuntimeError("boom")
         fetcher = _ModelFetcher(registry)
         fetcher.fetch("anthropic", "key", "base")
         result = fetcher.poll()

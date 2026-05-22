@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Rikugan (六眼) is a multi-host reverse-engineering agent plugin that integrates an LLM-powered assistant directly inside **IDA Pro** and **Binary Ninja**. It has its own agentic loop, in-process tool orchestration, streaming UI, multi-tab chat, session persistence, MCP client support, and host-native tool sets.
+Rikugan (六眼) is a reverse-engineering agent plugin that integrates an LLM-powered assistant directly inside **IDA Pro**. It has its own agentic loop, in-process tool orchestration, streaming UI, multi-tab chat, session persistence, MCP client support, and host-native tool sets.
 
 ## Directory Structure
 
@@ -19,14 +19,13 @@ rikugan/
 │   ├── system_prompt.py      # build_system_prompt() dispatcher
 │   └── prompts/              # Host-specific system prompts
 │       ├── base.py           # Shared prompt sections (discipline, renaming, etc.)
-│       ├── ida.py            # IDA Pro base prompt
-│       └── binja.py          # Binary Ninja base prompt
+│       └── ida.py            # IDA Pro base prompt
 │
 ├── core/                     # Shared infrastructure (host-agnostic)
 │   ├── config.py             # RikuganConfig — settings, provider config, paths
 │   ├── constants.py          # Constants (CONFIG_DIR_NAME, etc.)
 │   ├── errors.py             # Exception hierarchy (ToolError, AgentError, etc.)
-│   ├── host.py               # Host context (BV, address, navigate callback)
+│   ├── host.py               # Host context (idaapi, address, navigate callback)
 │   ├── logging.py            # Logging utilities
 │   ├── thread_safety.py      # Thread-safety helpers (@idasync, etc.)
 │   └── types.py              # Core data types (Message, ToolCall, StreamChunk, etc.)
@@ -38,28 +37,6 @@ rikugan/
 │       ├── panel.py          # IDA PluginForm wrapper
 │       ├── actions.py        # IDA UI hooks & context menu actions
 │       └── session_controller.py  # IDA SessionController
-│
-├── binja/                    # Binary Ninja host package
-│   ├── tools/
-│   │   ├── registry.py       # BN create_default_registry() — imports rikugan.binja.tools.*
-│   │   ├── common.py         # BN shared helpers (get_bv, get_function_at, etc.)
-│   │   ├── navigation.py     # Navigation tools
-│   │   ├── functions.py      # Function listing/search tools
-│   │   ├── strings.py        # String tools
-│   │   ├── database.py       # Segments, imports, exports, binary info
-│   │   ├── disassembly.py    # Disassembly tools
-│   │   ├── decompiler.py     # Decompiler/HLIL tools
-│   │   ├── xrefs.py          # Cross-reference tools
-│   │   ├── annotations.py    # Rename/comment/set_type tools
-│   │   ├── types_tools.py    # Struct/enum/typedef tools
-│   │   ├── il.py             # IL core tools (get_il, get_il_block, nop_instructions, redecompile_function)
-│   │   ├── il_analysis.py    # IL analysis tools (get_cfg, track_variable_ssa)
-│   │   ├── il_transform.py   # IL transform tools (il_replace_expr, il_set_condition, il_nop_expr, patch_branch, etc.)
-│   │   └── scripting.py      # execute_python tool
-│   └── ui/
-│       ├── panel.py          # BN QWidget panel
-│       ├── actions.py        # BN action handlers
-│       └── session_controller.py  # BN BinaryNinjaSessionController
 │
 ├── tools/                    # IDA tool implementations
 │   ├── base.py               # @tool decorator, ToolDefinition, JSON schema generation
@@ -78,7 +55,7 @@ rikugan/
 │   ├── microcode_optim.py    # Microcode optimizer framework
 │   └── scripting.py          # IDA execute_python tool
 │
-├── hosts/                    # Backward-compat shims → rikugan.ida.ui.* / rikugan.binja.ui.*
+├── hosts/                    # Backward-compat shims → rikugan.ida.ui.*
 │
 ├── providers/                # LLM provider integrations (host-agnostic)
 │   ├── base.py               # LLMProvider ABC
@@ -100,7 +77,7 @@ rikugan/
 ├── skills/                   # Skill system (host-agnostic)
 │   ├── registry.py           # SkillRegistry — discovery & loading
 │   ├── loader.py             # SKILL.md frontmatter parser (mode field support)
-│   └── builtins/             # 12 built-in skills
+│   └── builtins/             # 10 built-in skills
 │       ├── malware-analysis/
 │       ├── linux-malware/
 │       ├── deobfuscation/
@@ -109,10 +86,8 @@ rikugan/
 │       ├── ctf/
 │       ├── generic-re/
 │       ├── ida-scripting/    # IDAPython API skill with full reference
-│       ├── binja-scripting/  # Binary Ninja Python API skill with full reference
 │       ├── modify/           # Exploration mode: autonomous binary modification
-│       ├── smart-patch-ida/  # IDA-specific binary patching workflow
-│       └── smart-patch-binja/ # Binary Ninja-specific patching workflow
+│       └── smart-patch-ida/  # IDA-specific binary patching workflow
 │
 ├── state/                    # Session persistence (host-agnostic)
 │   ├── session.py            # SessionState — message history, token tracking
@@ -135,7 +110,6 @@ rikugan/
 
 Entry points (root directory):
 - **IDA Pro**: `rikugan_plugin.py` — `PLUGIN_ENTRY()` → `RikuganPlugin` → `RikuganPlugmod`
-- **Binary Ninja**: `rikugan_binaryninja.py` — registers sidebar widget + commands at import time
 
 ## How the Agent Loop Works
 
@@ -182,7 +156,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full technical details on all modes, 
 - `SessionControllerBase` manages a dict of `_sessions: Dict[str, SessionState]` keyed by tab ID
 - `PanelCore` uses a `QTabWidget` with closable tabs and a "+" button for new tabs
 - **Session fork**: right-click a tab → "Fork Session" to deep copy the conversation into a new tab (branch from a checkpoint)
-- Sessions are auto-saved per file (IDB/BNDB path) and restored when re-opening the same file
+- Sessions are auto-saved per IDB file and restored when re-opening the same file
 - Opening a different file resets all tabs and attempts to restore that file's saved sessions
 
 ## Approval Gates
@@ -213,7 +187,7 @@ Rikugan analyzes untrusted binaries whose content (strings, function names, deco
 | **Delimiter quoting** | Wraps untrusted content in XML-like tags (`<tool_result>`, `<binary_info>`, `<mcp_result>`, `<persistent_memory>`, `<skill>`) | All tool results, system prompt context, MCP results, memory, skills |
 | **Injection marker stripping** | Removes sequences mimicking LLM role markers (`[SYSTEM]`, `<\|im_start\|>`, etc.) and instruction override patterns | All untrusted data at point of entry |
 | **Length capping** | Truncates data items to configurable limits | Tool results (50K), MCP results (30K), binary data (2K per item), memory (20K), skills (50K) |
-| **Model awareness** | `DATA_INTEGRITY_SECTION` in the system prompt instructs the model to treat delimited content as data, not instructions | Both IDA and Binary Ninja base prompts |
+| **Model awareness** | `DATA_INTEGRITY_SECTION` in the system prompt instructs the model to treat delimited content as data, not instructions | IDA base prompt |
 | **Memory write sanitization** | `save_memory` tool strips injection markers before writing to RIKUGAN.md | `_handle_save_memory_tool` in loop.py |
 | **Compaction sanitization** | Context window compaction strips markers from summary snippets | `context_window.py` |
 
@@ -257,29 +231,13 @@ Optional `@tool` parameters:
 
 ### 2. Register in the host's registry
 
-**For IDA** — add the module import to `rikugan/ida/tools/registry.py`:
+Add the module import to `rikugan/ida/tools/registry.py`:
 ```python
 from rikugan.tools import my_new_module
 _TOOL_MODULES = (..., my_new_module)
 ```
 
-**For Binary Ninja** — add the module import to `rikugan/binja/tools/registry.py`:
-```python
-from rikugan.binja.tools import my_new_module
-_TOOL_MODULES = (..., my_new_module)
-```
-
 The registry calls `register_module()` on each module, which discovers all `@tool`-decorated functions.
-
-## How to Add a New Host
-
-1. Create `rikugan/<host>/` with `tools/` and `ui/` sub-packages
-2. Implement tool modules under `rikugan/<host>/tools/` — use `from rikugan.tools.base import tool`
-3. Create `rikugan/<host>/tools/registry.py` with a `create_default_registry()` factory
-4. Subclass `SessionControllerBase` in `rikugan/<host>/ui/session_controller.py`
-5. Create a panel widget in `rikugan/<host>/ui/panel.py` — embed the shared `PanelCore` widget
-6. Add a host-specific prompt in `rikugan/agent/prompts/<host>.py` and register it in `system_prompt.py`'s `_HOST_PROMPTS` dict
-7. Create an entry point script (e.g., `rikugan_<host>.py`) that bootstraps the plugin
 
 ## How to Add a New Skill
 
@@ -303,15 +261,15 @@ allowed_tools: [decompile_function, rename_function]
 Task: <instruction for the agent>
 ```
 
-Users can also create custom skills in their host config directory (`~/.idapro/rikugan/skills/` or `~/.binaryninja/rikugan/skills/`).
+Users can also create custom skills in their host config directory (`~/.idapro/rikugan/skills/`).
 
 ## Import Conventions
 
 - **Cross-package imports** use absolute paths: `from rikugan.tools.base import tool`
-- **Within the same package** use absolute imports: `from rikugan.binja.tools.common import get_bv`
+- **Within the same package** use absolute imports: `from rikugan.tools.navigation import jump_to`
 - **IDA tool modules** (`rikugan/tools/*.py`) use relative imports within `rikugan.tools`
-- **Host API modules** (ida_*, binaryninja) are imported via `importlib.import_module()` inside `try/except ImportError` blocks to avoid crashes when loaded in the wrong host
-- **Backward-compat shims** in `rikugan/tools_bn/` and `rikugan/hosts/` re-export from canonical locations
+- **Host API modules** (`ida_*`) are imported via `importlib.import_module()` inside `try/except ImportError` blocks to avoid Shiboken UAF crashes
+- **Backward-compat shims** in `rikugan/hosts/` re-export from canonical locations
 
 ## System Prompt Structure
 
@@ -326,8 +284,7 @@ rikugan/agent/prompts/
 │               #   SAFETY_SECTION      — Safety guidelines
 │               #   TOKEN_EFFICIENCY_SECTION — Prefer search over listing
 │               #   CLOSING_SECTION     — Final reminders
-├── ida.py      # IDA_BASE_PROMPT: IDA intro + IDA tool usage + shared sections
-└── binja.py    # BINJA_BASE_PROMPT: BN intro + BN tool usage + shared sections
+└── ida.py      # IDA_BASE_PROMPT: IDA intro + IDA tool usage + shared sections
 ```
 
 `build_system_prompt()` in `system_prompt.py` selects the correct base prompt by host name, then appends runtime context (binary info, cursor position, tool list, active skills).
@@ -344,7 +301,7 @@ rikugan/agent/prompts/
 | `rikugan/ui/chat_view.py` | `ChatView` — message display, queued messages |
 | `rikugan/ui/message_widgets.py` | Message widgets including approval dialog |
 | `rikugan/core/config.py` | `RikuganConfig` — all settings, provider config, host paths |
-| `rikugan/core/host.py` | Host context singleton (BinaryView, address, navigate callback) |
+| `rikugan/core/host.py` | Host context singleton (address, navigate callback) |
 | `rikugan/core/thread_safety.py` | `@idasync` decorator for main-thread marshalling |
 | `rikugan/providers/base.py` | `LLMProvider` ABC — interface for all LLM providers |
 | `rikugan/mcp/manager.py` | `MCPManager` — starts MCP servers, bridges tools into registry |
@@ -352,7 +309,6 @@ rikugan/agent/prompts/
 | `rikugan/state/session.py` | `SessionState` — message history, token usage tracking |
 | `rikugan/state/history.py` | `SessionHistory` — auto-save/restore per file |
 | `rikugan_plugin.py` | IDA Pro plugin entry point |
-| `rikugan_binaryninja.py` | Binary Ninja plugin entry point |
 
 ## CI/CD & Branch Model
 
@@ -364,7 +320,7 @@ fix/some-bug   ─┤──► dev ──► main
 chore/deps     ─┘
 ```
 
-- **`main`** — always releasable. Binary Ninja plugin manager tracks this branch directly. Never push here directly.
+- **`main`** — always releasable. Never push here directly.
 - **`dev`** — integration branch. Push freely here — no CI gate.
 - **`feat/*`, `fix/*`, `chore/*`, `refactor/*`** — short-lived branches off `dev`. One logical change per branch.
 
@@ -399,10 +355,8 @@ CI does **not** run `desloppify review` (the LLM-powered subjective scoring) —
 ### Release Flow
 
 1. Merge `dev` → `main` via PR (CI must pass)
-2. Bump `version` in `plugin.json`
-3. Push tag: `git tag v0.x.x && git push origin v0.x.x`
-4. GitHub Actions validates the tag matches `plugin.json`, then creates the GitHub Release
-5. Binary Ninja plugin manager auto-serves the new version from `main`
+2. Push tag: `git tag v0.x.x && git push origin v0.x.x`
+3. GitHub Actions creates the GitHub Release
 
 ### Workflow Files
 
@@ -422,9 +376,9 @@ CI does **not** run `desloppify review` (the LLM-powered subjective scoring) —
 
 ### Import Discipline
 
-- **Host API modules** (`ida_*`, `binaryninja`) are **always** imported via `importlib.import_module()` inside `try/except ImportError`. Never use bare `import ida_funcs` at module level — this crashes when loaded in the wrong host and triggers Shiboken UAF in IDA.
+- **Host API modules** (`ida_*`) are **always** imported via `importlib.import_module()` inside `try/except ImportError`. Never use bare `import ida_funcs` at module level — this crashes and triggers Shiboken UAF in IDA.
 - **Cross-package** uses absolute paths: `from rikugan.tools.base import tool`
-- **Within a package** also uses absolute paths: `from rikugan.binja.tools.common import get_bv`
+- **Within a package** also uses absolute paths: `from rikugan.tools.navigation import jump_to`
 - **Constants from host APIs** that may not exist (e.g., `BADADDR`) must have local fallbacks defined at module level.
 
 ### Tool Implementation Rules
@@ -439,7 +393,6 @@ CI does **not** run `desloppify review` (the LLM-powered subjective scoring) —
 ### Thread Safety
 
 - **IDA Pro requires all API calls on the main thread.** The `@idasync` decorator in `core/thread_safety.py` handles this — it's applied automatically by the `@tool` decorator for IDA tools.
-- **Binary Ninja's API is thread-safe** — no marshalling needed.
 - **Never use Qt signals across threads** — use `queue.Queue` and poll with `QTimer`. This is how `BackgroundAgentRunner` communicates with the UI and why `_ModelFetcher` uses a queue instead of signals.
 - **Cancellation** uses `threading.Event` (`_cancelled`), checked via `_check_cancelled()` at every yield point, sleep loop iteration, and tool dispatch boundary. The check **must** appear:
   - At the top of retry loops (before each attempt)
@@ -473,9 +426,9 @@ CI does **not** run `desloppify review` (the LLM-powered subjective scoring) —
 ### Commit Practices
 
 - Prefix: `fix(scope)`, `feat(scope)`, `refactor(scope)`, `security`, `docs`.
-- Scope is the subsystem: `ida`, `binja`, `agent`, `ui`, `providers`, `installer`.
+- Scope is the subsystem: `ida`, `agent`, `ui`, `providers`, `installer`.
 - One logical change per commit. Bug fix + feature + refactor = three commits.
-- Test in the actual host (IDA/Binary Ninja) before committing tool changes — the `py_compile` check catches syntax but not runtime API issues.
+- Test in the actual host (IDA Pro) before committing tool changes — the `py_compile` check catches syntax but not runtime API issues.
 
 ### What to Verify Before Merging
 
@@ -653,7 +606,7 @@ Both modes spawn a `SubagentRunner` per batch. The system prompt differs:
 - System prompt: *"Given this decompiled function, suggest a descriptive name.
   Respond with ONLY the new name. Use snake_case. If the function is trivial
   (thunk/stub/wrapper), prefix with the pattern (e.g. `thunk_`, `j_`)."*
-- No tool calls — raw HLIL passed as user message, name returned as text
+- No tool calls — raw decompiled pseudocode passed as user message, name returned as text
 - **Budget**: 1 turn, ~500 tokens per function
 - Falls back to `sub_<addr>` on timeout/error
 

@@ -1,4 +1,4 @@
-"""Shared prompt sections reused across all host-specific system prompts."""
+"""Shared prompt sections for the Rikugan system prompt."""
 
 from __future__ import annotations
 
@@ -185,7 +185,7 @@ You do what was asked, you do it well, and you don't keep going when
 nobody asked you to.
 """
 
-# Capability bullet lines shared by both IDA and Binary Ninja prompts.
+# Capability bullet lines for the IDA system prompt.
 SHARED_CAPABILITIES_BULLETS = """\
 - Read disassembly and decompiled pseudocode
 - Navigate to addresses and functions

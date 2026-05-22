@@ -105,8 +105,8 @@ class AnthropicProvider(LLMProvider):
         api_key: str = "",
         api_base: str = "",
         model: str = "claude-sonnet-4-20250514",
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         if api_key:
             token, self._auth_type = resolve_anthropic_auth(api_key)
         else:
@@ -116,7 +116,7 @@ class AnthropicProvider(LLMProvider):
             token, self._auth_type = resolve_auth_cached()
         super().__init__(api_key=token, api_base=api_base, model=model)
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         if self._client is None:
             try:
                 anthropic = importlib.import_module("anthropic")
@@ -311,7 +311,7 @@ class AnthropicProvider(LLMProvider):
             )
         return anthropic_tools
 
-    def _normalize_response(self, response) -> Message:
+    def _normalize_response(self, response: Any) -> Message:
         """Convert Anthropic response to internal Message."""
         content_text = ""
         tool_calls = []

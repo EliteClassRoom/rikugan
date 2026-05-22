@@ -287,7 +287,7 @@ td code{font-size:.82rem}
 <div class="content">
 
 <h1>Documentation <span class="jp">六眼</span></h1>
-<p class="lead">Everything you need to install, configure, and use Rikugan &mdash; the AI reverse-engineering agent for IDA Pro and Binary Ninja.</p>
+<p class="lead">Everything you need to install, configure, and use Rikugan &mdash; the AI reverse-engineering agent for IDA Pro.</p>
 
 <!-- ═══════════════════════════════════════════════
      GETTING STARTED
@@ -295,7 +295,7 @@ td code{font-size:.82rem}
 
 <h2 id="requirements">Requirements</h2>
 <ul>
-  <li><strong>IDA Pro 9.0+</strong> with Hex-Rays decompiler (recommended), or <strong>Binary Ninja</strong> (UI mode)</li>
+  <li><strong>IDA Pro 9.0+</strong> with Hex-Rays decompiler (recommended)</li>
   <li><strong>Python 3.9+</strong></li>
   <li>At least one LLM provider API key (or Ollama for local inference)</li>
   <li><strong>Windows, macOS, or Linux</strong></li>
@@ -316,8 +316,6 @@ cd rikugan</code></pre>
     <div class="tabs" data-group="install">
       <div class="tab active" data-tab="ida-unix">IDA Pro (Linux/macOS)</div>
       <div class="tab" data-tab="ida-win">IDA Pro (Windows)</div>
-      <div class="tab" data-tab="bn-unix">Binary Ninja (Linux/macOS)</div>
-      <div class="tab" data-tab="bn-win">Binary Ninja (Windows)</div>
     </div>
     <div class="tab-panel">
       <div class="tab-content active" id="ida-unix">
@@ -329,16 +327,6 @@ cd rikugan</code></pre>
         <pre><code class="language-bash">install_ida.bat</code></pre>
         <p style="margin-top:8px;font-size:.85rem;color:var(--text-dim)">Optional: pass a custom user dir path</p>
         <pre><code class="language-bash">install_ida.bat "C:\Users\you\AppData\Roaming\Hex-Rays\IDA Pro"</code></pre>
-      </div>
-      <div class="tab-content" id="bn-unix">
-        <pre><code class="language-bash">./install_binaryninja.sh</code></pre>
-        <p style="margin-top:8px;font-size:.85rem;color:var(--text-dim)">Optional: pass a custom user dir path</p>
-        <pre><code class="language-bash">./install_binaryninja.sh /path/to/binaryninja/user/dir</code></pre>
-      </div>
-      <div class="tab-content" id="bn-win">
-        <pre><code class="language-bash">install_binaryninja.bat</code></pre>
-        <p style="margin-top:8px;font-size:.85rem;color:var(--text-dim)">Optional: pass a custom user dir path</p>
-        <pre><code class="language-bash">install_binaryninja.bat "C:\Users\you\AppData\Roaming\Binary Ninja"</code></pre>
       </div>
     </div>
     <p>Installers auto-detect the user directory for their host. They create plugin links/junctions, install Python dependencies, and initialize the Rikugan config directory.</p>
@@ -363,9 +351,6 @@ cd rikugan</code></pre>
     <tr><th>Host</th><th>Platform</th><th>Config Path</th></tr>
     <tr><td>IDA Pro</td><td>Linux / macOS</td><td><code>~/.idapro/rikugan/config.json</code></td></tr>
     <tr><td>IDA Pro</td><td>Windows</td><td><code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\config.json</code></td></tr>
-    <tr><td>Binary Ninja</td><td>Linux</td><td><code>~/.binaryninja/rikugan/config.json</code></td></tr>
-    <tr><td>Binary Ninja</td><td>macOS</td><td><code>~/Library/Application Support/Binary Ninja/rikugan/config.json</code></td></tr>
-    <tr><td>Binary Ninja</td><td>Windows</td><td><code>%APPDATA%\Binary Ninja\rikugan\config.json</code></td></tr>
   </table>
 </div>
 <p>You can edit this JSON file directly, or use the Settings dialog in the UI.</p>
@@ -409,7 +394,6 @@ cd rikugan</code></pre>
   <table>
     <tr><th>Host</th><th>How to Open</th></tr>
     <tr><td>IDA Pro</td><td>Press <code>Ctrl+Shift+I</code>, or <strong>Edit &rarr; Plugins &rarr; Rikugan</strong></td></tr>
-    <tr><td>Binary Ninja</td><td><strong>Tools &rarr; Rikugan &rarr; Open Panel</strong>, or use the sidebar icon</td></tr>
   </table>
 </div>
 
@@ -422,10 +406,8 @@ cd rikugan</code></pre>
   <li><strong>Persistence:</strong> Tabs are tied to the current file. Opening a different database starts fresh tabs; returning restores saved conversations.</li>
 </ul>
 
-<img src="assets/binja_showcase.png" alt="Rikugan Chat UI" class="doc-img" loading="lazy">
-
 <h2 id="quick-actions">Quick Actions</h2>
-<p>IDA Pro exposes these in right-click context menus. Binary Ninja has equivalent commands under <strong>Tools &rarr; Rikugan</strong>.</p>
+  <p>IDA Pro exposes these in right-click context menus.</p>
 <div class="table-wrap">
   <table>
     <tr><th>Action</th><th>Description</th></tr>
@@ -454,10 +436,8 @@ cd rikugan</code></pre>
     <tr><td><code>/ctf</code></td><td>Capture-the-flag challenges &mdash; find the flag efficiently</td></tr>
     <tr><td><code>/generic-re</code></td><td>General-purpose binary understanding</td></tr>
     <tr><td><code>/ida-scripting</code></td><td>IDAPython API reference for writing scripts</td></tr>
-    <tr><td><code>/binja-scripting</code></td><td>Binary Ninja Python API reference</td></tr>
     <tr><td><code>/modify</code></td><td>Autonomous 4-phase binary modification (exploration mode)</td></tr>
     <tr><td><code>/smart-patch-ida</code></td><td>IDA-specific binary patching</td></tr>
-    <tr><td><code>/smart-patch-binja</code></td><td>Binary Ninja-specific binary patching</td></tr>
   </table>
 </div>
 
@@ -518,7 +498,7 @@ cd rikugan</code></pre>
 <img src="assets/approval_example.png" alt="Script Approval Dialog" class="doc-img" loading="lazy">
 <div class="callout warn">
   <span class="callout-icon">&#x26A0;&#xFE0F;</span>
-  <div>The agent can never run the target binary on your machine. Script execution is limited to the disassembler's scripting API (IDAPython / Binary Ninja API).</div>
+  <div>The agent can never run the target binary on your machine. Script execution is limited to the disassembler's scripting API (IDAPython).</div>
 </div>
 
 <h2 id="mcp">MCP Servers</h2>
@@ -528,9 +508,6 @@ cd rikugan</code></pre>
     <tr><th>Host</th><th>Platform</th><th>MCP Config Path</th></tr>
     <tr><td>IDA Pro</td><td>Linux / macOS</td><td><code>~/.idapro/rikugan/mcp.json</code></td></tr>
     <tr><td>IDA Pro</td><td>Windows</td><td><code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\mcp.json</code></td></tr>
-    <tr><td>Binary Ninja</td><td>Linux</td><td><code>~/.binaryninja/rikugan/mcp.json</code></td></tr>
-    <tr><td>Binary Ninja</td><td>macOS</td><td><code>~/Library/Application Support/Binary Ninja/rikugan/mcp.json</code></td></tr>
-    <tr><td>Binary Ninja</td><td>Windows</td><td><code>%APPDATA%\Binary Ninja\rikugan\mcp.json</code></td></tr>
   </table>
 </div>
 <pre><code class="language-json">{
@@ -552,11 +529,6 @@ cd rikugan</code></pre>
 <pre><code class="language-text"># IDA Pro
 ~/.idapro/rikugan/skills/                                        # Linux / macOS
 %APPDATA%\Hex-Rays\IDA Pro\rikugan\skills\                       # Windows
-
-# Binary Ninja
-~/.binaryninja/rikugan/skills/                                   # Linux
-~/Library/Application Support/Binary Ninja/rikugan/skills/       # macOS
-%APPDATA%\Binary Ninja\rikugan\skills\                           # Windows
 
 my-skill/
   SKILL.md             # required: frontmatter + prompt body
@@ -589,7 +561,7 @@ Task: &lt;instruction for the agent&gt;
 </div>
 
 <h2 id="memory">Persistent Memory</h2>
-<p>Rikugan automatically creates a <code>RIKUGAN.md</code> file in the same directory as your IDB/BNDB. This file persists across sessions:</p>
+<p>Rikugan automatically creates a <code>RIKUGAN.md</code> file in the same directory as your IDB. This file persists across sessions:</p>
 <ul>
   <li>The first 200 lines are loaded into the system prompt on every session</li>
   <li>The agent can save facts via the <code>save_memory</code> pseudo-tool</li>
@@ -605,7 +577,7 @@ Task: &lt;instruction for the agent&gt;
      ═══════════════════════════════════════════════ -->
 
 <h2 id="tools">Tools Reference</h2>
-<p>50 tools are shared across both hosts with identical interfaces. IDA adds 6 host-specific microcode tools; Binary Ninja adds 13 host-specific IL tools for reading, analyzing, and transforming its intermediate language.</p>
+<p>50 tools are shared across both hosts with identical interfaces. IDA adds 6 host-specific microcode tools.</p>
 
 <h3>Shared Tools (50)</h3>
 <div class="table-wrap">
@@ -632,16 +604,6 @@ Task: &lt;instruction for the agent&gt;
   </table>
 </div>
 
-<h3>Binary Ninja-Only Tools (13)</h3>
-<div class="table-wrap">
-  <table>
-    <tr><th>Category</th><th>Tools</th></tr>
-    <tr><td>IL Core</td><td><code>get_il</code> <code>get_il_block</code> <code>nop_instructions</code> <code>redecompile_function</code></td></tr>
-    <tr><td>IL Analysis</td><td><code>get_cfg</code> <code>track_variable_ssa</code></td></tr>
-    <tr><td>IL Transform</td><td><code>il_replace_expr</code> <code>il_set_condition</code> <code>il_nop_expr</code> <code>il_remove_block</code> <code>patch_branch</code> <code>write_bytes</code> <code>install_il_workflow</code></td></tr>
-  </table>
-</div>
-
 <h2 id="providers">Providers</h2>
 <div class="table-wrap">
   <table>
@@ -656,7 +618,7 @@ Task: &lt;instruction for the agent&gt;
 
 <h2 id="config-reference">Config Reference</h2>
 <h3>Config Paths</h3>
-<p>All paths below are under each host's user directory. IDA Pro shares the same user directory on Linux and macOS (<code>~/.idapro/</code>); Binary Ninja uses a platform-specific location.</p>
+<p>All paths below are under each host's user directory. IDA Pro shares the same user directory on Linux and macOS (<code>~/.idapro/</code>).</p>
 <div class="table-wrap">
   <table>
     <tr><th>File</th><th>IDA Pro — Linux / macOS</th><th>IDA Pro — Windows</th></tr>
@@ -667,18 +629,6 @@ Task: &lt;instruction for the agent&gt;
     <tr><td>Debug log</td><td><code>~/.idapro/rikugan/rikugan_debug.log</code></td><td><code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\rikugan_debug.log</code></td></tr>
     <tr><td>Structured log</td><td><code>~/.idapro/rikugan/rikugan_structured.jsonl</code></td><td><code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\rikugan_structured.jsonl</code></td></tr>
     <tr><td>Persistent memory</td><td colspan="2"><code>&lt;idb_directory&gt;/RIKUGAN.md</code></td></tr>
-  </table>
-</div>
-<div class="table-wrap">
-  <table>
-    <tr><th>File</th><th>Binary Ninja — Linux</th><th>Binary Ninja — macOS</th><th>Binary Ninja — Windows</th></tr>
-    <tr><td>Main config</td><td><code>~/.binaryninja/rikugan/config.json</code></td><td><code>~/Library/Application Support/Binary Ninja/rikugan/config.json</code></td><td><code>%APPDATA%\Binary Ninja\rikugan\config.json</code></td></tr>
-    <tr><td>MCP config</td><td><code>~/.binaryninja/rikugan/mcp.json</code></td><td><code>~/Library/Application Support/Binary Ninja/rikugan/mcp.json</code></td><td><code>%APPDATA%\Binary Ninja\rikugan\mcp.json</code></td></tr>
-    <tr><td>Custom skills</td><td><code>~/.binaryninja/rikugan/skills/</code></td><td><code>~/Library/Application Support/Binary Ninja/rikugan/skills/</code></td><td><code>%APPDATA%\Binary Ninja\rikugan\skills\</code></td></tr>
-    <tr><td>Sessions</td><td><code>~/.binaryninja/rikugan/sessions/</code></td><td><code>~/Library/Application Support/Binary Ninja/rikugan/sessions/</code></td><td><code>%APPDATA%\Binary Ninja\rikugan\sessions\</code></td></tr>
-    <tr><td>Debug log</td><td><code>~/.binaryninja/rikugan/rikugan_debug.log</code></td><td><code>~/Library/Application Support/Binary Ninja/rikugan/rikugan_debug.log</code></td><td><code>%APPDATA%\Binary Ninja\rikugan\rikugan_debug.log</code></td></tr>
-    <tr><td>Structured log</td><td><code>~/.binaryninja/rikugan/rikugan_structured.jsonl</code></td><td><code>~/Library/Application Support/Binary Ninja/rikugan/rikugan_structured.jsonl</code></td><td><code>%APPDATA%\Binary Ninja\rikugan\rikugan_structured.jsonl</code></td></tr>
-    <tr><td>Persistent memory</td><td colspan="3"><code>&lt;bndb_directory&gt;/RIKUGAN.md</code></td></tr>
   </table>
 </div>
 

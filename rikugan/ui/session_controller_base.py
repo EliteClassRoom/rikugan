@@ -126,7 +126,7 @@ class SessionControllerBase:
 
     @staticmethod
     def _ensure_db_instance_id() -> str:
-        """Read or generate a database-instance UUID for the current IDB/BNDB."""
+        """Read or generate a database-instance UUID for the current IDB."""
         existing = get_database_instance_id()
         if existing:
             log_debug(f"Database instance ID: {existing}")
@@ -334,9 +334,7 @@ class SessionControllerBase:
         # model switch).  The user can re-send if still relevant.
         self._pending_messages.clear()
 
-        # Re-persist the instance ID in the database.  For BN the BNDB may
-        # not have existed at init time; writing again ensures the ID is
-        # present when the BNDB is eventually saved.
+        # Re-persist the instance ID in the database.
         set_database_instance_id(self._db_instance_id)
 
         session = self._sessions.get(self._active_tab_id)

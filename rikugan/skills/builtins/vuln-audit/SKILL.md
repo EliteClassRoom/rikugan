@@ -11,7 +11,6 @@ Detailed vulnerability classes, source/validator/sink tables, platform branches,
 
 - `references/common.md` — vulnerability model, false-positive gates, severity rules, and report template.
 - `references/ida/tools.md` — IDA/Hex-Rays evidence workflow.
-- `references/binja/tools.md` — Binary Ninja IL/SSA/CFG evidence workflow.
 
 ## Read-Only Discipline
 

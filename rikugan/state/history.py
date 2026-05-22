@@ -107,8 +107,7 @@ class SessionHistory:
                 }
                 # When db_instance_id is provided, use it as the primary key
                 # (UUIDs are globally unique, so path matching is redundant).
-                # This handles BN where the path may change between raw binary
-                # and .bndb across sessions.
+                # UUID stability handles cases where the IDB may be moved or renamed.
                 if db_instance_id:
                     if entry["db_instance_id"] != db_instance_id:
                         continue

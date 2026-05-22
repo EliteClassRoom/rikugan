@@ -1,8 +1,7 @@
 """Shared tool framework: @tool decorator, ToolRegistry, and security helpers.
 
-Host-specific tool implementations live in their respective packages:
+Host-specific tool implementations live in:
   - rikugan.ida.tools   (IDA Pro)
-  - rikugan.binja.tools (Binary Ninja)
 """
 
 from . import base, functions, web, web_fetch

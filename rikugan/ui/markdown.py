@@ -15,7 +15,7 @@ No external dependencies. Output targets Qt's supported HTML subset.
 
 Color handling: When _use_theme_colors is True, colors are omitted from
 inline styles so text inherits from the parent Qt stylesheet. This allows
-IDA Pro / Binary Ninja Qt themes to control all text colors.
+IDA Pro Qt themes to control all text colors.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ _H_COLOR = "#569cd6"
 # This allows parent Qt stylesheet to control text color (IDA Pro theme).
 _use_theme_colors = False
 
-# -- Explicit code block theme colors (set by host panel for ida/binja theme) --
+# -- Explicit code block theme colors (set by host panel for ida theme) --
 # These override the transparent background when set.
 _code_block_bg = ""
 _code_block_border = ""
@@ -48,7 +48,7 @@ def set_markdown_theme_colors(enabled: bool) -> None:
     """Enable or disable explicit color injection in md_to_html().
 
     When enabled (default for dark/light themes), inline styles include
-    explicit colors. When disabled (for 'ida'/'binja' themes), md_to_html()
+    explicit colors. When disabled (for 'ida' theme), md_to_html()
     omits color attributes so text inherits from the parent Qt stylesheet.
     """
     global _use_theme_colors
@@ -78,22 +78,25 @@ def clear_code_block_theme() -> None:
 
 
 _INLINE_CODE_STYLE = (
-    f"background-color:{_CODE_BG}; color:{_CODE_FG}; padding:1px 4px; border-radius:3px; font-size:inherit;"
+    f"background-color:{_CODE_BG}; color:{_CODE_FG}; padding:1px 4px; border-radius:3px; "
+    f"font-size:inherit; font-family:monospace;"
 )
 
 _BLOCK_CODE_STYLE = (
     f"background-color:{_BLOCK_BG}; color:{_BLOCK_FG}; "
     f"border:1px solid {_CODE_BORDER}; border-radius:4px; "
-    f"padding:8px; font-size:inherit; "
+    f"padding:8px; font-size:inherit; font-family:monospace; "
     f"white-space:pre-wrap; word-break:break-all;"
 )
 
 # Theme-aware variants (transparent backgrounds — inherit from parent Qt stylesheet)
-_BASE_INLINE_CODE_STYLE = "background-color:transparent; padding:1px 4px; border-radius:3px; font-size:inherit;"
+_BASE_INLINE_CODE_STYLE = (
+    "background-color:transparent; padding:1px 4px; border-radius:3px; font-size:inherit; font-family:monospace;"
+)
 
 _BASE_BLOCK_CODE_STYLE = (
     "background-color:transparent; border:1px solid; border-radius:4px; "
-    "padding:8px; font-size:inherit; "
+    "padding:8px; font-size:inherit; font-family:monospace; "
     "white-space:pre-wrap; word-break:break-all;"
 )
 
@@ -104,7 +107,7 @@ def _get_inline_code_style() -> str:
     if _code_block_bg:
         return (
             f"background-color:{_code_block_bg}; color:{_code_block_text}; "
-            f"padding:1px 4px; border-radius:3px; font-size:inherit;"
+            f"padding:1px 4px; border-radius:3px; font-size:inherit; font-family:monospace;"
         )
     return _BASE_INLINE_CODE_STYLE
 
@@ -116,7 +119,7 @@ def _get_block_code_style() -> str:
         return (
             f"background-color:{_code_block_bg}; color:{_code_block_text}; "
             f"border:1px solid {_code_block_border}; border-radius:4px; "
-            f"padding:8px; font-size:inherit; "
+            f"padding:8px; font-size:inherit; font-family:monospace; "
             f"white-space:pre-wrap; word-break:break-all;"
         )
     return _BASE_BLOCK_CODE_STYLE
@@ -184,8 +187,10 @@ def md_to_html(text: str) -> str:
             h_text = _inline(hm.group(2))
             h_color = _get_h_color()
             color_attr = f"color:{h_color};" if h_color != "inherit" else ""
+            level = len(hm.group(1))
+            sizes = {1: "18px", 2: "16px", 3: "14px", 4: "13px"}
             out_lines.append(
-                f'<div style="{color_attr}font-weight:bold;font-size:inherit;margin:6px 0 2px 0;">{h_text}</div>'
+                f'<div style="{color_attr}font-weight:bold;font-size:{sizes.get(level, "inherit")};margin:6px 0 2px 0;">{h_text}</div>'
             )
             i += 1
             continue

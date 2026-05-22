@@ -8,7 +8,7 @@ This document is for human contributors. It covers how to set up a development e
 
 ## Prerequisites
 
-- **Binary Ninja** (build 3164 or newer) and/or **IDA Pro 9.x**
+- **IDA Pro 9.x**
 - **Python 3.10–3.11** recommended (see note below on IDA Pro + Python versions)
 - **Git**
 - An API key for at least one supported LLM provider (Anthropic, OpenAI, Google, or a local Ollama instance)
@@ -19,29 +19,16 @@ This document is for human contributors. It covers how to set up a development e
 
 ## Installation (Development)
 
-Clone the repo and symlink it into the host's plugin directory so changes take effect on the next launch without reinstalling.
-
-**Binary Ninja**
-```bash
-# macOS
-git clone https://github.com/buzzer-re/rikugan
-ln -s "$(pwd)/rikugan" ~/Library/Application\ Support/Binary\ Ninja/plugins/rikugan
-
-# Linux
-git clone https://github.com/buzzer-re/rikugan
-ln -s "$(pwd)/rikugan" ~/.binaryninja/plugins/rikugan
-
-# Windows (run as Administrator)
-git clone https://github.com/buzzer-re/rikugan
-mklink /D "%APPDATA%\Binary Ninja\plugins\rikugan" "<full path to cloned repo>"
-```
+Clone the repo and symlink it into the IDA plugin directory so changes take effect on the next launch without reinstalling.
 
 **IDA Pro**
+
 ```bash
 # macOS / Linux
+git clone https://github.com/buzzer-re/rikugan
 ln -s "$(pwd)/rikugan" ~/.idapro/plugins/rikugan
 
-# Windows
+# Windows (run as Administrator)
 mklink /D "%APPDATA%\Hex-Rays\IDA Pro\plugins\rikugan" "<full path to cloned repo>"
 ```
 
@@ -119,11 +106,11 @@ tests/
 ├── agent/       # Agent loop, plan mode, exploration, session
 ├── core/        # Config, sanitize, errors, profile, logging
 ├── providers/   # All LLM providers
-├── tools/       # Tool implementations (binja, IDA, shared)
+├── tools/       # Tool implementations (IDA, shared)
 └── mocks/       # ida_mock — stubs the IDA Pro API for testing outside IDA
 ```
 
-Binary Ninja and IDA Pro APIs are stubbed at test time — you do not need either host installed to run the test suite.
+IDA Pro APIs are stubbed at test time — you do not need IDA installed to run the test suite.
 
 ---
 
@@ -154,7 +141,7 @@ uv add desloppify --dev          # add desloppify (ci-local.sh does this automat
 
 ```
 feat(agent): add streaming cancellation for plan mode
-fix(binja): handle missing function at cursor gracefully
+fix(ida): handle missing function at cursor gracefully
 refactor(providers): extract retry logic into base class
 security: strip homoglyph sequences in sanitize.py
 docs: update tool registration guide in AGENTS.md
@@ -162,21 +149,20 @@ docs: update tool registration guide in AGENTS.md
 
 Format: `type(scope): short description`
 - One logical change per commit
-- Scope is the subsystem: `agent`, `binja`, `ida`, `ui`, `providers`, `mcp`, `skills`, `core`
+- Scope is the subsystem: `agent`, `ida`, `ui`, `providers`, `mcp`, `skills`, `core`
 
 ---
 
 ## Release Process
 
 1. Merge `dev` → `main` via PR
-2. Bump `version` in `plugin.json`
+2. Bump `version` in `ida-plugin.json`
 3. Tag and push:
    ```bash
    git tag v0.x.x
    git push origin v0.x.x
    ```
-4. GitHub Actions validates the tag matches `plugin.json` and publishes the GitHub Release
-5. Binary Ninja plugin manager picks up the new version from `main` automatically
+4. GitHub Actions validates the tag matches `ida-plugin.json` and publishes the GitHub Release
 
 ---
 

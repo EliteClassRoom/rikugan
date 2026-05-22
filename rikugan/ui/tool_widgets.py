@@ -75,41 +75,9 @@ for _t in (
     "xrefs_from",
     "function_xrefs",
     "get_microcode",
+    "get_microcode_block",
     "get_cursor_position",
     "get_current_function",
-    "fetch_disassembly",
-    "list_methods",
-    "list_strings_filter",
-    "list_sections",
-    "get_xrefs_to",
-    "get_xrefs_to_field",
-    "get_xrefs_to_struct",
-    "get_xrefs_to_type",
-    "get_xrefs_to_enum",
-    "get_xrefs_to_union",
-    "get_il",
-    "get_binary_status",
-    "hexdump_address",
-    "hexdump_data",
-    "get_data_decl",
-    "search_functions_by_name",
-    "function_at",
-    "get_entry_points",
-    "list_classes",
-    "list_namespaces",
-    "list_data_items",
-    "list_all_strings",
-    "list_local_types",
-    "search_types",
-    "get_type_info",
-    "get_user_defined_type",
-    "get_comment",
-    "get_function_comment",
-    "list_binaries",
-    "select_binary",
-    "list_platforms",
-    "convert_number",
-    "format_value",
 ):
     _TOOL_COLORS[_t] = "#4ec9b0"  # teal/cyan
 
@@ -128,16 +96,7 @@ for _t in (
     "install_microcode_optimizer",
     "redecompile_function",
     "apply_struct_to_address",
-    "rename_single_variable",
-    "rename_multi_variables",
-    "retype_variable",
-    "define_types",
-    "declare_c_type",
-    "rename_data",
-    "set_local_variable_type",
-    "make_function_at",
-    "delete_comment",
-    "delete_function_comment",
+    "apply_type_to_variable",
 ):
     _TOOL_COLORS[_t] = "#c586c0"  # magenta/purple
 
@@ -155,7 +114,6 @@ _TOOL_GROUP_LABELS: dict[str, tuple[str, str]] = {
     "decompile_function": ("Decompiled", "function"),
     "read_disassembly": ("Disassembled", "function"),
     "read_function_disassembly": ("Disassembled", "function"),
-    "fetch_disassembly": ("Disassembled", "function"),
     "search_strings": ("Searched", "string"),
     "list_strings_filter": ("Searched", "string"),
     "search_functions": ("Searched", "function"),
@@ -227,19 +185,15 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
         if old and new:
             summary = f"{old} → {new}"
 
-    elif short_name in ("rename_single_variable", "rename_variable"):
-        func = _get("function_name", "function", "ea")
-        old = _get("variable_name", "var_name", "old_name")
+    elif short_name in ("rename_variable",):
+        func = _get("function_name", "func_address", "ea")
+        old = _get("variable_name", "old_name")
         new = _get("new_name")
         if old and new:
             summary = f"{func}: {old} → {new}" if func else f"{old} → {new}"
 
-    elif short_name in ("rename_multi_variables",):
-        func = _get("function_identifier", "function_name", "ea")
-        summary = func if func else ""
-
     elif short_name in ("set_comment", "set_function_comment"):
-        addr = _get("address", "ea", "function_name")
+        addr = _get("address", "ea")
         comment = _get("comment", "text")
         if comment and len(comment) > 50:
             comment = comment[:47] + "..."
@@ -251,11 +205,10 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
     elif short_name in (
         "set_type",
         "set_function_prototype",
-        "retype_variable",
-        "set_local_variable_type",
+        "apply_type_to_variable",
     ):
-        target = _get("ea", "address", "name", "name_or_address", "variable_name")
-        type_str = _get("type_str", "prototype", "new_type", "type")
+        target = _get("address", "ea", "func_address", "var_name")
+        type_str = _get("type_str", "prototype", "type")
         if target and type_str:
             summary = f"{target}: {type_str}"
 
@@ -263,8 +216,6 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
         "xrefs_to",
         "xrefs_from",
         "function_xrefs",
-        "get_xrefs_to",
-        "get_xrefs_to_field",
     ):
         target = _get("address", "ea", "name", "struct_name")
         if target:
@@ -299,7 +250,6 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
             summary = first_line
 
     elif short_name in (
-        "fetch_disassembly",
         "read_disassembly",
         "read_function_disassembly",
     ):
@@ -307,14 +257,8 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
         if target:
             summary = target
 
-    elif short_name in ("get_il",):
-        target = _get("name_or_address")
-        view = _get("view")
-        if target:
-            summary = f"{target}" + (f" ({view})" if view else "")
-
     elif short_name in ("hexdump_address", "hexdump_data", "get_data_decl"):
-        target = _get("address", "name_or_address")
+        target = _get("address", "ea", "name")
         if target:
             summary = target
 
@@ -343,7 +287,6 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
             "query",
             "pattern",
             "command",
-            "name_or_address",
         ):
             val = _get(key)
             if val:

@@ -8,21 +8,20 @@ from typing import TYPE_CHECKING
 from ..core.logging import log_debug
 from ..core.profile import IOC_FILTER_CATEGORIES
 from ..core.sanitize import sanitize_binary_context, sanitize_memory
-from .prompts.binja import BINJA_BASE_PROMPT
 from .prompts.ida import IDA_BASE_PROMPT
+
+_BASE_PROMPT = IDA_BASE_PROMPT  # backward compat alias
 
 if TYPE_CHECKING:
     from ..core.profile import AnalysisProfile
 
-_HOST_PROMPTS = {"IDA Pro": IDA_BASE_PROMPT, "Binary Ninja": BINJA_BASE_PROMPT}
-_BASE_PROMPT = IDA_BASE_PROMPT  # backward compat alias
 
 # Maximum number of lines to load from RIKUGAN.md
 _MAX_MEMORY_LINES = 200
 
 
 def _load_persistent_memory(idb_dir: str = "") -> str | None:
-    """Load RIKUGAN.md from the IDB/BNDB directory (first 200 lines).
+    """Load RIKUGAN.md from the IDB directory (first 200 lines).
 
     The file acts as persistent cross-session memory for the agent.
     """
@@ -63,7 +62,7 @@ def build_system_prompt(
     profile: AnalysisProfile | None = None,
 ) -> str:
     """Build the full system prompt with optional binary context."""
-    base_prompt = _HOST_PROMPTS.get(host_name, IDA_BASE_PROMPT)
+    base_prompt = IDA_BASE_PROMPT
     parts = [base_prompt]
 
     # Persistent memory — loaded early so it's part of the cached prefix.

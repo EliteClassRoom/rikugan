@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from typing import Any
 
 from ..core.logging import log_debug
 from ..core.types import ModelInfo, ProviderCapabilities
@@ -21,8 +22,8 @@ class OllamaProvider(OpenAICompatProvider):
         api_key: str = "ollama",
         api_base: str = "",
         model: str = "llama3.1",
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         api_key = api_key or "ollama"
         api_base = api_base or os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL)
         super().__init__(

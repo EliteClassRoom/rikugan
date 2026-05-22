@@ -30,11 +30,11 @@ class _SkillPopup(QFrame):
         self.setStyleSheet(
             "QFrame#skill_popup { border: 1px solid; border-radius: 4px; padding: 2px; }"
             "QLabel { padding: 3px 8px; }"
-            "QLabel#skill_popup_label[selected=\"true\"] {"
+            'QLabel#skill_popup_label[selected="true"] {'
             "    background-color: palette(highlight);"
             "    color: palette(highlightedText);"
             "}"
-            "QLabel#skill_popup_label[selected=\"false\"] {"
+            'QLabel#skill_popup_label[selected="false"] {'
             "    background-color: transparent;"
             "}"
         )
@@ -66,7 +66,7 @@ class _SkillPopup(QFrame):
 
     def _update_highlight(self) -> None:
         for i, lbl in enumerate(self._labels):
-            is_selected = (i == self._selected_idx)
+            is_selected = i == self._selected_idx
             was_selected = lbl.property("selected") == "true"
             if was_selected != is_selected:
                 lbl.setProperty("selected", "true" if is_selected else "false")

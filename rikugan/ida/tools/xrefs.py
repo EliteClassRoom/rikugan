@@ -10,7 +10,7 @@ from ...tools.base import parse_addr, tool
 
 
 def format_callers_callees(fname: str, start: int, callers: Iterable[str], callees: Iterable[str]) -> str:
-    """Format a function callers/callees summary (shared between IDA and BN xref tools)."""
+    """Format a function callers/callees summary shared by xref tools."""
     callers = sorted(callers)
     callees = sorted(callees)
     parts = [f"Function: {fname} (0x{start:x})"]

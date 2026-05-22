@@ -85,7 +85,6 @@ class TestSplitThinking(unittest.TestCase):
         self.assertIn("Output here.", visible)
 
 
-
 class TestAssistantMessageWidgetUI(unittest.TestCase):
     """Structural / UI tests for AssistantMessageWidget.
 
@@ -114,8 +113,8 @@ class TestAssistantMessageWidgetUI(unittest.TestCase):
 
     def test_content_size_policy_expanding(self):
         """QTextEdit has Expanding size policy on both axes."""
-        from ui.message_widgets import AssistantMessageWidget
         from PySide6.QtWidgets import QSizePolicy
+        from ui.message_widgets import AssistantMessageWidget
 
         w = AssistantMessageWidget()
         policy = w._content.sizePolicy()
@@ -124,8 +123,8 @@ class TestAssistantMessageWidgetUI(unittest.TestCase):
 
     def test_content_no_frame(self):
         """QTextEdit has NoFrame shape (no border)."""
-        from ui.message_widgets import AssistantMessageWidget
         from PySide6.QtWidgets import QFrame
+        from ui.message_widgets import AssistantMessageWidget
 
         w = AssistantMessageWidget()
         self.assertEqual(w._content.frameShape(), QFrame.Shape.NoFrame)

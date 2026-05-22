@@ -9,8 +9,7 @@ from typing import Any
 from ..core.logging import log_debug
 
 # Tool names whose results are safe to cache (read-only, deterministic
-# for a given binary state).  Both IDA and BN registries use the same
-# tool names for these.
+# for a given binary state).  The IDA registry uses these tool names.
 CACHEABLE_TOOLS: frozenset[str] = frozenset(
     {
         "list_functions",

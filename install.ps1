@@ -5,18 +5,15 @@
 #
 # Or with arguments:
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.ps1))) -Target ida
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.ps1))) -Target binja
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.ps1))) -Target both
 #
 # Environment variables:
 #   RIKUGAN_DIR     — where to clone the repo   (default: ~\.rikugan)
 #   RIKUGAN_BRANCH  — git branch to check out   (default: main)
 #   IDA_PYTHON      — override Python for IDA    (forwarded to install_ida.bat)
-#   BN_PYTHON       — override Python for BN     (forwarded to install_binaryninja.bat)
 # ──────────────────────────────────────────────────────────────────────
 
 param(
-    [ValidateSet("ida", "binja", "both", "")]
+    [ValidateSet("ida", "")]
     [string]$Target = ""
 )
 
@@ -37,7 +34,7 @@ function Show-Banner {
     Write-Host "    +==========================================+" -ForegroundColor White
     Write-Host "    |            六眼  Rikugan                 |" -ForegroundColor White
     Write-Host "    |     Reverse Engineering AI Agent         |" -ForegroundColor White
-    Write-Host "    |        IDA Pro  .  Binary Ninja          |" -ForegroundColor White
+    Write-Host "    |              IDA Pro                     |" -ForegroundColor White
     Write-Host "    +==========================================+" -ForegroundColor White
     Write-Host ""
 }
@@ -61,22 +58,6 @@ function Test-IDA {
     # IDA in PATH
     if (Get-Command "ida64.exe" -ErrorAction SilentlyContinue) { return $true }
     if (Get-Command "idat64.exe" -ErrorAction SilentlyContinue) { return $true }
-    return $false
-}
-
-function Test-BinaryNinja {
-    # AppData user dir
-    $bnDir = Join-Path $env:APPDATA "Binary Ninja"
-    if (Test-Path $bnDir) { return $true }
-    # Common install locations
-    $installPaths = @(
-        "${env:ProgramFiles}\Vector35\BinaryNinja",
-        "${env:ProgramFiles(x86)}\Vector35\BinaryNinja",
-        "${env:LOCALAPPDATA}\Vector35\BinaryNinja"
-    )
-    foreach ($p in $installPaths) {
-        if (Test-Path $p) { return $true }
-    }
     return $false
 }
 
@@ -130,23 +111,6 @@ function Install-IDA {
     return $success
 }
 
-function Install-BinaryNinja {
-    $script = Join-Path $InstallDir "install_binaryninja.bat"
-    if (-not (Test-Path $script)) {
-        Write-Err "install_binaryninja.bat not found in $InstallDir"
-        return $false
-    }
-    Write-Info "Running Binary Ninja installer..."
-    Write-Host ""
-    Push-Location $InstallDir
-    try {
-        & cmd.exe /c $script
-        $success = $LASTEXITCODE -eq 0
-    }
-    finally { Pop-Location }
-    return $success
-}
-
 # ── Main ─────────────────────────────────────────────────────────────
 Show-Banner
 Test-Prerequisites
@@ -154,24 +118,15 @@ Test-Prerequisites
 # Auto-detect if no target specified
 if (-not $Target) {
     $hasIda = Test-IDA
-    $hasBinja = Test-BinaryNinja
 
-    if ($hasIda -and $hasBinja) {
-        $Target = "both"
-        Write-Ok "Detected both IDA Pro and Binary Ninja"
-    }
-    elseif ($hasIda) {
+    if ($hasIda) {
         $Target = "ida"
         Write-Ok "Detected IDA Pro"
     }
-    elseif ($hasBinja) {
-        $Target = "binja"
-        Write-Ok "Detected Binary Ninja"
-    }
     else {
-        Write-Warn "No IDA Pro or Binary Ninja installation detected."
-        Write-Warn "Installing anyway -- defaulting to both."
-        $Target = "both"
+        Write-Warn "No IDA Pro installation detected."
+        Write-Warn "Installing anyway."
+        $Target = "ida"
     }
 }
 
@@ -187,14 +142,6 @@ $failed = $false
 switch ($Target) {
     "ida" {
         if (-not (Install-IDA)) { $failed = $true }
-    }
-    "binja" {
-        if (-not (Install-BinaryNinja)) { $failed = $true }
-    }
-    "both" {
-        if (-not (Install-IDA))   { Write-Warn "IDA installation failed"; $failed = $true }
-        Write-Host ""
-        if (-not (Install-BinaryNinja)) { Write-Warn "Binary Ninja installation failed"; $failed = $true }
     }
 }
 

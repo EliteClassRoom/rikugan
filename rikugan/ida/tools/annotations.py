@@ -130,3 +130,45 @@ def set_type(
     if ok:
         return f"Set type at 0x{ea:x}: {type_string}"
     return f"Failed to set type at 0x{ea:x}. Check syntax: {type_string}"
+
+
+@tool(category="annotations")
+def get_comment(
+    address: Annotated[str, "Address (hex string)"],
+    repeatable: Annotated[bool, "Get repeatable comment"] = False,
+) -> str:
+    """Get the comment at an address.
+
+    Returns a raw comment string suitable for mutation pre-state capture.
+    """
+    ea = parse_addr(address)
+    return idc.get_cmt(ea, repeatable) or ""
+
+
+@tool(category="annotations")
+def get_function_comment(
+    address: Annotated[str, "Function address (hex string)"],
+    repeatable: Annotated[bool, "Get repeatable function comment"] = False,
+) -> str:
+    """Get the comment at a function.
+
+    Returns a raw function-level comment string suitable for mutation pre-state capture.
+    """
+    ea = parse_addr(address)
+    func = ida_funcs.get_func(ea)
+    if func is None:
+        return ""
+    return ida_funcs.get_func_cmt(func, repeatable) or ""
+
+
+@tool(category="annotations")
+def get_address_name(
+    address: Annotated[str, "Address (hex string)"],
+) -> str:
+    """Get the current raw name at an address.
+
+    Returns an empty string if the address has no name.
+    Suitable for mutation pre-state capture.
+    """
+    ea = parse_addr(address)
+    return ida_name.get_name(ea) or ""

@@ -29,11 +29,11 @@ from .base import LLMProvider
 class OpenAIProvider(LLMProvider):
     """Adapter for the OpenAI Chat Completions API."""
 
-    def __init__(self, api_key: str = "", api_base: str = "", model: str = "gpt-4o", **kwargs):
+    def __init__(self, api_key: str = "", api_base: str = "", model: str = "gpt-4o", **kwargs: Any) -> None:
         api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         super().__init__(api_key=api_key, api_base=api_base, model=model)
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         if self._client is None:
             try:
                 openai = importlib.import_module("openai")
@@ -143,7 +143,7 @@ class OpenAIProvider(LLMProvider):
                     )
         return formatted
 
-    def _normalize_response(self, response) -> Message:
+    def _normalize_response(self, response: Any) -> Message:
         choice = response.choices[0]
         rm = choice.message
 

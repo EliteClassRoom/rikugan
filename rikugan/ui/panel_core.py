@@ -77,11 +77,10 @@ def _strip_sanitizer_tags(text: str) -> str:
 _TOOL_LANG_MAP = {
     "execute_python": "python",
     "decompile_function": "c",
-    "get_il": "c",
     "declare_c_type": "c",
     "define_types": "c",
     "set_function_prototype": "c",
-    "fetch_disassembly": "x86asm",
+    "read_disassembly": "x86asm",
 }
 
 
@@ -348,7 +347,7 @@ class RikuganPanelCore(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Top-level mode switcher: Chat | Tools (like Binja's Tags | Tag Types)
+        # Top-level mode switcher: Chat | Tools.
         # Hidden for IDA which uses a separate dockable form for tools.
         self._mode_bar = QTabBar()
         self._mode_bar.setObjectName("mode_bar")
@@ -387,7 +386,7 @@ class RikuganPanelCore(QWidget):
             _tools_placeholder = QWidget()
             self._mode_stack.addWidget(_tools_placeholder)
         else:
-            # Binary Ninja: embed directly in the mode stack.
+            # Embed tools panel directly in the mode stack.
             self._mode_stack.addWidget(self._tools_panel)
         self._tools_tab_index = -1  # kept for IDA compat
 
@@ -771,14 +770,14 @@ class RikuganPanelCore(QWidget):
             self.setStyleSheet(DARK_THEME)
         elif theme == "light":
             self.setStyleSheet(LIGHT_THEME)
-        # 'ida' and 'binja' mean "inherit host's Qt theme" — do nothing
+        # 'ida' means "inherit host's Qt theme" — do nothing
 
     def set_theme(self, theme: str) -> None:
         """Set the UI theme.
 
         Args:
-            theme: One of 'ida', 'binja', 'dark', or 'light'.
-               'ida' and 'binja' mean inherit the host's Qt theme — no custom stylesheet is applied.
+            theme: One of 'ida', 'dark', or 'light'.
+               'ida' means inherit the host's Qt theme — no custom stylesheet is applied.
                'dark' and 'light' apply the predefined Rikugan stylesheets.
         """
         from .markdown import clear_code_block_theme, set_markdown_theme_colors
@@ -793,10 +792,9 @@ class RikuganPanelCore(QWidget):
             set_markdown_theme_colors(True)
             clear_code_block_theme()
         else:
-            # 'ida' and 'binja': inherit host Qt theme, no custom stylesheet,
+            # 'ida': inherit host Qt theme, no custom stylesheet,
             # disable explicit colors in markdown so text inherits from host.
             set_markdown_theme_colors(False)
-        # 'ida' and 'binja': inherit host Qt theme, do nothing
 
     def shutdown(self) -> None:
         if self._is_shutdown:

@@ -7,10 +7,14 @@ by installing PySide6 stubs before importing the module.
 from __future__ import annotations
 
 import json
+import sys
 import unittest
 
 from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
+
+# Ensure the real module is loaded even if another test stubbed it.
+sys.modules.pop("rikugan.ui.tool_widgets", None)
 
 from rikugan.ui.tool_widgets import (  # noqa: E402
     _strip_mcp_prefix,
@@ -113,9 +117,9 @@ class TestFormatToolSummary(unittest.TestCase):
         result = _format_tool_summary("rename_function", args)
         self.assertEqual(result, "sub_1000 → process_data")
 
-    def test_rename_single_variable(self):
+    def test_rename_variable_summary(self):
         args = json.dumps({"variable_name": "var_0", "new_name": "count", "function_name": "main"})
-        result = _format_tool_summary("rename_single_variable", args)
+        result = _format_tool_summary("rename_variable", args)
         self.assertEqual(result, "main: var_0 → count")
 
     def test_set_comment_truncation(self):

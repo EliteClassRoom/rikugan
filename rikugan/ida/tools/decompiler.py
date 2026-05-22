@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json as _json
 from typing import Annotated
 
 from ...core.errors import ToolError
@@ -194,7 +195,7 @@ def get_pseudocode_comment(
 
     result = _decompile(func_ea)
     if isinstance(result, str):
-        return result
+        return ""
     cfunc = result
 
     # Resolve through the ctree for consistency with set_pseudocode_comment
@@ -207,3 +208,44 @@ def get_pseudocode_comment(
 
     cmt = cfunc.get_user_cmt(tl, ida_hexrays.RETRIEVE_ALWAYS)
     return cmt if cmt else ""
+
+
+@tool(category="decompiler", requires_decompiler=True)
+def get_pseudocode_comment_state(
+    func_address: Annotated[str, "Function address (hex string)"],
+    target_address: Annotated[str, "Address of the pseudocode line (hex string)"],
+) -> str:
+    """Read the raw state of a pseudocode comment for pre-state capture.
+
+    Returns a JSON object with two fields:
+
+    * ``ok`` — ``true`` when decompilation succeeded and the comment
+      could be read; ``false`` when decompilation failed.
+    * ``comment`` — the raw comment string when *ok* is ``true``,
+      or an empty string when *ok* is ``false``.
+
+    Unlike ``get_pseudocode_comment``, decompile failures are NOT
+    silently returned as empty strings — *ok* distinguishes between
+    "no comment" (ok=true, comment="") and "could not decompile"
+    (ok=false, comment="").
+
+    This tool is intended for pre-state capture only.  Use
+    ``get_pseudocode_comment`` for user-facing comment reads.
+    """
+    func_ea = parse_addr(func_address)
+    target_ea = parse_addr(target_address)
+
+    result = _decompile(func_ea)
+    if isinstance(result, str):
+        return _json.dumps({"ok": False, "comment": ""})
+    cfunc = result
+
+    resolved = _resolve_ctree_ea(cfunc, target_ea)
+    item_ea, itp = resolved if resolved else (target_ea, ida_hexrays.ITP_SEMI)
+
+    tl = ida_hexrays.treeloc_t()
+    tl.ea = item_ea
+    tl.itp = itp
+
+    cmt = cfunc.get_user_cmt(tl, ida_hexrays.RETRIEVE_ALWAYS)
+    return _json.dumps({"ok": True, "comment": cmt if cmt else ""})

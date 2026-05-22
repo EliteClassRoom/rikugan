@@ -30,7 +30,6 @@ Deobfuscate fully first. Analyze afterward.
 Host-specific tools, API details, and full algorithm implementations are in the auto-loaded references:
 
 - **IDA**: `references/ida/tools.md` (available tools), `guide.md` (workflow & technique rules), `microcode-guide.md` (reading/writing microcode), `algorithm-reference.md` (recognition & methodology)
-- **Binary Ninja**: `references/binja/tools.md` (available tools), `guide.md` (workflow & technique rules), `il-guide.md` (reading/writing BNIL), `algorithm-reference.md` (recognition & methodology)
 
 **Read the host-specific tools reference first** to know what primitives are available.
 
