@@ -738,7 +738,7 @@ class SettingsDialog(QDialog):
         self._sync_config_from_ui()
         # Register in config and registry
         self._config.add_custom_provider(name)
-        self._registry.register_custom_providers([name])
+        self._registry.register_custom_providers(list(self._config.custom_providers.keys()))
         # Initialize settings for the new provider
         self._config.switch_provider(name)
         self._config.provider.api_base = api_base

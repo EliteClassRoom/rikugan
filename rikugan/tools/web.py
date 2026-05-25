@@ -3,9 +3,8 @@
 These tools call MiniMax's coding_plan API endpoints directly. They only work
 when the active LLM provider is MiniMax — no MCP dependency.
 
-API reference:
-    web_search:      POST /v1/coding_plan/search
-    understand_image: POST /v1/coding_plan/vlm
+``requests`` is only imported when the tool actually makes an HTTP request,
+not at module import time.
 """
 
 from __future__ import annotations
@@ -13,8 +12,6 @@ from __future__ import annotations
 import base64
 import os
 from typing import TYPE_CHECKING, Annotated
-
-import requests
 
 from ..core.errors import ToolError
 from ..core.logging import log_debug
@@ -99,6 +96,8 @@ def _call_minimax_api(endpoint: str, payload: dict, timeout: float) -> dict:
         ToolError: If MiniMax is not the active provider, auth fails,
                    or the API returns an error.
     """
+    import requests
+
     api_key, api_host, _model = _get_minimax_auth()
 
     if api_key is None:
@@ -178,6 +177,8 @@ def _process_image_source(image_source: str) -> str:
 
     # HTTP/HTTPS URL — download and convert
     if image_source.startswith(("http://", "https://")):
+        import requests
+
         try:
             img_response = requests.get(image_source, timeout=30)
             img_response.raise_for_status()

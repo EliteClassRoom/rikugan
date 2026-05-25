@@ -9,18 +9,15 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtWidgets import QStackedWidget
-
 from ..agent.mutation import MutationRecord
 from ..agent.turn import TurnEvent, TurnEventType
 from ..core.config import RikuganConfig
-from ..core.logging import log_debug, log_error, log_info
+from ..core.logging import log_debug, log_error, log_info, log_warning
+from ..core.startup_timing import end, set_metadata, start
 from ..core.types import Role
-from ..providers.auth_cache import resolve_auth_cached
 from .chat_view import ChatView
 from .context_bar import ContextBar
 from .input_area import InputArea
-from .mutation_log_view import MutationLogPanel
 from .qt_compat import (
     QCheckBox,
     QDialog,
@@ -31,6 +28,7 @@ from .qt_compat import (
     QMessageBox,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     Qt,
     QTabBar,
     QTabWidget,
@@ -40,7 +38,6 @@ from .qt_compat import (
     QWidget,
     Signal,
 )
-from .settings_dialog import SettingsDialog
 from .styles import (
     DARK_THEME,
     LIGHT_THEME,
@@ -229,14 +226,20 @@ class RikuganPanelCore(QWidget):
         tools_form_factory: Callable[..., Any] | None = None,
         parent: QWidget = None,
     ):
+        t_init = start("panel_core.init_total")
         super().__init__(parent)
+        t_config = start("config.load_or_create")
         self._config = RikuganConfig.load_or_create()
+        end("config.load_or_create", t_config)
         log_debug(
             f"Config loaded: provider={self._config.provider.name} model={self._config.provider.model}",
         )
         if self._config.has_encrypted_keys():
+            set_metadata("encrypted_prompt", True)
             self._prompt_decryption_password()
+        t_ctrl = start("controller.construct")
         self._ctrl = controller_factory(self._config)
+        end("controller.construct", t_ctrl)
         self._poll_timer: QTimer | None = None
         self._polling = False
         self._pending_answer = False
@@ -250,19 +253,29 @@ class RikuganPanelCore(QWidget):
         # Tab-to-ChatView mapping
         self._chat_views: dict[str, ChatView] = {}
         self._context_bar: ContextBar | None = None
-        self._mutation_panel: MutationLogPanel | None = None
+        self._mutation_panel: Any = None  # MutatedLogPanel — lazy import
         self._skills_refresh_timer: QTimer | None = None
 
-        self._check_oauth_consent()
+        # Only warm OAuth when using Anthropic without an explicit API key.
+        if self._config.provider.name == "anthropic" and not self._config.provider.api_key:
+            self._check_oauth_consent()
+            t_oauth = start("boot.oauth_warmup_spawn")
 
-        def _warm_oauth() -> None:
-            try:
-                resolve_auth_cached()
-            except Exception as e:
-                log_debug(f"OAuth warm-up failed: {e}")
+            def _warm_oauth() -> None:
+                try:
+                    from ..providers.auth_cache import resolve_auth_cached
 
-        threading.Thread(target=_warm_oauth, daemon=True).start()
+                    resolve_auth_cached()
+                except Exception as e:
+                    log_debug(f"OAuth warm-up failed: {e}")
+
+            threading.Thread(target=_warm_oauth, daemon=True).start()
+            end("boot.oauth_warmup_spawn", t_oauth)
+
+        t_ui = start("ui.build_total")
         self._build_ui()
+        end("ui.build_total", t_ui)
+        end("panel_core.init_total", t_init)
 
     def _prompt_decryption_password(self) -> None:
         """Prompt for the encryption password at session start."""
@@ -372,7 +385,9 @@ class RikuganPanelCore(QWidget):
         chat_layout.setSpacing(0)
         self._build_tab_widget()
         self._build_main_splitter(chat_layout)
+        t_create_tab = start("ui.create_initial_chat_tab")
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
+        end("ui.create_initial_chat_tab", t_create_tab)
         self._build_chat_input_splitter(chat_layout)
         self._mode_stack.addWidget(chat_page)
 
@@ -394,6 +409,7 @@ class RikuganPanelCore(QWidget):
         self._context_bar.set_model(self._config.provider.model)
         layout.addWidget(self._context_bar)
 
+        t_hooks = start("ui.hooks_setup")
         if self._ui_hooks_factory is not None:
             try:
                 self._ui_hooks = self._ui_hooks_factory(lambda: self)
@@ -402,8 +418,11 @@ class RikuganPanelCore(QWidget):
             except Exception as e:
                 log_debug(f"UI hook setup failed: {e}")
                 self._ui_hooks = None
+        end("ui.hooks_setup", t_hooks)
 
+        t_restore = start("session_restore.sync_total")
         self._try_restore_session()
+        end("session_restore.sync_total", t_restore)
 
     def _build_tab_widget(self) -> None:
         """Create the tab widget with custom tab bar."""
@@ -428,10 +447,14 @@ class RikuganPanelCore(QWidget):
         self._main_splitter.setStyleSheet(get_splitter_handle_style())
         self._main_splitter.addWidget(self._tab_widget)
 
-        self._mutation_panel = MutationLogPanel()
-        self._mutation_panel.undo_requested.connect(self._on_undo_requested)
-        self._mutation_panel.setVisible(False)
-        self._main_splitter.addWidget(self._mutation_panel)
+        # Mutation log container — created immediately so the splitter has
+        # exactly two children (chat area + container).  The real
+        # MutationLogPanel is inserted into this container when first needed.
+        self._mutation_container = QWidget()
+        self._mutation_container.setVisible(False)
+        self._mutation_container_layout = QVBoxLayout(self._mutation_container)
+        self._mutation_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_splitter.addWidget(self._mutation_container)
 
         self._main_splitter.setStretchFactor(0, 3)
         self._main_splitter.setStretchFactor(1, 1)
@@ -800,6 +823,12 @@ class RikuganPanelCore(QWidget):
         if self._is_shutdown:
             return
         self._is_shutdown = True
+        # Stop renamer chunk loading and reconfigure tools poll timer before
+        # tearing down widgets — active timers can fire during teardown and
+        # reference stale object attributes.
+        self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
+        self._cancel_renamer_engine()
+        self._stop_tools_poll_timer()
         try:
             tools_form = getattr(self, "_tools_form", None)
             tools_panel = getattr(self, "_tools_panel", None)
@@ -836,6 +865,18 @@ class RikuganPanelCore(QWidget):
         if normalized == self._ctrl._idb_path:
             return
         self._ctrl.reset_for_new_file(normalized)
+        # Close the renamer and clear its state — stale function data
+        # from the previous binary would be misleading.
+        if getattr(self, "_tools_panel", None) is not None:
+            self._tools_panel.hide()
+            self._tools_panel.close()
+            self._tools_panel = None
+        self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
+        if hasattr(self, "_bulk_renamer"):
+            self._bulk_renamer.clear_functions()
+        # Cancel any in-flight renamer engine
+        # Cancel any in-flight renamer engine
+        self._cancel_renamer_engine()
         # Remove all existing tabs
         for cv in self._chat_views.values():
             cv.shutdown()
@@ -892,6 +933,8 @@ class RikuganPanelCore(QWidget):
             chat_view.remove_queued_messages()
 
     def _on_settings(self) -> None:
+        from .settings_dialog import SettingsDialog
+
         try:
             dlg = SettingsDialog(
                 self._config,
@@ -905,6 +948,11 @@ class RikuganPanelCore(QWidget):
                 self._ctrl.reload_mcp()
                 if self._context_bar is not None:
                     self._context_bar.set_model(self._config.provider.model)
+                # Apply OAuth consent when switching to Anthropic without an explicit key.
+                # This ensures the consent state is applied even if the user started
+                # with a different provider and later switches.
+                if self._config.provider.name == "anthropic" and not self._config.provider.api_key:
+                    self._check_oauth_consent()
                 log_info(f"Settings updated: {self._config.provider.name}/{self._config.provider.model}")
             dlg.setParent(None)
         except Exception as e:
@@ -1072,7 +1120,14 @@ class RikuganPanelCore(QWidget):
         self._set_running(False)
 
     def _try_restore_session(self) -> None:
-        restored = self._ctrl.restore_sessions()
+        restore_mode = getattr(self._config, "startup_restore_sessions", "all")
+        if restore_mode == "none":
+            return
+        if restore_mode == "all":
+            restored = self._ctrl.restore_sessions()
+        else:
+            # "latest" — restore only the most recent session
+            restored = self._ctrl.restore_sessions(latest_only=True)
         if restored:
             # Remove the default empty tab if it was replaced
             for tid, cv in list(self._chat_views.items()):
@@ -1112,10 +1167,26 @@ class RikuganPanelCore(QWidget):
 
     # --- Mutation log integration ---
 
+    def _ensure_mutation_panel(self):
+        """Lazily create the mutation log panel on first access.
+
+        The panel is inserted into ``_mutation_container`` so the splitter
+        always has exactly two children (chat area + container).  No third
+        splitter widget is ever added.
+        """
+        from .mutation_log_view import MutationLogPanel
+
+        if self._mutation_panel is not None:
+            return self._mutation_panel
+        self._mutation_panel = MutationLogPanel()
+        self._mutation_panel.undo_requested.connect(self._on_undo_requested)
+        self._mutation_panel.setVisible(False)
+        self._mutation_container_layout.addWidget(self._mutation_panel)
+        return self._mutation_panel
+
     def _on_mutation_recorded(self, event: TurnEvent) -> None:
         """Handle a MUTATION_RECORDED event by adding it to the mutation log panel."""
-        if self._mutation_panel is None:
-            return
+        panel = self._ensure_mutation_panel()
         meta = event.metadata
         record = MutationRecord(
             tool_name=event.tool_name,
@@ -1125,16 +1196,16 @@ class RikuganPanelCore(QWidget):
             description=event.text,
             reversible=meta.get("reversible", False),
         )
-        self._mutation_panel.add_mutation(record)
+        panel.add_mutation(record)
         # Show the mutations button once the first mutation is recorded
         self._mutations_btn.setVisible(True)
 
     def _on_toggle_mutation_log(self) -> None:
-        """Toggle visibility of the mutation log panel."""
-        if self._mutation_panel is None:
-            return
-        visible = not self._mutation_panel.isVisible()
-        self._mutation_panel.setVisible(visible)
+        """Toggle visibility of the mutation log panel and its container."""
+        panel = self._ensure_mutation_panel()
+        visible = not panel.isVisible()
+        panel.setVisible(visible)
+        self._mutation_container.setVisible(visible)
         self._mutations_btn.setChecked(visible)
 
     def _on_mode_changed(self, index: int) -> None:
@@ -1217,6 +1288,7 @@ class RikuganPanelCore(QWidget):
         self._bulk_renamer.cancel_requested.connect(self._on_renamer_cancel)
         self._bulk_renamer.undo_requested.connect(self._on_renamer_undo)
         self._bulk_renamer.seek_requested.connect(lambda addr: self._on_renamer_seek(addr))
+        self._bulk_renamer.refresh_requested.connect(self._load_renamer_functions)
         self._tools_panel.set_renamer_widget(self._bulk_renamer)
 
         # Create IDA dockable form wrapper if factory is available
@@ -1256,6 +1328,19 @@ class RikuganPanelCore(QWidget):
         """Create a BulkRenamerEngine for the current session."""
         from ..agent.bulk_renamer import BulkRenamerEngine
 
+        # Ensure advanced (deferred) tools are registered before the
+        # renamer engine is created — the engine needs decompile_function
+        # and other advanced tools even if no chat prompt has been sent.
+        if not self._ctrl.ensure_advanced_tools_ready():
+            log_warning("Advanced tool registration incomplete — bulk renamer may lack required tools")
+
+        # Verify that required tools are actually available.
+        registry = self._ctrl.get_tool_registry()
+        missing = [name for name in ("decompile_function",) if registry.get(name) is None]
+        if missing:
+            log_error(f"Cannot start bulk renamer: missing required tool(s): {', '.join(missing)}")
+            return None
+
         provider = self._ctrl.get_provider()
         if provider is None:
             return None
@@ -1273,81 +1358,96 @@ class RikuganPanelCore(QWidget):
     def _load_renamer_functions(self) -> None:
         """Populate the bulk renamer widget with functions from the binary.
 
-        Fetches pages of functions one at a time via QTimer so the UI thread
-        stays responsive between pages (avoids blocking on large binaries).
+        Uses the host-specific ``list_functions_raw()`` on the controller
+        (not a direct IDA import) with chunked QTimer-driven loading to
+        keep the UI thread responsive during enumeration of large binaries.
         """
         if not hasattr(self, "_bulk_renamer"):
             return
 
-        tool_registry = self._ctrl.get_tool_registry()
-        defn = tool_registry.get("list_functions")
-        if defn is None or defn.handler is None:
-            log_info("list_functions tool not available — renamer table will be empty")
+        try:
+            self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
+            self._ctrl.begin_function_enumeration()
+            self._bulk_renamer.begin_function_load()
+        except Exception as e:
+            log_error(f"Failed to start function enumeration for bulk renamer: {e}")
+            try:
+                self._bulk_renamer.fail_function_load(f"Failed to load functions: {e}")
+            except Exception as widget_err:
+                log_error(f"Failed to restore bulk renamer after start failure: {widget_err}")
+            finally:
+                self._cleanup_renamer_chunk(cancel_controller=True)
             return
 
-        # State for the incremental page fetcher
-        self._renamer_load_funcs: list[dict] = []
-        self._renamer_load_offset = 0
-        self._renamer_load_batch = 500
-        self._renamer_load_defn = defn
+        # Start chunked enumeration via QTimer
+        self._renamer_chunk_limit = 200
+        self._renamer_chunk_timer = QTimer(self)
+        self._renamer_chunk_timer.setInterval(0)
+        self._renamer_chunk_timer.timeout.connect(self._renamer_chunk_step)
+        self._renamer_chunk_timer.start()
 
-        self._renamer_fetch_timer = QTimer(self)
-        self._renamer_fetch_timer.setInterval(0)
-        self._renamer_fetch_timer.timeout.connect(self._fetch_renamer_page)
-        self._renamer_fetch_timer.start()
+    def _renamer_chunk_step(self) -> None:
+        """Fetch and populate the next chunk of function data from the controller."""
+        timer = getattr(self, "_renamer_chunk_timer", None)
+        if timer is None:
+            return
 
-    def _fetch_renamer_page(self) -> None:
-        """Fetch one page of functions and schedule the next or finish."""
-        defn = self._renamer_load_defn
-        offset = self._renamer_load_offset
-        batch = self._renamer_load_batch
+        if self._is_shutdown:
+            self._cleanup_renamer_chunk(cancel_controller=True)
+            return
+
+        limit = self._renamer_chunk_limit
 
         try:
-            raw = defn.handler(offset=offset, limit=batch)
+            chunk, more = self._ctrl.next_function_chunk(limit)
         except Exception as e:
-            log_error(f"list_functions failed at offset {offset}: {e}")
-            raw = None
-
-        page_count = 0
-        if raw:
-            for line in raw.splitlines():
-                m = re.match(r"\s*0x([0-9a-fA-F]+)\s+(.+)", line)
-                if m:
-                    self._renamer_load_funcs.append(
-                        {
-                            "address": int(m.group(1), 16),
-                            "name": m.group(2).strip(),
-                            "is_import": False,
-                            "instruction_count": 0,
-                        }
-                    )
-                    page_count += 1
-
-        if page_count >= batch:
-            # More pages to fetch
-            self._renamer_load_offset += batch
+            log_error(f"Failed to enumerate functions chunk: {e}")
+            try:
+                self._bulk_renamer.fail_function_load(f"Failed to load functions: {e}")
+            except Exception as widget_err:
+                log_error(f"Failed to restore bulk renamer after load failure: {widget_err}")
+            finally:
+                self._cleanup_renamer_chunk(cancel_controller=True)
             return
 
-        # All pages fetched — stop timer and load into widget
-        self._renamer_fetch_timer.stop()
-        self._renamer_fetch_timer.deleteLater()
-        self._renamer_fetch_timer = None
+        if chunk:
+            self._bulk_renamer.append_function_chunk(chunk)
 
-        functions = self._renamer_load_funcs
+        if not more:
+            self._bulk_renamer.finish_function_load()
+            self._cleanup_renamer_chunk()
+            log_info("Loaded functions into bulk renamer")
+            return
 
-        # Approximate function size from consecutive addresses
-        for i in range(len(functions) - 1):
-            functions[i]["instruction_count"] = functions[i + 1]["address"] - functions[i]["address"]
+    def _cleanup_renamer_chunk(self, cancel_controller: bool = False, cancel_widget: bool = False) -> None:
+        """Clean up the chunked loading timer and state."""
+        if hasattr(self, "_renamer_chunk_timer") and self._renamer_chunk_timer is not None:
+            self._renamer_chunk_timer.stop()
+            self._renamer_chunk_timer.deleteLater()
+            self._renamer_chunk_timer = None
+        if hasattr(self, "_renamer_chunk_limit"):
+            del self._renamer_chunk_limit
+        if cancel_controller and hasattr(self._ctrl, "cancel_function_enumeration"):
+            self._ctrl.cancel_function_enumeration()
+        if cancel_widget and hasattr(self, "_bulk_renamer"):
+            self._bulk_renamer.cancel_function_load()
 
-        if functions:
-            self._bulk_renamer.load_functions(functions)
-            log_info(f"Loaded {len(functions)} functions into bulk renamer")
-        else:
-            log_info("No functions found for bulk renamer")
+    def _stop_tools_poll_timer(self) -> None:
+        timer = getattr(self, "_tools_poll_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+            self._tools_poll_timer = None
 
-        # Clean up temporary state
-        self._renamer_load_funcs = []
-        self._renamer_load_defn = None
+    def _cancel_renamer_engine(self) -> None:
+        """Cancel any active bulk renamer engine and clear the reference."""
+        engine = getattr(self, "_renamer_engine", None)
+        if engine is not None:
+            try:
+                engine.cancel()
+            except Exception as e:
+                log_warning(f"Failed to cancel bulk renamer engine: {e}")
+        self._renamer_engine = None
 
     # --- Tools panel event handlers ---
 
@@ -1377,7 +1477,9 @@ class RikuganPanelCore(QWidget):
 
         engine = self._get_or_create_renamer_engine(batch_size, max_concurrent)
         if engine is None:
-            log_error("Cannot start renamer: LLM provider not available")
+            log_error("Cannot start renamer: resources unavailable")
+            if hasattr(self, "_bulk_renamer"):
+                self._bulk_renamer.set_running_state(False)
             return
         rename_jobs = [RenameJob(address=j["address"], current_name=j["current_name"]) for j in jobs]
         engine.enqueue(rename_jobs)

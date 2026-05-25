@@ -118,6 +118,37 @@ def _split_frontmatter(text: str) -> tuple:
     return (fm_text, body.lstrip("\n"))
 
 
+def _read_frontmatter_only(md_path: str) -> str:
+    """Read only the YAML frontmatter block (up to the closing ``---``) from *md_path*.
+
+    Stops reading once the closing marker is found, avoiding loading the
+    entire body text and reference files during discovery.  Returns the
+    raw frontmatter text (without the opening ``---``) or ``""`` if no
+    frontmatter is found.
+
+    Tolerates leading blank lines and BOM characters so that
+    indented/commented frontmatter still parses correctly.
+    """
+    try:
+        with open(md_path, encoding="utf-8-sig") as f:
+            # Skip leading blank lines and BOM characters
+            line = f.readline()
+            while line and line.lstrip("\ufeff").strip() == "":
+                line = f.readline()
+            if not line:
+                return ""
+            if not line.lstrip("\ufeff").startswith("---"):
+                return ""
+            lines = []
+            for line in f:
+                if line.strip() == "---":
+                    return "\n".join(lines)
+                lines.append(line.rstrip("\r\n"))
+    except OSError as e:
+        log_debug(f"Failed to read skill frontmatter {md_path}: {e}")
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # SkillDefinition
 # ---------------------------------------------------------------------------
@@ -225,7 +256,11 @@ def discover_skills(skills_dir: str) -> list[SkillDefinition]:
     """Scan skills_dir for <slug>/SKILL.md, return loaded SkillDefinitions.
 
     Each subdirectory with a SKILL.md is treated as a skill.
-    Metadata is eagerly loaded from frontmatter; body is lazy.
+    **Only frontmatter metadata is loaded eagerly.**  The body text and
+    reference files are loaded lazily on first access via ``SkillDefinition.body``.
+
+    This avoids reading potentially large reference files (*.md) during
+    discovery, which runs in the background runtime init thread on panel boot.
     """
     if not os.path.isdir(skills_dir):
         log_debug(f"Skills directory not found: {skills_dir}")
@@ -240,10 +275,9 @@ def discover_skills(skills_dir: str) -> list[SkillDefinition]:
             continue
 
         try:
-            with open(md_path, encoding="utf-8-sig") as f:
-                text = f.read()
-
-            fm_text, body_text = _split_frontmatter(text)
+            # Read only frontmatter during discovery — the body is loaded
+            # lazily on first access via SkillDefinition.body.
+            fm_text = _read_frontmatter_only(md_path)
             fm = _parse_frontmatter(fm_text) if fm_text else {}
 
             # Extract author/version from top-level or nested metadata
@@ -253,13 +287,6 @@ def discover_skills(skills_dir: str) -> list[SkillDefinition]:
             if isinstance(meta, dict):
                 author = author or meta.get("author", "")
                 version = version or meta.get("version", "")
-
-            # Build body eagerly from the already-read text to avoid a
-            # second file read.  Append reference files if present.
-            body_text = body_text.strip()
-            refs = _load_references(skill_dir)
-            if refs:
-                body_text += "\n\n" + refs
 
             # Parse triggers — list of keywords that auto-activate this skill
             raw_triggers = fm.get("triggers", [])
@@ -278,7 +305,7 @@ def discover_skills(skills_dir: str) -> list[SkillDefinition]:
                 author=author,
                 version=version,
                 frontmatter=fm,
-                _body=body_text,
+                _body=None,  # lazy — loaded on first access via SkillDefinition.body
                 _md_path=md_path,
             )
 

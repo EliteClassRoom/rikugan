@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
+from rikugan.core.startup_timing import end, start
 from rikugan.ui.panel_core import RikuganPanelCore
 from rikugan.ui.qt_compat import QT_BINDING, QApplication, QVBoxLayout, QWidget
 
@@ -150,6 +151,9 @@ class RikuganPanel(idaapi.PluginForm):
         self._core: RikuganPanelCore | None = None
 
     def OnCreate(self, form: Any) -> None:
+        t_oncreate = start("ida_form.on_create_total")
+
+        t_widget = start("ida_form.to_qt_widget")
         if QT_BINDING == "PyQt5":
             self._form_widget = self.FormToPyQtWidget(form)
         else:
@@ -157,6 +161,7 @@ class RikuganPanel(idaapi.PluginForm):
                 self._form_widget = self.FormToPySideWidget(form)
             except Exception:
                 self._form_widget = self.FormToPyQtWidget(form)
+        end("ida_form.to_qt_widget", t_widget)
 
         self._root = QWidget()
         form_layout = QVBoxLayout(self._form_widget)
@@ -167,16 +172,20 @@ class RikuganPanel(idaapi.PluginForm):
         root_layout.setContentsMargins(0, 0, 0, 0)
 
         # Create the core panel
+        t_core = start("ida_form.core_construct")
         self._core = RikuganPanelCore(
             controller_factory=IdaSessionController,
             ui_hooks_factory=lambda panel_getter: RikuganUIHooks(panel_getter=panel_getter),
             tools_form_factory=lambda tools_widget: RikuganToolsForm(tools_widget),
             parent=self._root,
         )
+        end("ida_form.core_construct", t_core)
         root_layout.addWidget(self._core)
 
         # Apply IDA theme-aware stylesheet
+        t_theme = start("ida_form.apply_theme")
         self._apply_ida_theme()
+        end("ida_form.apply_theme", t_theme)
 
         # Apply custom font if configured
         self._apply_font_override()
@@ -187,6 +196,8 @@ class RikuganPanel(idaapi.PluginForm):
             f"[Rikugan] Widget font: family='{_widget_font.family()}', "
             f"pointSize={_widget_font.pointSize()}, pixelSize={_widget_font.pixelSize()}\n"
         )
+
+        end("ida_form.on_create_total", t_oncreate)
 
     def _apply_ida_theme(self) -> None:
         """Apply the IDA Pro theme-aware stylesheet to the panel.

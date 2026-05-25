@@ -15,8 +15,6 @@ import socket
 import urllib.parse
 from typing import Annotated
 
-import requests
-
 from ..core.errors import ToolError
 from ..core.logging import log_debug
 from .base import tool
@@ -34,13 +32,8 @@ WEB_FETCH_MAX_REDIRECTS = 5
 WEB_FETCH_DEFAULT_LIMIT = 7400
 WEB_FETCH_MAX_RETURN_CHARS = 7600
 
-# Try to import html2text for better markdown conversion
-try:
-    import html2text
-
-    _HAS_HTML2TEXT = True
-except ImportError:
-    _HAS_HTML2TEXT = False
+# html2text is imported only when first needed (in _html_to_markdown).
+_HAS_HTML2TEXT: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +94,14 @@ def _resolve_hostsafe(host: str) -> tuple[bool, str]:
 def _fetch_with_safe_redirects(
     url: str,
     headers: dict[str, str],
-) -> requests.Response:
+) -> "requests.Response":
     """Perform the HTTP request, validating every redirect hop for safety.
 
     Raises ToolError on unsafe redirects, HTTP errors, or timeouts.
     Returns the final non-redirect response.
     """
+    import requests
+
     current_url = url
     for _hop in range(WEB_FETCH_MAX_REDIRECTS + 1):
         safe, err = _is_safe_url(current_url)
@@ -222,7 +217,18 @@ def _strip_html_tags(html_content: str) -> str:
 
 def _html_to_markdown(html_content: str, url: str) -> str:
     """Convert HTML content to markdown using html2text (with stdlib fallback)."""
+    global _HAS_HTML2TEXT
+    if _HAS_HTML2TEXT is None:
+        try:
+            import html2text as _h2t  # noqa: F811
+
+            _HAS_HTML2TEXT = True
+        except ImportError:
+            _HAS_HTML2TEXT = False
+
     if _HAS_HTML2TEXT:
+        import html2text
+
         h2t = html2text.HTML2Text()
         h2t.ignore_links = False
         h2t.ignore_images = True

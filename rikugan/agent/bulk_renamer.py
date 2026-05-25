@@ -220,6 +220,11 @@ class BulkRenamerEngine:
 
         Returns the number of jobs successfully decompiled. Use this before calling
         ``start(preload_on_main_thread=True)`` so worker threads never call host APIs.
+
+        Uses ``execute_current_thread`` to avoid the thread-pool + idasync
+        deadlock: when called from the IDA main thread (via QTimer.singleShot),
+        dispatching to the thread pool would cause the pool worker to wait for
+        ``ida_kernwin.execute_sync`` while this thread blocks on the future.
         """
         pending = self._pending_jobs()
         decompiled_count = 0
@@ -239,7 +244,7 @@ class BulkRenamerEngine:
                 )
             )
             try:
-                decomp = self._tools.execute(
+                decomp = self._tools.execute_current_thread(
                     "decompile_function",
                     {"address": f"0x{job.address:x}"},
                 )
@@ -247,17 +252,18 @@ class BulkRenamerEngine:
 
                 disasm = ""
                 try:
-                    disasm = self._tools.execute(
+                    disasm = self._tools.execute_current_thread(
                         "read_disassembly",
                         {"address": f"0x{job.address:x}", "count": 100},
                     )
-                except Exception:
-                    pass
+                except Exception as disasm_err:
+                    log_debug(f"Preload disassembly failed for 0x{job.address:x}: {disasm_err}")
 
                 if disasm:
                     job.decompiled_code += f"\n\n---\n// Disassembly:\n{disasm}"
                 decompiled_count += 1
             except Exception as e:
+                log_error(f"Preload decompile failed for 0x{job.address:x}: {e}")
                 job.status = RenameStatus.FAILED
                 job.error = str(e)
                 self._event_queue.put(
@@ -268,8 +274,8 @@ class BulkRenamerEngine:
                         error=str(e),
                     )
                 )
-                log_error(f"Preload decompile failed for 0x{job.address:x}: {e}")
-
+                if self._cancel.is_set():
+                    break
         return decompiled_count
 
     def pause(self) -> None:

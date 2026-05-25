@@ -14,16 +14,18 @@ from ..agent.loop import AgentLoop, BackgroundAgentRunner
 from ..agent.turn import TurnEvent
 from ..core.config import RikuganConfig
 from ..core.host import get_database_instance_id, set_database_instance_id
-from ..core.logging import log_debug, log_error, log_info
-from ..mcp.manager import MCPManager
+from ..core.logging import log_debug, log_error, log_info, log_warning
+from ..core.startup_timing import end, reset_for_new_session, set_metadata, start
 from ..providers.registry import ProviderRegistry
 from ..skills.registry import SkillRegistry
 from ..state.history import SessionHistory
 from ..state.session import SessionState
 
 if TYPE_CHECKING:
+    from ..mcp.manager import MCPManager
     from ..tools.registry import ToolRegistry
 else:
+    MCPManager = Any
     ToolRegistry = Any
 
 
@@ -37,7 +39,23 @@ def _normalize_db_path(path: str) -> str:
 
 
 class SessionControllerBase:
-    """Non-Qt orchestrator for Rikugan sessions."""
+    """Non-Qt orchestrator for Rikugan sessions.
+
+    Parameters
+    ----------
+    ensure_tools_ready:
+        Optional callback invoked before the first agent turn to register
+        host-specific advanced tool modules.  Must be ``Callable[[ToolRegistry], None]``
+        and is called once with ``self._tool_registry``.  Host controllers
+        (e.g. ``IdaSessionController``) pass their ``register_advanced_tools``
+        through this callback so that shared code does not import host-specific
+        modules directly.
+    reset_deferred_tools:
+        Optional callback invoked by ``update_settings()`` to reset any
+        host-specific deferred-tool registration cache (e.g. failed-module
+        tracking).  Called with no arguments.  Host controllers pass their
+        host-specific reset function through this callback.
+    """
 
     def __init__(
         self,
@@ -45,15 +63,22 @@ class SessionControllerBase:
         tool_registry_factory: Callable[[], ToolRegistry],
         database_path_getter: Callable[[], str],
         host_name: str,
+        ensure_tools_ready: Callable[[Any], None] | None = None,
+        reset_deferred_tools: Callable[[], None] | None = None,
     ):
+        t_base = start("controller.base_init_total")
         self.config = config
         self.host_name = host_name
         self._provider_registry = ProviderRegistry()
         self._provider_registry.register_custom_providers(list(config.custom_providers.keys()))
+        t_tools = start("tools.registry_create")
         self._tool_registry = tool_registry_factory()
-        self._sync_web_tool_config()
+        end("tools.registry_create", t_tools)
+        self._advanced_tools_registered = False  # deferred until first agent turn
+        self._ensure_tools_ready = ensure_tools_ready  # host-specific callback (no host import here)
+        self._reset_deferred_tools = reset_deferred_tools  # host-provided callback for settings reload
         self._skill_registry = SkillRegistry()
-        self._mcp_manager = MCPManager()
+        self._mcp_manager: MCPManager = None  # lazily created when MCP config is loaded
         self._idb_path = _normalize_db_path(database_path_getter())
         self._db_instance_id = self._ensure_db_instance_id()
         self._runtime_init_done = threading.Event()
@@ -73,15 +98,34 @@ class SessionControllerBase:
 
         self._runner: BackgroundAgentRunner | None = None
         self._pending_messages: list[str] = []
+        end("controller.base_init_total", t_base)
+
+    def _ensure_mcp_manager(self) -> MCPManager:
+        """Lazily create the MCP manager on first use."""
+        if self._mcp_manager is None:
+            from ..mcp.manager import MCPManager as _MCPMgr
+
+            self._mcp_manager = _MCPMgr()
+        return self._mcp_manager
 
     def _sync_web_tool_config(self) -> None:
-        """Expose the active runtime config to MiniMax-backed web tools."""
-        try:
-            from ..tools import web
+        """Expose the active runtime config to MiniMax-backed web tools.
 
-            web.set_runtime_config(self.config)
-        except Exception as e:
-            log_debug(f"Failed to sync web tool config: {e}")
+        The web tool module is only imported when the tool is explicitly
+        used or when the minimax provider is active.  At that point the
+        tool module itself caches the config at first access.
+
+        Does not require full advanced-tool registration success — the web
+        module may have registered even when another advanced module failed.
+        """
+        is_minimax = self.config.provider.name == "minimax"
+        if is_minimax:
+            try:
+                from ..tools import web
+
+                web.set_runtime_config(self.config)
+            except Exception as e:
+                log_debug(f"Failed to sync web tool config: {e}")
 
     def _initialize_runtime(self) -> None:
         """Load heavy runtime components off the UI path."""
@@ -89,7 +133,9 @@ class SessionControllerBase:
         try:
             if self._runtime_shutdown.is_set():
                 return
+            t_skills = start("runtime_init.skills")
             self._skill_registry.discover()
+            end("runtime_init.skills", t_skills)
 
             # Apply disabled skills + load enabled external skills
             self._skill_registry.load_external_skills(
@@ -99,25 +145,48 @@ class SessionControllerBase:
 
             if self._runtime_shutdown.is_set():
                 return
-            self._mcp_manager.load_config()
+            mcp_mgr = self._ensure_mcp_manager()
+            t_mcp_cfg = start("runtime_init.mcp_config")
+            mcp_mgr.load_config()
+            end("runtime_init.mcp_config", t_mcp_cfg)
 
-            # Load enabled external MCP servers
-            from ..core.external_sources import discover_all_external_mcp
+            # Load enabled external MCP servers — only if configured
+            if self.config.enabled_external_mcp:
+                t_ext_mcp = start("runtime_init.external_mcp")
+                from ..core.external_sources import discover_all_external_mcp
 
-            external_mcp = discover_all_external_mcp()
-            enabled_set = set(self.config.enabled_external_mcp)
-            if enabled_set:
-                for source_key, servers in external_mcp.items():
-                    enabled = [s for s in servers if f"{source_key}:{s.name}" in enabled_set]
-                    if enabled:
-                        self._mcp_manager.add_external_configs(enabled)
+                external_mcp = discover_all_external_mcp()
+                end("runtime_init.external_mcp", t_ext_mcp)
+                enabled_set = set(self.config.enabled_external_mcp)
+                if enabled_set:
+                    for source_key, servers in external_mcp.items():
+                        enabled = [s for s in servers if f"{source_key}:{s.name}" in enabled_set]
+                        if enabled:
+                            mcp_mgr.add_external_configs(enabled)
 
             if self._runtime_shutdown.is_set():
                 return
-            self._mcp_manager.start_servers(self._tool_registry)
+            t_mcp_start = start("runtime_init.mcp_start")
+            mcp_mgr.start_servers(self._tool_registry)
+            end("runtime_init.mcp_start", t_mcp_start)
         except Exception as e:
             log_error(f"Background runtime initialization failed: {e}")
         finally:
+            # Record metadata for the startup report
+            try:
+                set_metadata("provider", self.config.provider.name)
+                set_metadata("model", self.config.provider.model)
+                set_metadata("tool_count", len(self._tool_registry.list_names()))
+                skill_count = (
+                    len(self._skill_registry._skills)
+                    if hasattr(self._skill_registry, "_skills")
+                    else 0
+                )
+                set_metadata("skill_count", skill_count)
+                mcp_enabled = sum(1 for c in (self._mcp_manager._configs if self._mcp_manager else []) if c.enabled)
+                set_metadata("mcp_enabled", mcp_enabled)
+            except Exception:
+                pass
             self._runtime_init_done.set()
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             log_debug(f"Runtime initialization completed in {elapsed_ms} ms")
@@ -250,6 +319,23 @@ class SessionControllerBase:
     def runtime_ready(self) -> bool:
         return self._runtime_init_done.is_set()
 
+    def get_function_count(self) -> int:
+        """Return the total number of functions in the binary.
+
+        Override in host-specific controllers to provide real data.
+        Default returns 0 (no functions available).
+        """
+        return 0
+
+    def list_functions_raw(self, offset: int = 0, limit: int = 0) -> list[dict]:
+        """Return a raw list of function metadata dicts for the bulk renamer.
+
+        Override in host-specific controllers to provide real data.
+        Default returns an empty list (no functions available).
+        Supports chunked loading via *offset* and *limit*.
+        """
+        return []
+
     @property
     def is_agent_running(self) -> bool:
         return self._runner is not None and self._runner.agent_loop.is_running
@@ -262,21 +348,82 @@ class SessionControllerBase:
         if not self._runtime_init_done.is_set():
             self._runtime_init_done.wait(timeout=10.0)
         try:
-            provider = self._provider_registry.get_or_create(
-                self.config.provider.name,
-                api_key=self.config.provider.api_key,
-                api_base=self.config.provider.api_base,
-                model=self.config.provider.model,
-            )
-            provider.ensure_ready()
-            return provider
+            return self._create_provider()
         except Exception as e:
             log_error(f"Provider creation failed: {e}")
             return None
 
+    def _create_provider(self) -> Any:
+        """Build the current-configured provider, applying OAuth consent when needed."""
+        provider_name = self.config.provider.name
+        # Apply persisted OAuth consent to the auth cache before creating
+        # an Anthropic provider without an explicit API key.  This ensures
+        # consent is respected even if the user started with a different
+        # provider and later switched via settings (the panel_core OAuth
+        # warm-up may not have run yet).
+        if provider_name == "anthropic" and not self.config.provider.api_key:
+            try:
+                from ..providers.auth_cache import set_keychain_consent
+
+                set_keychain_consent(self.config.oauth_consent_accepted)
+            except Exception as e:
+                log_debug(f"OAuth consent apply failed (non-critical): {e}")
+
+        provider = self._provider_registry.get_or_create(
+            provider_name,
+            api_key=self.config.provider.api_key,
+            api_base=self.config.provider.api_base,
+            model=self.config.provider.model,
+        )
+        provider.ensure_ready()
+        return provider
+
     def get_tool_registry(self) -> ToolRegistry:
         """Return the tool registry."""
         return self._tool_registry
+
+    def begin_function_enumeration(self) -> None:
+        """Start a function enumeration cursor (host-specific override)."""
+        pass
+
+    def next_function_chunk(self, limit: int) -> tuple[list[dict], bool]:
+        """Return the next chunk and a ``more`` flag (host-specific override)."""
+        return [], False
+
+    def cancel_function_enumeration(self) -> None:
+        """Cancel an active enumeration cursor (host-specific override)."""
+        pass
+
+    def ensure_advanced_tools_ready(self) -> bool:
+        """Ensure deferred advanced tools are registered.
+
+        Uses the host-provided callback — no host-specific imports here.
+        Retries only previously-failed modules on subsequent calls.
+
+        Returns True when no known failures remain (registered or no
+        callback provided); returns False when registration was attempted
+        but partially or fully failed.
+        """
+        if self._advanced_tools_registered:
+            return True
+        if self._ensure_tools_ready is None:
+            self._advanced_tools_registered = True
+            return True
+        try:
+            result = self._ensure_tools_ready(self._tool_registry)
+            if not result.ok:
+                log_warning(
+                    f"Advanced tool registration partially failed: "
+                    f"{len(result.failed_modules)} modules ({', '.join(result.failed_modules)}). "
+                    f"Will retry on next prompt or settings reload."
+                )
+                return False
+            self._advanced_tools_registered = True
+            log_info(f"Advanced tool registration complete ({result.registered} tools)")
+            return True
+        except Exception as e:
+            log_warning(f"Advanced tool registration failed: {e}")
+            return False
 
     def start_agent(self, user_message: str) -> str | None:
         """Create provider + agent loop and start the background runner."""
@@ -284,21 +431,27 @@ class SessionControllerBase:
             # Delay only the first agent start if background init is still running.
             self._runtime_init_done.wait(timeout=10.0)
 
+        # Register advanced (deferred) tool modules before first agent turn.
+        self.ensure_advanced_tools_ready()
+
+        # Sync web tool runtime config for MiniMax even when advanced
+        # registration is partial — the web module may have registered
+        # successfully while another module failed.
+        self._sync_web_tool_config()
+
         # Declare provider-dependent tool availability so the tool schema
         # sent to the LLM only lists tools that the active provider supports.
         self._sync_web_tool_config()
         is_minimax = self.config.provider.name == "minimax"
         self._tool_registry.set_capabilities({"minimax_provider": is_minimax})
 
+        t_provider = start("first_prompt.provider_ready")
         try:
-            provider = self._provider_registry.get_or_create(
-                self.config.provider.name,
-                api_key=self.config.provider.api_key,
-                api_base=self.config.provider.api_base,
-                model=self.config.provider.model,
-            )
+            provider = self._create_provider()
             provider.ensure_ready()
+            end("first_prompt.provider_ready", t_provider)
         except Exception as e:
+            end("first_prompt.provider_ready", t_provider)
             log_error(f"Provider creation failed: {e}")
             return f"Provider error: {e}"
 
@@ -364,8 +517,11 @@ class SessionControllerBase:
         )
         log_info("Started new chat session (active tab)")
 
-    def restore_sessions(self) -> list[tuple[str, SessionState]]:
-        """Load ALL saved sessions for the current idb_path and return (tab_id, session) pairs."""
+    def restore_sessions(self, latest_only: bool = False) -> list[tuple[str, SessionState]]:
+        """Load ALL saved sessions for the current idb_path and return (tab_id, session) pairs.
+
+        If *latest_only* is True, only the most recently saved session is restored.
+        """
         results: list[tuple[str, SessionState]] = []
         if not self._idb_path:
             log_debug("Skipping session restore: no database path available")
@@ -376,7 +532,11 @@ class SessionControllerBase:
                 idb_path=self._idb_path,
                 db_instance_id=self._db_instance_id,
             )
+            if not summaries:
+                return results
             summaries.sort(key=lambda s: s.get("created_at", 0))
+            if latest_only:
+                summaries = summaries[-1:]  # most recent only
             for summary in summaries:
                 session = history.load_session(summary["id"])
                 if session and session.messages:
@@ -431,11 +591,21 @@ class SessionControllerBase:
         self._db_instance_id = self._ensure_db_instance_id()
         tab_id = self._create_session()
         self._active_tab_id = tab_id
+        # Clear startup timing records for the new database
+        reset_for_new_session()
 
     def update_settings(self) -> None:
         self._sync_web_tool_config()
         # Re-register custom providers in case user added/removed one
         self._provider_registry.register_custom_providers(list(self.config.custom_providers.keys()))
+        # Reset advanced registration flag so the next agent turn retries
+        # any previously failed advanced modules.
+        self._advanced_tools_registered = False
+        if self._reset_deferred_tools is not None:
+            try:
+                self._reset_deferred_tools()
+            except Exception as e:
+                log_warning(f"Failed to reset deferred tool registration state: {e}")
         for session in self._sessions.values():
             session.provider_name = self.config.provider.name
             session.model_name = self.config.provider.model
@@ -446,8 +616,9 @@ class SessionControllerBase:
         Safe to call at any time — stops existing servers first, then
         re-reads the config and starts newly-enabled servers.
         """
+        mcp_mgr = self._ensure_mcp_manager()
         thread = threading.Thread(
-            target=self._mcp_manager.reload,
+            target=mcp_mgr.reload,
             args=(self._tool_registry,),
             daemon=True,
             name="rikugan-mcp-reload",
@@ -470,4 +641,5 @@ class SessionControllerBase:
                     history.save_session(session)
                 except (OSError, ValueError) as e:
                     log_error(f"Failed to save session {tab_id} on shutdown: {e}")
-        self._mcp_manager.shutdown()
+        if self._mcp_manager is not None:
+            self._mcp_manager.shutdown()

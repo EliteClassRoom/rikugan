@@ -19,20 +19,27 @@ if _IDA_AVAILABLE:
 _TRACE_ENABLED: bool | None = None
 
 
+_trace_enabled_checked_at: float = 0.0
+
+
 def _log(msg: str) -> None:
     """Low-level log that avoids circular imports with logging.py.
 
-    Skips the call entirely when TRACE-level logging is disabled to avoid
-    the overhead of eager f-string formatting on every idasync dispatch.
+    Re-checks the effective log level periodically (every 30 s) so that
+    changing the level at runtime (e.g. via settings reload) eventually
+    enables TRACE output without a restart.
     """
-    global _TRACE_ENABLED
+    global _TRACE_ENABLED, _trace_enabled_checked_at
     try:
         import logging as _logging
+        import time as _time
 
         from .logging import get_logger, log_trace
 
-        if _TRACE_ENABLED is None:
+        now = _time.monotonic()
+        if _TRACE_ENABLED is None or now - _trace_enabled_checked_at > 30:
             _TRACE_ENABLED = get_logger().isEnabledFor(_logging.DEBUG)
+            _trace_enabled_checked_at = now
         if not _TRACE_ENABLED:
             return
         log_trace(msg)

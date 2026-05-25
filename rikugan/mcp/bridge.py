@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..constants import MCP_TOOL_PREFIX
 from ..core.logging import log_info
 from ..tools.base import ParameterSchema, ToolDefinition
-from ..tools.registry import ToolRegistry
-from .client import MCPClient
+
+if TYPE_CHECKING:
+    from ..tools.registry import ToolRegistry
+    from .client import MCPClient
+else:
+    ToolRegistry = Any
+    MCPClient = Any
 
 
 def _mcp_schema_to_parameters(input_schema: dict[str, Any]) -> list[ParameterSchema]:

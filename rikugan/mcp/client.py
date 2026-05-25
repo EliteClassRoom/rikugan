@@ -1,4 +1,8 @@
-"""MCP client: manages a single MCP server subprocess using the official mcp SDK."""
+"""MCP client: manages a single MCP server subprocess using the official mcp SDK.
+
+The official ``mcp`` SDK is only imported when an MCP server is actually
+starting — importing this module alone does not pull in the SDK.
+"""
 
 from __future__ import annotations
 
@@ -14,13 +18,31 @@ from ..core.logging import log_debug, log_error, log_info
 from ..core.sanitize import sanitize_mcp_result
 from .config import MCPServerConfig
 
-try:
-    from mcp import ClientSession
-    from mcp.client.stdio import StdioServerParameters, stdio_client
+_HAS_MCP: bool | None = None  # None = not yet probed
 
-    _HAS_MCP = True
-except ImportError:
-    _HAS_MCP = False
+
+def _check_mcp_sdk() -> bool:
+    """Probe for the official ``mcp`` SDK. Cached after first check."""
+    global _HAS_MCP
+    if _HAS_MCP is None:
+        try:
+            import mcp  # noqa: F401
+            import mcp.client.stdio  # noqa: F401
+
+            _HAS_MCP = True
+        except ImportError:
+            _HAS_MCP = False
+    return _HAS_MCP
+
+
+def reset_mcp_sdk_probe() -> None:
+    """Clear the cached MCP SDK probe so it is re-tested on next access.
+
+    Call during MCP config reload (e.g. after user installed the SDK)
+    so a previously negative probe does not block forever.
+    """
+    global _HAS_MCP
+    _HAS_MCP = None
 
 
 def _unwrap_exception(exc: BaseException) -> str:
@@ -83,9 +105,8 @@ class MCPClient:
     """
 
     def __init__(self, config: MCPServerConfig):
-        if not _HAS_MCP:
-            raise MCPError("The 'mcp' package is required for MCP support. Install it with: pip install mcp")
-
+        # SDK presence is checked in start(), not here, so that constructing
+        # an MCPClient does not permanently cache a negative probe.
         self.config = config
         self.name = config.name
         self._tools: list[MCPToolSchema] = []
@@ -96,7 +117,7 @@ class MCPClient:
         # Async internals — set up in start()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        self._session: ClientSession | None = None
+        self._session: Any = None  # ClientSession, imported in _async_main
         self._shutdown_event: asyncio.Event | None = None
         self._ready = threading.Event()
         self._start_error: str | None = None
@@ -114,6 +135,9 @@ class MCPClient:
 
         Blocks until the server is ready or the timeout expires.
         """
+        if not _check_mcp_sdk():
+            raise MCPError("The 'mcp' package is required for MCP support. Install it with: pip install mcp")
+
         log_info(f"MCP[{self.name}]: starting server: {self.config.command} {self.config.args}")
 
         self._running = True
@@ -232,6 +256,9 @@ class MCPClient:
 
     async def _async_main(self) -> None:
         """Async entry point: connect, handshake, discover tools, then keep alive."""
+        from mcp import ClientSession
+        from mcp.client.stdio import StdioServerParameters, stdio_client
+
         self._loop = asyncio.get_running_loop()
         self._shutdown_event = asyncio.Event()
 

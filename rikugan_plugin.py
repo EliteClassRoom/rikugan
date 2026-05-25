@@ -2,10 +2,19 @@
 
 IDA Pro plugin entry point.
 All rikugan.* imports are deferred to avoid crashes during plugin enumeration.
+
+Startup path:
+  IDA load → RikuganPlugin.init() [imports constants only]
+  → user activates → RikuganPlugmod._toggle_panel()
+    → minimal import of rikugan.ida.ui.panel
+    → RikuganPanel() → show()
+  Old behaviour (disabled): recursive full-package preload.
+  Restore old path: set RIKUGAN_PRELOAD_ALL=1.
 """
 
 import builtins
 import importlib
+import os
 import threading
 
 import idaapi
@@ -76,6 +85,16 @@ class RikuganPlugmod(idaapi.plugmod_t):
             pass
 
     def _toggle_panel(self) -> None:
+        # Lazily import startup_timing within toggle_panel so that the
+        # plugin module itself does NOT import rikugan.* at load time.
+        from rikugan.core.startup_timing import (
+            complete as _complete_timing,
+            end as _end_phase,
+            flush as _flush_timing,
+            start as _start_phase,
+        )
+
+        t_toggle = _start_phase("toggle.total")
         try:
             _log("_toggle_panel: entry")
             if self._panel is not None:
@@ -83,61 +102,72 @@ class RikuganPlugmod(idaapi.plugmod_t):
                 self._panel.show()
                 return
 
-            # Bulk-load all rikugan.* modules via importlib.import_module().
-            #
-            # importlib.import_module() routes through CPython's internal
-            # _gcd_import(), which does NOT call builtins.__import__.  This
-            # means Shiboken's __import__ hook is never invoked, avoiding
-            # both the UAF crash (from swapping builtins.__import__) and the
-            # spurious "No module named 'ida_...'" errors (from Shiboken's
-            # hook failing to resolve IDA modules during bulk loading).
-            #
-            # All ida_* imports inside rikugan modules also use
-            # importlib.import_module() for the same reason.
-            _log("_toggle_panel: importing rikugan modules")
-            import pkgutil
-            import rikugan
+            # Minimal import path: load only the rikugan.ida.ui.panel module.
+            # The old behaviour (recursive full-package preload via
+            # pkgutil.iter_modules) is available via RIKUGAN_PRELOAD_ALL=1.
+            _PRELOAD_ALL = os.environ.get("RIKUGAN_PRELOAD_ALL", "") in ("1", "yes", "true")
 
-            # Use iter_modules (discovery only, no __import__) + manual
-            # recursion via importlib.import_module().  pkgutil.walk_packages()
-            # calls __import__() internally for sub-packages, which goes
-            # through Shiboken's hook and can trigger UAF crashes.
-            def _load_submodules(pkg):
-                for _finder, modname, ispkg in pkgutil.iter_modules(
-                    pkg.__path__, prefix=pkg.__name__ + "."
-                ):
-                    try:
-                        mod = importlib.import_module(modname)
-                        if ispkg:
-                            _load_submodules(mod)
-                    except Exception as e:
-                        import sys; sys.stderr.write(f"[Rikugan] Skipping {modname}: {e}\n")
+            if _PRELOAD_ALL:
+                _log("_toggle_panel: RIKUGAN_PRELOAD_ALL=1 — performing full recursive import")
 
-            # Temporarily bypass Shiboken's __import__ hook during bulk
-            # loading.  importlib.import_module() itself avoids __import__,
-            # but *executed* module code (e.g. ``from PySide6 import ...``
-            # in qt_compat.py) emits IMPORT_NAME bytecode that calls
-            # builtins.__import__.  On Python 3.14 this can cause a deep
-            # recursive re-entry into Shiboken that triggers a UAF crash.
-            #
-            # PySide6 modules are already in sys.modules (loaded by IDA's
-            # own UI), so CPython's import machinery just needs a dict
-            # lookup — Shiboken's type-wrapper initialisation is not needed.
-            saved_import = builtins.__import__
-            builtins.__import__ = importlib.__import__
-            try:
-                _load_submodules(rikugan)
-            finally:
-                builtins.__import__ = saved_import
+                t_bulk = _start_phase("toggle.bulk_import_all")
+                import pkgutil
+                import rikugan
 
-            _log("_toggle_panel: all rikugan modules loaded")
+                _imported = 0
+                _skipped = 0
+
+                def _load_submodules(pkg):
+                    nonlocal _imported, _skipped
+                    for _finder, modname, ispkg in pkgutil.iter_modules(
+                        pkg.__path__, prefix=pkg.__name__ + "."
+                    ):
+                        try:
+                            mod = importlib.import_module(modname)
+                            _imported += 1
+                            if ispkg:
+                                _load_submodules(mod)
+                        except Exception as e:
+                            _skipped += 1
+                            import sys
+                            sys.stderr.write(f"[Rikugan] Skipping {modname}: {e}\n")
+
+                saved_import = builtins.__import__
+                builtins.__import__ = importlib.__import__
+                try:
+                    _load_submodules(rikugan)
+                finally:
+                    builtins.__import__ = saved_import
+                _end_phase("toggle.bulk_import_all", t_bulk, meta={"imported": _imported, "skipped": _skipped})
+                _log("_toggle_panel: all rikugan modules loaded")
+            else:
+                _log("_toggle_panel: using minimal import (set RIKUGAN_PRELOAD_ALL=1 for legacy full preload)")
+
+            _log("_toggle_panel: importing rikugan.ida.ui.panel")
+            t_import_panel = _start_phase("toggle.import_panel_module")
             RikuganPanel = importlib.import_module("rikugan.ida.ui.panel").RikuganPanel
+            _end_phase("toggle.import_panel_module", t_import_panel)
 
             _log("_toggle_panel: creating RikuganPanel()")
+            t_construct = _start_phase("toggle.panel_construct")
             self._panel = RikuganPanel()
+            _end_phase("toggle.panel_construct", t_construct)
+
             _log("_toggle_panel: calling show()")
+            t_show = _start_phase("toggle.panel_show")
             self._panel.show()
+            _end_phase("toggle.panel_show", t_show)
+
             _log("_toggle_panel: done")
+            _end_phase("toggle.total", t_toggle)
+
+            # Mark startup session complete, then flush timing records
+            # to the debug log now that the logging subsystem is available.
+            try:
+                _complete_timing()
+                _flush_timing()
+            except Exception:
+                pass
         except Exception as e:
             import sys
             import traceback
@@ -149,7 +179,6 @@ class RikuganPlugmod(idaapi.plugmod_t):
                 )
             except Exception:
                 try:
-                    import os
                     log_path = os.path.join(os.path.expanduser("~"), ".idapro", "rikugan", "rikugan_debug.log")
                     with open(log_path, "a") as f:
                         f.write(f"[Rikugan CRASH] {e}\n{tb_str}\n")
@@ -173,12 +202,30 @@ class RikuganPlugin(idaapi.plugin_t):
 
 
 def _log(msg: str) -> None:
-    """Best-effort log to IDA output and debug file."""
+    """Best-effort log to IDA output and debug file.
+
+    Caches the ``log_trace`` callable after the first successful import so
+    that repeated ``importlib`` calls are avoided during the tight bootstrap
+    path.  A single transient import failure does **not** permanently
+    suppress further attempts — the import is retried on every call until it
+    succeeds.  Only a successful import is cached.
+    """
     idaapi.msg(f"[Rikugan] {msg}\n")
+    cached = getattr(_log, "_cached_log_trace", None)
+    if cached is not None:
+        try:
+            cached(msg)
+        except Exception as e:
+            import sys
+            sys.stderr.write(f"[Rikugan] cached log_trace failed during bootstrap: {e}\n")
+        return
     try:
-        importlib.import_module("rikugan.core.logging").log_trace(msg)
+        log_func = importlib.import_module("rikugan.core.logging").log_trace
+        _log._cached_log_trace = log_func
+        log_func(msg)
     except Exception as e:
-        import sys; sys.stderr.write(f"[Rikugan] log_trace unavailable during bootstrap: {e}\n")
+        import sys
+        sys.stderr.write(f"[Rikugan] log_trace unavailable during bootstrap: {e}\n")
 
 
 def PLUGIN_ENTRY():  # noqa: N802

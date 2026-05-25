@@ -44,7 +44,7 @@ from .styles import (
 _COL_CHECK = 0
 _COL_ADDR = 1
 _COL_NAME = 2
-_COL_LENGTH = 3
+_COL_SIZE = 3
 _COL_NEWNAME = 4
 _COL_STATUS = 5
 
@@ -56,7 +56,7 @@ class FunctionEntry:
     address: int
     name: str
     is_import: bool
-    instruction_count: int
+    size_bytes: int
 
 
 class _NumericTableItem(QTableWidgetItem):
@@ -80,6 +80,7 @@ class BulkRenamerWidget(QWidget):
     cancel_requested = Signal()
     undo_requested = Signal()
     seek_requested = Signal(object)  # address (64-bit int, can't use Signal(int))
+    refresh_requested = Signal()
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
@@ -117,7 +118,7 @@ class BulkRenamerWidget(QWidget):
         self._table.setObjectName("renamer_table")
         self._table.setStyleSheet(get_bulk_table_style())
         self._table.setColumnCount(6)
-        self._table.setHorizontalHeaderLabels(["", "Address", "Current Name", "Length", "New Name", "Status"])
+        self._table.setHorizontalHeaderLabels(["", "Address", "Current Name", "Size", "New Name", "Status"])
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -231,6 +232,16 @@ class BulkRenamerWidget(QWidget):
         self._undo_btn.clicked.connect(self.undo_requested.emit)
         action_bar.addWidget(self._undo_btn)
 
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setStyleSheet(get_bulk_btn_style())
+        self._refresh_btn.clicked.connect(self.refresh_requested.emit)
+        action_bar.addWidget(self._refresh_btn)
+
+        self._loading_label = QLabel("")
+        self._loading_label.setStyleSheet(get_bulk_selection_label_style())
+        self._loading_label.hide()
+        action_bar.addWidget(self._loading_label)
+
         self._progress = QProgressBar()
         self._progress.setStyleSheet(get_bulk_progress_style())
         self._progress.setFixedHeight(18)
@@ -256,14 +267,95 @@ class BulkRenamerWidget(QWidget):
     def _on_header_check_changed(self, state: int) -> None:
         """Toggle all visible row checkboxes based on header checkbox."""
         checked = state == Qt.CheckState.Checked.value
-        self._table.itemChanged.disconnect(self._on_item_changed)
+        self._table.blockSignals(True)
         for row in range(self._table.rowCount()):
             if not self._table.isRowHidden(row):
                 item = self._table.item(row, _COL_CHECK)
                 if item:
                     item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-        self._table.itemChanged.connect(self._on_item_changed)
+        self._table.blockSignals(False)
         self._update_selection_count()
+
+    def _reset_header_check(self) -> None:
+        """Reset the header checkbox to unchecked (without emitting signals)."""
+        self._header_check.blockSignals(True)
+        self._header_check.setChecked(False)
+        self._header_check.blockSignals(False)
+
+    def set_refresh_enabled(self, enabled: bool) -> None:
+        """Enable or disable the Refresh button."""
+        self._refresh_btn.setEnabled(enabled)
+
+    def set_running_state(self, running: bool) -> None:
+        """Set all action buttons to reflect whether an engine is running."""
+        self._start_btn.setEnabled(not running)
+        self._refresh_btn.setEnabled(not running)
+        self._stop_btn.setEnabled(running)
+        self._pause_btn.setEnabled(running)
+        if not running:
+            self._pause_btn.setText("Pause")
+            self._paused = False
+
+    def clear_functions(self) -> None:
+        """Cancel any in-flight load, clear all table contents, and reset UI to idle."""
+        self.cancel_function_load()
+        self._table.setRowCount(0)
+        self._entries.clear()
+        self._addr_to_entry.clear()
+        self._reset_header_check()
+        self.hide_loading_state()
+        self._update_selection_count()
+        self.set_running_state(False)
+
+    def show_loading_state(self, message: str = "Loading functions...") -> None:
+        """Show the loading-state label (e.g. while chunked enumeration runs)."""
+        self._loading_label.setText(message)
+        self._loading_label.show()
+
+    def hide_loading_state(self) -> None:
+        """Hide the loading-state label."""
+        self._loading_label.hide()
+        self._loading_label.setText("")
+
+    def begin_function_load(self) -> None:
+        """Prepare the table for externally chunked function loading."""
+        self.cancel_function_load()
+        self._loading = True
+        self._reset_header_check()
+        self.show_loading_state("Loading functions...")
+        self._table.blockSignals(True)
+        self._table.setSortingEnabled(False)
+        self._table.setRowCount(0)
+        self._entries.clear()
+        self._addr_to_entry.clear()
+
+    def append_function_chunk(self, chunk: list[dict]) -> None:
+        """Append one externally enumerated function chunk to the table."""
+        if not chunk:
+            return
+        if not self._loading:
+            self.begin_function_load()
+        start = self._table.rowCount()
+        self._table.setRowCount(start + len(chunk))
+        self._populate_rows(chunk, start, start + len(chunk), source_start=start)
+
+    def finish_function_load(self) -> None:
+        """Complete a function load and restore normal table behaviour."""
+        self._finish_load()
+
+    def fail_function_load(self, message: str) -> None:
+        """Abort a failed function load, clear stale data, and show the error."""
+        self._cancel_chunked_load()
+        self._table.setRowCount(0)
+        self._entries.clear()
+        self._addr_to_entry.clear()
+        self._restore_after_load(message)
+
+    def cancel_function_load(self) -> None:
+        """Cancel any in-flight widget-side function load."""
+        self._cancel_chunked_load()
+        if self._loading:
+            self._restore_after_load("")
 
     # Rows to insert per timer tick during chunked loading.
     _LOAD_CHUNK_SIZE = 200
@@ -271,7 +363,7 @@ class BulkRenamerWidget(QWidget):
     def load_functions(self, functions: list[dict]) -> None:
         """Populate the table from a list of function dicts.
 
-        Each dict: {"address": int, "name": str, "is_import": bool, "instruction_count": int}
+        Each dict: {"address": int, "name": str, "is_import": bool, "size_bytes": int}
 
         For large lists the rows are inserted in chunks via a QTimer so the UI
         thread stays responsive (prevents the "blank panel" freeze).
@@ -281,7 +373,7 @@ class BulkRenamerWidget(QWidget):
 
         self._loading = True
         self._table.setSortingEnabled(False)
-        self._table.itemChanged.disconnect(self._on_item_changed)
+        self._table.blockSignals(True)
         self._table.setRowCount(0)
         self._entries.clear()
         self._addr_to_entry.clear()
@@ -307,7 +399,7 @@ class BulkRenamerWidget(QWidget):
         start = self._load_cursor
         end = min(start + self._LOAD_CHUNK_SIZE, len(funcs))
 
-        self._populate_rows(funcs, start, end)
+        self._populate_rows(funcs, start, end, source_start=0)
         self._load_cursor = end
 
         if end >= len(funcs):
@@ -324,20 +416,51 @@ class BulkRenamerWidget(QWidget):
         self._pending_functions = []
         self._load_cursor = 0
 
-    def _populate_rows(self, functions: list[dict], start: int, end: int) -> None:
-        """Insert rows [start, end) into the table."""
+    def _load_chunk_at(self, chunk: list[dict], offset: int) -> None:
+        """Populate rows for a chunk of function data at *offset*.
+
+        Called from the host panel during chunked enumeration.  Delegates
+        to ``_populate_rows`` for both table population and entry tracking.
+        """
+        self._populate_rows(chunk, offset, offset + len(chunk))
+
+    def _populate_rows(
+        self,
+        functions: list[dict],
+        start: int,
+        end: int,
+        source_start: int = 0,
+    ) -> None:
+        """Insert rows [start, end) into the table.
+
+        *source_start* is the 0-based index in *functions* that corresponds
+        to row *start*:
+
+        - Widget-chunked ``load_functions()`` passes the full list and
+          calls with ``source_start=0`` (default) so that ``functions[row]``
+          works correctly.
+        - ``append_function_chunk()`` passes only the current chunk and
+          calls with ``source_start=start`` so that ``functions[row - start]``
+          indexes within the chunk correctly.
+
+        For chunked loading, ensures ``_entries`` has enough capacity and
+        places entries at the correct list indices.
+        """
         for row in range(start, end):
-            func = functions[row]
+            func = functions[row - source_start]
             entry = FunctionEntry(
                 address=func["address"],
                 name=func["name"],
                 is_import=func.get("is_import", False),
-                instruction_count=func.get("instruction_count", 0),
+                size_bytes=func.get("size_bytes", 0),
             )
-            self._entries.append(entry)
+            if row == len(self._entries):
+                self._entries.append(entry)
+            else:
+                self._entries[row] = entry
             self._addr_to_entry[entry.address] = row
 
-            ic = entry.instruction_count
+            sb = entry.size_bytes
 
             # Checkbox column
             check_item = QTableWidgetItem()
@@ -360,11 +483,11 @@ class BulkRenamerWidget(QWidget):
             name_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             self._table.setItem(row, _COL_NAME, name_item)
 
-            # Length (numeric sort)
-            length_item = _NumericTableItem(str(ic) if ic else "0", ic)
-            length_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            length_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._table.setItem(row, _COL_LENGTH, length_item)
+            # Size (bytes) — numeric sort
+            size_item = _NumericTableItem(str(sb) if sb else "0", sb)
+            size_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._table.setItem(row, _COL_SIZE, size_item)
 
             # New name (initially empty)
             new_item = QTableWidgetItem("")
@@ -378,10 +501,23 @@ class BulkRenamerWidget(QWidget):
 
     def _finish_load(self) -> None:
         """Re-enable table features after load completes."""
-        self._table.itemChanged.connect(self._on_item_changed)
+        self._reset_header_check()
+        self._restore_after_load("")
+        self._update_selection_count()
+        # Reapply any active filter — the table was rebuilt so the filter
+        # state was lost.  This also correctly resets the selection-count
+        # header after the refresh.
+        self._on_filter_changed()
+
+    def _restore_after_load(self, message: str) -> None:
+        """Restore table state after success, failure, or cancellation."""
+        self._table.blockSignals(False)
         self._table.setSortingEnabled(True)
         self._loading = False
-        self._update_selection_count()
+        if message:
+            self.show_loading_state(message)
+        else:
+            self.hide_loading_state()
 
     def update_job(self, address: int, new_name: str, status: str, error: str) -> None:
         """Update a row by address with new name, status, and optional error."""
@@ -432,6 +568,7 @@ class BulkRenamerWidget(QWidget):
         # Toggle buttons based on completion
         if current >= total and total > 0:
             self._start_btn.setEnabled(True)
+            self._refresh_btn.setEnabled(True)
             self._stop_btn.setEnabled(False)
             self._pause_btn.setEnabled(False)
             self._pause_btn.setText("Pause")
@@ -446,12 +583,12 @@ class BulkRenamerWidget(QWidget):
                 if clicked_item is None:
                     return
                 new_state = clicked_item.checkState()
-                self._table.itemChanged.disconnect(self._on_item_changed)
+                self._table.blockSignals(True)
                 for r in selected_rows:
                     item = self._table.item(r, _COL_CHECK)
                     if item:
                         item.setCheckState(new_state)
-                self._table.itemChanged.connect(self._on_item_changed)
+                self._table.blockSignals(False)
                 self._update_selection_count()
 
     def _on_cell_double_clicked(self, row: int, column: int) -> None:
@@ -473,6 +610,7 @@ class BulkRenamerWidget(QWidget):
         self._pause_btn.setEnabled(False)
         self._pause_btn.setText("Pause")
         self._start_btn.setEnabled(True)
+        self._refresh_btn.setEnabled(True)
         self._paused = False
         self.cancel_requested.emit()
 
@@ -560,6 +698,7 @@ class BulkRenamerWidget(QWidget):
         max_concurrent = self._concurrent_value()
 
         self._start_btn.setEnabled(False)
+        self._refresh_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
         self._pause_btn.setEnabled(True)
         self._pause_btn.setText("Pause")
@@ -598,11 +737,11 @@ class BulkRenamerWidget(QWidget):
 
         row = self._find_row_for_address(address)
         if row is not None:
-            self._table.itemChanged.disconnect(self._on_item_changed)
+            self._table.blockSignals(True)
             item = self._table.item(row, _COL_CHECK)
             if item:
                 item.setCheckState(Qt.CheckState.Checked)
-            self._table.itemChanged.connect(self._on_item_changed)
+            self._table.blockSignals(False)
             self._update_selection_count()
 
     @staticmethod

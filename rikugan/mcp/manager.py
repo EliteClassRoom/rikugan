@@ -5,13 +5,18 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from ..constants import MCP_TOOL_PREFIX
 from ..core.logging import log_debug, log_error, log_info, log_warning
-from ..tools.registry import ToolRegistry
-from .bridge import register_mcp_tools
-from .client import MCPClient
 from .config import MCPServerConfig, load_mcp_config
+
+if TYPE_CHECKING:
+    from ..tools.registry import ToolRegistry
+    from .client import MCPClient
+else:
+    ToolRegistry = Any
+    MCPClient = Any
 
 # Soft timeout: log a warning if startup takes longer than this.
 _SOFT_TIMEOUT = 5.0
@@ -51,9 +56,11 @@ class MCPManager:
 
     def load_config(self, path: str = "") -> int:
         """Load MCP config. Returns number of enabled servers found."""
-        self._configs = load_mcp_config(path)
-        enabled = [c for c in self._configs if c.enabled]
-        log_info(f"MCP config: {len(enabled)} enabled servers out of {len(self._configs)} total")
+        configs = load_mcp_config(path)
+        enabled = [c for c in configs if c.enabled]
+        with self._lock:
+            self._configs = configs
+        log_info(f"MCP config: {len(enabled)} enabled servers out of {len(configs)} total")
         return len(enabled)
 
     def add_external_configs(self, configs: list[MCPServerConfig]) -> None:
@@ -63,7 +70,8 @@ class MCPManager:
         """
         if not configs:
             return
-        self._configs.extend(configs)
+        with self._lock:
+            self._configs.extend(configs)
         log_info(f"MCP: added {len(configs)} external server config(s)")
 
     def start_servers(
@@ -80,13 +88,28 @@ class MCPManager:
             log_warning("MCP: start_servers called after shutdown — ignoring")
             return
 
+        # Reset the cached SDK probe so a previously missing SDK can be
+        # detected after the user installs the ``mcp`` package.  Only done
+        # here (when servers are actually about to start), not during reload()
+        # or config load, so that rikugan.mcp.client is not imported unless
+        # an enabled server needs it.
+        enabled_configs = [c for c in self._configs if c.enabled]
+        if enabled_configs:
+            try:
+                from .client import reset_mcp_sdk_probe
+                reset_mcp_sdk_probe()
+            except Exception as exc:
+                log_warning(f"MCP: failed to reset SDK probe before server start: {exc}")
+
+        # Snapshot enabled configs and generation under lock so that
+        # concurrent load_config/add_external_configs calls do not mutate
+        # the list while we iterate.
         with self._lock:
             self._generation += 1
             gen = self._generation
+            configs = [c for c in self._configs if c.enabled]
 
-        for config in self._configs:
-            if not config.enabled:
-                continue
+        for config in configs:
 
             thread = threading.Thread(
                 target=self._start_one,
@@ -109,11 +132,24 @@ class MCPManager:
         timeout (_HARD_TIMEOUT) to abort, preventing indefinite UI freezes.
         The *generation* token guards against late registrations after a
         reload or shutdown has superseded this start cycle.
+
+        MCPClient and bridge modules are imported here, NOT at module level,
+        so importing rikugan.mcp.manager does not pull in the official MCP SDK.
+
+        ``MCPClient(config)`` construction and all imports are inside the
+        try block so that missing-SDK or client-init failures are logged
+        at error level instead of raising unhandled exceptions.
         """
         hard = min(config.timeout, _HARD_TIMEOUT)
-        client = MCPClient(config)
-        t0 = time.monotonic()
+        client = None
+        safe_name = config.name.replace("-", "_").replace(".", "_")
+        prefix = f"{MCP_TOOL_PREFIX}{safe_name}_"
         try:
+            from .bridge import register_mcp_tools
+            from .client import MCPClient
+
+            client = MCPClient(config)
+            t0 = time.monotonic()
             client.start(timeout=hard)
             elapsed = time.monotonic() - t0
             if elapsed > _SOFT_TIMEOUT:
@@ -125,17 +161,31 @@ class MCPManager:
                     )
                     client.stop()
                     return
+                # Do NOT store client yet — registration happens outside lock
+            count = register_mcp_tools(client, registry, prefix=prefix)
+            # Re-check generation after registration.  If a reload or
+            # shutdown happened during registration, unregister the tools
+            # we just added, stop the client, and do NOT store it.
+            with self._lock:
+                if self._generation != generation or self._shut_down:
+                    log_warning(
+                        f"MCP[{config.name}]: discarding after registration "
+                        f"(gen {generation} vs current {self._generation})"
+                    )
+                    registry.unregister_by_prefix(prefix)
+                    client.stop()
+                    return
                 self._clients[config.name] = client
-            count = register_mcp_tools(client, registry)
             log_info(f"MCP[{config.name}]: started OK, {count} tools registered")
             if on_complete:
                 on_complete(config.name, count)
         except Exception as e:
             log_error(f"MCP[{config.name}]: failed to start: {e}")
-            try:
-                client.stop()
-            except Exception as stop_err:
-                log_debug(f"MCP[{config.name}]: cleanup after start failure: {stop_err}")
+            if client is not None:
+                try:
+                    client.stop()
+                except Exception as stop_err:
+                    log_debug(f"MCP[{config.name}]: cleanup after start failure: {stop_err}")
 
     def stop_all(self) -> None:
         """Stop all running MCP servers."""
@@ -184,6 +234,9 @@ class MCPManager:
         Stops all running servers, removes stale MCP tools from the
         registry, re-reads the config file, and starts any newly-enabled
         servers.  Safe to call from a background thread.
+
+        Does NOT import rikugan.mcp.client unless an enabled server is
+        actually starting (SDK probe reset happens inside start_servers).
         """
         log_info("MCP: reloading configuration")
         self.stop_all()

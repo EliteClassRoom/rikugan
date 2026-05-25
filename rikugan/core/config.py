@@ -79,6 +79,12 @@ class RikuganConfig:
     bulk_renamer_batch_size: int = 10
     bulk_renamer_max_concurrent: int = 3
 
+    # Startup behavior
+    # "all"    — restore every saved session for this database (default, preserves existing behavior)
+    # "latest" — restore only the most recent session (opt-in, faster)
+    # "none"   — never restore sessions on startup
+    startup_restore_sessions: str = "all"
+
     # API key encryption
     encrypt_api_keys: bool = False
     _encryption_block: dict = field(default_factory=dict, repr=False)
@@ -124,6 +130,8 @@ class RikuganConfig:
             for k, v in self.custom_profiles.items():
                 if not isinstance(v, dict):
                     errors.append(f"custom_profiles['{k}'] must be a dict")
+        if self.startup_restore_sessions not in ("latest", "all", "none"):
+            errors.append(f"startup_restore_sessions '{self.startup_restore_sessions}' must be latest|all|none")
         return errors
 
     def save(self, password: str = "") -> None:
@@ -136,6 +144,9 @@ class RikuganConfig:
             self.provider.max_tokens = max(1, self.provider.max_tokens)
             self.provider.context_window = max(1024, self.provider.context_window)
             self.max_retries = max(1, min(10, self.max_retries))
+            # Normalize invalid startup_restore_sessions to "all"
+            if self.startup_restore_sessions not in ("latest", "all", "none"):
+                self.startup_restore_sessions = "all"
 
         os.makedirs(self._config_dir, exist_ok=True)
         # Snapshot current provider into the providers dict before saving
@@ -205,6 +216,7 @@ class RikuganConfig:
             "a2a_agents",
             "bulk_renamer_batch_size",
             "bulk_renamer_max_concurrent",
+            "startup_restore_sessions",
             "oauth_consent_accepted",
             "encrypt_api_keys",
         ):
@@ -213,6 +225,9 @@ class RikuganConfig:
                 # Normalize unknown/legacy theme to "ida"
                 if k == "theme" and val not in {"ida", "dark", "light"}:
                     val = "ida"
+                # Normalize invalid startup_restore_sessions to "all"
+                if k == "startup_restore_sessions" and val not in ("latest", "all", "none"):
+                    val = "all"
                 setattr(self, k, val)
 
     def has_encrypted_keys(self) -> bool:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Annotated
+from typing import Annotated, Any
 
 from ...core.logging import log_debug
 from ...tools.base import parse_addr, tool
@@ -60,6 +60,76 @@ def list_functions(
         name = ida_name.get_name(ea)
         lines.append(f"  0x{ea:x}  {name}")
     return "\n".join(lines)
+
+
+def _enumerate_all_functions(
+    offset: int = 0,
+    limit: int = 0,
+) -> list[dict]:
+    """Return function metadata as raw dicts for UI components.
+
+    This is a non-tool helper for UI components (bulk renamer) that need
+    the full function list without the overhead of text formatting or
+    repeated enumeration.  Returns a list of dicts with keys:
+    "address", "name", "is_import", "size_bytes" (end_ea - start_ea,
+    0 when not computed).
+
+    When *offset* and *limit* are provided, returns only a slice of the
+    full list — used by chunked QTimer-driven loading so the UI thread
+    stays responsive during enumeration of large binaries.
+
+    Follows the project import discipline: all IDA API modules are
+    imported via ``importlib.import_module()`` inside try/except blocks.
+    """
+    ida_segment = _noisy_ida_import("ida_segment")
+
+    funcs: list[dict] = []
+    # Build a stable list of function addresses up-front
+    addrs = list(idautils.Functions())
+    if limit > 0:
+        addrs = addrs[offset : offset + limit]
+    elif offset > 0:
+        addrs = addrs[offset:]
+
+    for ea in addrs:
+        name = ida_name.get_name(ea)
+        # Detect imports via segment type — more reliable than flag checks.
+        is_import = False
+        if ida_segment is not None:
+            try:
+                seg = ida_segment.getseg(ea)
+                if seg is not None:
+                    seg_type_name = getattr(ida_segment, "get_segm_name", lambda s: "")(seg)
+                    if seg_type_name in (".idata", ".extern", "extern"):
+                        is_import = True
+            except Exception as seg_err:
+                log_debug(f"Segment detection failed for 0x{ea:x}: {seg_err}")
+        # Compute size_bytes from function bounds (zero if unavailable).
+        size_bytes = 0
+        func = ida_funcs.get_func(ea)
+        if func is not None:
+            size_bytes = func.end_ea - func.start_ea
+        funcs.append({
+            "address": ea,
+            "name": name,
+            "is_import": is_import,
+            "size_bytes": size_bytes,
+        })
+    return funcs
+
+
+def _get_function_count() -> int:
+    """Return the total number of functions in the IDB."""
+    return len(list(idautils.Functions()))
+
+
+def _noisy_ida_import(module_name: str) -> Any:
+    """Import an IDA API module via importlib, returning None on failure."""
+    try:
+        return importlib.import_module(module_name)
+    except ImportError as e:
+        log_debug(f"IDA API module {module_name!r} not available: {e}")
+        return None
 
 
 @tool(category="functions")
