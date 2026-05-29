@@ -59,6 +59,8 @@ The agent really ***lives*** and ***breathes*** reversing.
 
 **Memory** — Findings are saved to `RIKUGAN.md` next to your database, persisting across sessions.
 
+**Headless Mode** — Run Rikugan inside ``idat.exe`` (Windows) / ``idat64`` (Linux/macOS) without Qt via one-shot prompts or a local HTTP control server. Ideal for CI/CD pipelines and batch analysis. ``python -m rikugan.cli.headless ask sample.exe "summarize metadata"``.
+
 **Skills & MCP** — 12 built-in skills, custom skill support, and MCP server integration. Reuse skills and MCP servers from Claude Code and Codex.
 
 ### Profiles

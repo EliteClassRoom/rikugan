@@ -18,6 +18,7 @@ _HOST = HOST_STANDALONE
 _idc = None
 _idaapi = None
 _ida_kernwin = None
+_is_headless: bool = False
 try:
     _idaapi = importlib.import_module("idaapi")
     _HOST = HOST_IDA
@@ -31,6 +32,21 @@ try:
         _ida_kernwin = importlib.import_module("ida_kernwin")
     except ImportError:
         _ida_kernwin = None  # optional — absent in some IDA headless configurations
+
+    # --- Headless detection ---
+    # RIKUGAN_HEADLESS=1 is a user-visible override for headless mode.
+    if os.environ.get("RIKUGAN_HEADLESS", "") in ("1", "yes", "true"):
+        _is_headless = True
+    elif _ida_kernwin is not None:
+        # If ida_kernwin is present, check IDA batch flags.
+        try:
+            batch = getattr(_ida_kernwin.cvar, "batch", False)
+        except AttributeError:
+            batch = False
+        _is_headless = bool(batch)
+    else:
+        # No ida_kernwin at all → definitely headless/batch
+        _is_headless = True
 except ImportError:
     _HOST = HOST_STANDALONE
 
@@ -42,6 +58,38 @@ def host_kind() -> str:
 
 def is_ida() -> bool:
     return _HOST == HOST_IDA
+
+
+def has_ida_kernwin() -> bool:
+    """Return True when the ida_kernwin module is importable.
+
+    In batch/headless IDA sessions ida_kernwin may be absent or
+    degraded — callers should use this instead of a bare ``import``.
+    """
+    return _ida_kernwin is not None
+
+
+def has_ida_ui() -> bool:
+    """Return True when IDA has a usable interactive UI.
+
+    False when ida_kernwin is absent or IDA is running in batch mode.
+    """
+    return is_ida() and not is_ida_headless() and has_ida_kernwin()
+
+
+def is_ida_headless() -> bool:
+    """Return True when IDA is running headless (no UI).
+
+    True when:
+      - ``RIKUGAN_HEADLESS=1`` is set.
+      - ``ida_kernwin.cvar.batch`` is true (IDA batch mode).
+      - ``ida_kernwin`` is absent entirely.
+
+    Returns False in standalone Python.
+    """
+    if not is_ida():
+        return False
+    return _is_headless
 
 
 # Convenience module-level flag — importers that just need a bool
@@ -67,7 +115,12 @@ def host_display_name() -> str:
 
 
 def get_current_address() -> int | None:
-    """Return current cursor/address from host context if available."""
+    """Return current cursor/address from host context if available.
+
+    Returns None in headless mode (no active UI cursor).
+    """
+    if is_ida_headless():
+        return None
     if is_ida():
         try:
             return int(_idc.get_screen_ea()) if _idc else None
@@ -78,7 +131,12 @@ def get_current_address() -> int | None:
 
 
 def navigate_to(address: int) -> bool:
-    """Navigate UI to an address when the host supports it."""
+    """Navigate UI to an address when the host supports it.
+
+    Returns False in headless mode (no UI navigation possible).
+    """
+    if is_ida_headless():
+        return False
     ea = int(address)
 
     if is_ida():

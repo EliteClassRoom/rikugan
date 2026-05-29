@@ -393,3 +393,47 @@ class TurnEvent:
             type=TurnEventType.COMMAND_ORCHESTRA,
             text=message,
         )
+
+    # ------------------------------------------------------------------
+    # Serialization — stable dict format for headless / control-server
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this TurnEvent to a stable JSON-compatible dict.
+
+        Headless integrations (runner, control server, CLI) consume
+        serialized TurnEvents rather than scraping human-readable UI
+        output.
+        """
+        d: dict[str, Any] = {"type": self.type.value}
+
+        if self.text:
+            d["text"] = self.text
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if self.tool_name:
+            d["tool_name"] = self.tool_name
+        if self.tool_args:
+            d["tool_args"] = self.tool_args
+        if self.tool_result:
+            d["tool_result"] = self.tool_result
+        if self.tool_is_error:
+            d["tool_is_error"] = True
+        if self.error:
+            d["error"] = self.error
+        d["turn_number"] = self.turn_number
+        if self.plan_steps is not None:
+            d["plan_steps"] = self.plan_steps
+        d["plan_step_index"] = self.plan_step_index
+        if self.usage is not None:
+            d["usage"] = {
+                "prompt_tokens": self.usage.prompt_tokens,
+                "completion_tokens": self.usage.completion_tokens,
+                "total_tokens": self.usage.total_tokens,
+                "cache_read_tokens": self.usage.cache_read_tokens,
+                "cache_creation_tokens": self.usage.cache_creation_tokens,
+            }
+        if self.metadata:
+            d["metadata"] = self.metadata
+
+        return d

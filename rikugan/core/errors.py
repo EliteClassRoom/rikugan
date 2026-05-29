@@ -29,11 +29,60 @@ class ProviderError(RikuganError):
         self.retry_after = retry_after
 
 
+# Provider-specific guidance for missing API keys.
+# These are appended to AuthenticationError messages so users get
+# actionable instructions for the specific provider they're using.
+_AUTH_GUIDANCE: dict[str, str] = {
+    "anthropic": (
+        "Set the ANTHROPIC_API_KEY environment variable, "
+        "configure a key in Rikugan settings, "
+        "or run `claude setup-token` for OAuth."
+    ),
+    "openai": (
+        "Set the OPENAI_API_KEY environment variable "
+        "or configure a key in Rikugan settings."
+    ),
+    "gemini": (
+        "Set the GOOGLE_API_KEY or GEMINI_API_KEY environment variable "
+        "or configure a key in Rikugan settings."
+    ),
+    "minimax": (
+        "Set the MINIMAX_API_KEY environment variable "
+        "or configure a key in Rikugan settings."
+    ),
+    "ollama": (
+        "Ollama does not require an API key. "
+        "Ensure the Ollama service is running (default: http://localhost:11434). "
+        "You can set OLLAMA_BASE_URL to override the default address."
+    ),
+    "openai_compat": (
+        "OpenAI-compatible providers require a configured API key "
+        "and base URL in Rikugan settings. "
+        "Use --api-base to set the endpoint URL."
+    ),
+}
+
+
+def _auth_guidance_for(provider: str) -> str:
+    """Return provider-specific guidance, or a generic fallback."""
+    return _AUTH_GUIDANCE.get(provider, "Set the API key via the provider's environment variable or in Rikugan settings.")
+
+
 class AuthenticationError(ProviderError):
     """Invalid or missing API key."""
 
-    def __init__(self, message: str = "Invalid or missing API key", provider: str = ""):
+    def __init__(
+        self,
+        message: str = "Invalid or missing API key",
+        provider: str = "",
+        guidance: str | None = None,
+    ):
+        if guidance is None and provider:
+            guidance = _auth_guidance_for(provider)
+        if guidance:
+            message = f"{message} — {guidance}"
         super().__init__(message, provider=provider, status_code=401, retryable=False)
+        self.guidance = guidance
 
 
 class RateLimitError(ProviderError):

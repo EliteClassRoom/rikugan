@@ -436,11 +436,9 @@ class SessionControllerBase:
 
         # Sync web tool runtime config for MiniMax even when advanced
         # registration is partial — the web module may have registered
-        # successfully while another module failed.
-        self._sync_web_tool_config()
-
-        # Declare provider-dependent tool availability so the tool schema
-        # sent to the LLM only lists tools that the active provider supports.
+        # successfully while another module failed.  Also declare
+        # provider-dependent tool availability so the tool schema sent
+        # to the LLM only lists tools the active provider supports.
         self._sync_web_tool_config()
         is_minimax = self.config.provider.name == "minimax"
         self._tool_registry.set_capabilities({"minimax_provider": is_minimax})

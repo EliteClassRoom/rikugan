@@ -23,6 +23,22 @@ from ..constants import (
 from .host import get_user_config_base_dir
 from .logging import log_error
 
+# Built-in provider default models — used as a fallback when the user's
+# saved config has an empty model string for a provider.
+PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-20250514",
+    "openai": "gpt-4o",
+    "gemini": "gemini-2.0-flash",
+    "ollama": "llama3.1",
+    "minimax": "MiniMax-M2.5",
+    # openai_compat is intentionally omitted — user must configure
+}
+
+# Built-in provider names (mirrors providers/registry.py:_BUILTIN_PROVIDER_SPECS).
+# This avoids importing the registry module at config-load time and provides
+# a standalone validation source for headless bootstrap.
+_BUILTIN_PROVIDER_NAMES = frozenset(PROVIDER_DEFAULT_MODELS.keys()) | {"openai_compat"}
+
 
 def _default_config_dir() -> str:
     return os.path.join(get_user_config_base_dir(), CONFIG_DIR_NAME)
@@ -317,6 +333,30 @@ class RikuganConfig:
         from .profile import get_profile
 
         return get_profile(self.active_profile, self.custom_profiles)
+
+    @staticmethod
+    def get_provider_default_model(provider_name: str) -> str:
+        """Return the default model for a built-in provider, or '' if unknown."""
+        return PROVIDER_DEFAULT_MODELS.get(provider_name, "")
+
+    def validate_active_provider(self) -> str | None:
+        """Validate the current provider name against built-ins + custom providers.
+
+        Returns an error message string on failure, or None on success.
+        """
+        name = self.provider.name
+        if name in _BUILTIN_PROVIDER_NAMES:
+            return None
+        if name in self.custom_providers:
+            return None
+        # Provide a helpful error listing known providers.
+        builtins = sorted(_BUILTIN_PROVIDER_NAMES)
+        customs = sorted(self.custom_providers.keys())
+        known = builtins + customs
+        return (
+            f"Unknown provider: '{name}'. "
+            f"Available providers: {', '.join(known)}"
+        )
 
     @classmethod
     def load_or_create(cls) -> RikuganConfig:

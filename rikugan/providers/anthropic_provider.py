@@ -127,10 +127,8 @@ class AnthropicProvider(LLMProvider):
                 ) from exc
             if not self.api_key:
                 raise AuthenticationError(
-                    "No Anthropic credential found. Set ANTHROPIC_API_KEY, "
-                    "paste a key in settings, or run `claude setup-token`.",
-                    provider="anthropic",
-                )
+                    "No Anthropic credential found"
+                )  # guidance auto-appended from _AUTH_GUIDANCE
             # OAuth tokens use Bearer auth + beta header;
             # API keys use x-api-key header.
             kwargs: dict[str, Any] = {}

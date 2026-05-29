@@ -1076,3 +1076,168 @@ User "/undo"
   ├─→ ToolRegistry.execute("rename_function", {"old_name": "main", "new_name": "sub_401000"})
   └─→ TEXT_DONE "Undone: Rename function main → sub_401000"
 ```
+
+---
+
+## IDA Headless Mode
+
+### Process Model
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  User / External Client                                  │
+│    │                                                      │
+│    ▼                                                      │
+│  rikugan-headless (CLI outside IDA)                      │
+│    │                                                      │
+│    │  Launches: idat.exe -A -S<rikugan/ida/headless_    │
+│    │                          bootstrap.py> <binary>       │
+│    ▼                                                      │
+│  ┌─────────────────────────────────────────────────┐     │
+│  │  IDA Process (headless, no Qt)                   │     │
+│  │                                                    │     │
+│  │  Main Thread                                       │     │
+│  │    │                                               │     │
+│  │    ├─ headless_bootstrap.main()                   │     │
+│  │    │    ├─ RIKUGAN_HEADLESS=1                     │     │
+│  │    │    ├─ ida_auto.auto_wait()                   │     │
+│  │    │    ├─ IdaHeadlessDispatcher()                │     │
+│  │    │    ├─ HeadlessSessionController()            │     │
+│  │    │    └─ One-shot: _run_one_shot()               │     │
+│  │    │    └─ Server:   _run_server()                │     │
+│  │    │                                               │     │
+│  │    └─ dispatcher.pump_forever()  ◄── Queue        │     │
+│  │         (processes IDA API calls)                  │     │
+│  │                                                    │     │
+│  │  Background Threads                                 │     │
+│  │    ├─ run_prompt() → AgentLoop.run()               │     │
+│  │    │    └─ ToolRegistry.execute()                   │     │
+│  │    │         └─ dispatcher.wrap(tool) ──► Queue   │     │
+│  │    │                                               │     │
+│  │    └─ ControlServer.serve_forever()                │     │
+│  │         └─ HTTP endpoints (/prompt, /events, ...)  │     │
+│  └─────────────────────────────────────────────────┘     │
+└─────────────────────────────────────────────────────────┘
+```
+
+### One-Shot Mode Sequence
+
+```
+User: rikugan-headless ask sample.exe "summarize metadata"
+  → CLI discovers IDA executable
+  → Writes bootstrap JSON to temp file
+  → Sets RIKUGAN_HEADLESS_BOOTSTRAP=<tempfile>
+  → Spawns: idat.exe -A -S<rikugan/ida/headless_bootstrap.py> sample.exe
+  → headless_bootstrap.main()
+     → RIKUGAN_HEADLESS=1
+     → ida_auto.auto_wait()
+     → Load RikuganConfig
+     → Create IdaHeadlessDispatcher
+     → Create HeadlessSessionController(dispatcher, ida_ui=False)
+     → bg_thread: run_prompt(controller, "summarize metadata")
+     → main_thread: dispatcher.pump_once() loop until bg_thread finishes
+     → Write result JSON to stdout/output_file
+     → idc.qexit(exit_code)
+  → CLI reads stdout → prints formatted result
+```
+
+### Server Mode Sequence
+
+```
+User: rikugan-headless serve sample.exe --ready-file rikugan-ready.json
+  → (same IDA launch as one-shot)
+  → headless_bootstrap.main()
+     → ...
+     → Start ControlServer on 127.0.0.1:0
+     → Write ready-file: {"url": "http://127.0.0.1:PORT", "token": "..."}
+     → main_thread: dispatcher.pump_once() loop until /shutdown
+  → External client reads ready-file
+     → GET  /health
+     → POST /prompt {"prompt": "analyze function 0x401000"}
+     → GET  /events?run_id=...&index=0&wait=1  (poll JSON envelope)
+     → POST /tool-approval {"run_id": "...", "approved": true}
+     → POST /shutdown
+```
+
+### Control API Endpoints
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/health` | GET | No | Readiness and running status — no paths, tokens, or provider names |
+| `/tools` | GET | Yes | Available tool names and descriptions |
+| `/prompt` | POST | Yes | Start a new agent run (`run_id` returned) |
+| `/events?run_id=...&index=N&wait=1` | GET | Yes | JSON envelope event poll (long-poll with `wait`, optional `run_id` filter) |
+| `/answer` | POST | Yes | Forward user answer to agent question (requires `run_id`) |
+| `/tool-approval` | POST | Yes | Forward decision: `{"run_id":"...","decision":"allow|allow_all|deny"}` or `{"run_id":"...","approved":true|false}` |
+| `/approval` | POST | Yes | Forward decision: `{"run_id":"...","decision":"approve|deny"}` or `{"run_id":"...","approved":true|false}` |
+| `/cancel` | POST | Yes | Cancel the active run (requires `run_id`) |
+| `/shutdown` | POST | Yes | Stop server and exit IDA |
+
+### Event Serialization
+
+``TurnEvent.to_dict()`` produces a stable JSON-compatible dict:
+
+```json
+{
+  "type": "text_delta",
+  "text": "This binary appears to...",
+  "tool_call_id": "",
+  "tool_name": "",
+  "turn_number": 1
+}
+```
+
+All event types include `type` as a string.  Optional fields (`text`,
+`tool_name`, `error`, `usage`, `plan_steps`, `metadata`) are included
+only when non-empty.
+
+### Concurrency Model (Headless)
+
+```
+Main Thread (IDA API)          Background Threads
+───────────────────             ──────────────────
+dispatcher.pump_forever()       run_prompt()
+  │                               ├─ start_agent()
+  ├─ pump job from Queue ◄─────── ├─ AgentLoop.run()
+  │   └─ execute tool             │    └─ tool call
+  ├─ pump job from Queue          │       └─ dispatcher.wrap(tool)
+  │   └─ idc.qexit(0)             │          └─ put job on Queue
+  │                               │          └─ wait (Event)
+  │                               └─ drain events → result
+  │
+  │                             ControlServer thread
+  │                               └─ HTTP request handling
+  │                                  ├─ /prompt → start_agent()
+  │                                  └─ /events → broker.get_events_since()
+  │
+  │                             EventBroker thread
+  │                               └─ drain runner queue → ring buffer
+```
+
+- No cross-thread Qt signals.
+- ``IdaHeadlessDispatcher`` uses ``queue.Queue`` + ``threading.Event`` per job.
+- ``EventBroker`` drains the runner queue regardless of connected clients.
+
+### UI vs Headless Tool Differences
+
+| Aspect | UI Mode | Headless Mode |
+|--------|---------|---------------|
+| ``get_cursor_position`` | Returns current cursor EA | Not exposed (requires ``ida_ui``) |
+| ``get_current_function`` | Returns current function info | Not exposed (requires ``ida_ui``) |
+| ``jump_to`` | Navigates IDA view | Not exposed (requires ``ida_ui``) |
+| ``get_name_at`` | Returns name at address | Same (no UI needed) |
+| ``get_address_of`` | Returns address of name | Same (no UI needed) |
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Generic error |
+| 2 | Bad CLI arguments |
+| 3 | IDA launch/load/bootstrap failure |
+| 4 | Provider/config error |
+| 5 | Analysis/tool failure |
+| 6 | Cancelled |
+| 7 | Approval required but unavailable/denied |
+| 8 | Server unavailable/auth failed |

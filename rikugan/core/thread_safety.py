@@ -1,4 +1,9 @@
-"""Thread-safety utilities for IDA API access."""
+"""Thread-safety utilities for IDA API access.
+
+Provides the ``idasync`` decorator for UI-mode IDA, and a dispatcher
+abstraction that allows headless IDA to replace ``execute_sync`` with
+a queue-based main-thread pump.
+"""
 
 from __future__ import annotations
 
@@ -9,11 +14,17 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from .host import IDA_AVAILABLE as _IDA_AVAILABLE
+from .host import has_ida_kernwin as _has_ida_kernwin
+from .host import is_ida_headless as _is_ida_headless
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-if _IDA_AVAILABLE:
-    ida_kernwin = importlib.import_module("ida_kernwin")
+_ida_kernwin: Any = None
+if _IDA_AVAILABLE and _has_ida_kernwin():
+    try:
+        _ida_kernwin = importlib.import_module("ida_kernwin")
+    except ImportError:
+        _ida_kernwin = None
 
 
 _TRACE_ENABLED: bool | None = None
@@ -50,7 +61,9 @@ def _log(msg: str) -> None:
 def idasync(func: F) -> F:
     """Decorator: execute *func* on IDA main thread when required.
 
-    IDA: uses ``ida_kernwin.execute_sync`` with ``MFF_WRITE``.
+    UI-mode IDA: uses ``ida_kernwin.execute_sync`` with ``MFF_WRITE``.
+    Headless IDA: runs directly (caller must provide a queue-based
+    dispatcher via the ToolRegistry dispatch_wrapper parameter).
     Other hosts: executes directly.
     """
 
@@ -59,33 +72,39 @@ def idasync(func: F) -> F:
         fname = func.__name__
         on_main = threading.current_thread() is threading.main_thread()
 
-        if _IDA_AVAILABLE:
-            if on_main:
-                _log(f"idasync: {fname} on main thread — direct call")
-                return func(*args, **kwargs)
+        if not _IDA_AVAILABLE or _is_ida_headless():
+            # Standalone or headless IDA — no Qt event loop available.
+            # Callers in headless mode should provide a headless dispatcher
+            # via ToolRegistry.dispatch_wrapper instead of relying on idasync.
+            return func(*args, **kwargs)
 
-            _log(f"idasync: {fname} on {threading.current_thread().name} — execute_sync START")
-            result_holder: list = []
-            error_holder: list = []
+        if _ida_kernwin is None:
+            return func(*args, **kwargs)
 
-            def _thunk() -> int:
-                try:
-                    _log(f"idasync: {fname} _thunk executing on main thread")
-                    result_holder.append(func(*args, **kwargs))
-                    _log(f"idasync: {fname} _thunk OK")
-                except Exception as exc:
-                    _log(f"idasync: {fname} _thunk ERROR: {exc}")
-                    error_holder.append(exc)
-                return 0
+        if on_main:
+            _log(f"idasync: {fname} on main thread — direct call")
+            return func(*args, **kwargs)
 
-            rc = ida_kernwin.execute_sync(_thunk, ida_kernwin.MFF_WRITE)
-            _log(f"idasync: {fname} execute_sync returned rc={rc}")
+        _log(f"idasync: {fname} on {threading.current_thread().name} — execute_sync START")
+        result_holder: list = []
+        error_holder: list = []
 
-            if error_holder:
-                raise error_holder[0]
-            return result_holder[0] if result_holder else None
+        def _thunk() -> int:
+            try:
+                _log(f"idasync: {fname} _thunk executing on main thread")
+                result_holder.append(func(*args, **kwargs))
+                _log(f"idasync: {fname} _thunk OK")
+            except Exception as exc:
+                _log(f"idasync: {fname} _thunk ERROR: {exc}")
+                error_holder.append(exc)
+            return 0
 
-        return func(*args, **kwargs)
+        rc = _ida_kernwin.execute_sync(_thunk, _ida_kernwin.MFF_WRITE)
+        _log(f"idasync: {fname} execute_sync returned rc={rc}")
+
+        if error_holder:
+            raise error_holder[0]
+        return result_holder[0] if result_holder else None
 
     return wrapper  # type: ignore[return-value]
 

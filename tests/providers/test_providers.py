@@ -84,5 +84,126 @@ class TestProviderRegistry(unittest.TestCase):
             reg.create("nonexistent")
 
 
+class TestProviderDefaultSync(unittest.TestCase):
+    """Ensure PROVIDER_DEFAULT_MODELS stays in sync with provider constructors."""
+
+    def test_anthropic_default_matches_constructor(self):
+        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
+        from rikugan.providers.anthropic_provider import AnthropicProvider
+
+        p = AnthropicProvider.__new__(AnthropicProvider)
+        p.model = ""  # __init__ not called
+        default = AnthropicProvider.__init__.__defaults__
+        if default:
+            # First positional after self is api_key="", api_base="", model=...
+            constructor_model = default[2]  # model is 3rd default (api_key, api_base, model)
+            self.assertEqual(PROVIDER_DEFAULT_MODELS["anthropic"], constructor_model)
+
+    def test_openai_default_matches_constructor(self):
+        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
+        from rikugan.providers.openai_provider import OpenAIProvider
+
+        p = OpenAIProvider.__new__(OpenAIProvider)
+        default = OpenAIProvider.__init__.__defaults__
+        if default:
+            constructor_model = default[2]  # model is 3rd default (api_key, api_base, model)
+            self.assertEqual(PROVIDER_DEFAULT_MODELS["openai"], constructor_model)
+
+    def test_gemini_default_matches_constructor(self):
+        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
+        from rikugan.providers.gemini_provider import GeminiProvider
+
+        p = GeminiProvider.__new__(GeminiProvider)
+        default = GeminiProvider.__init__.__defaults__
+        if default:
+            constructor_model = default[1]  # model is 2nd default (api_key, model)
+            self.assertEqual(PROVIDER_DEFAULT_MODELS["gemini"], constructor_model)
+
+    def test_minimax_default_matches_constructor(self):
+        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
+        from rikugan.providers.minimax_provider import MiniMaxProvider
+
+        p = MiniMaxProvider.__new__(MiniMaxProvider)
+        default = MiniMaxProvider.__init__.__defaults__
+        if default:
+            constructor_model = default[2]  # model is 3rd default (api_key, api_base, model)
+            self.assertEqual(PROVIDER_DEFAULT_MODELS["minimax"], constructor_model)
+
+
+class TestAuthenticationGuidance(unittest.TestCase):
+    """Verify AuthenticationError includes provider-specific guidance."""
+
+    def test_anthropic_guidance(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError(provider="anthropic")
+        msg = str(err)
+        self.assertIn("ANTHROPIC_API_KEY", msg)
+        self.assertIn("claude setup-token", msg)
+
+    def test_openai_guidance(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError(provider="openai")
+        msg = str(err)
+        self.assertIn("OPENAI_API_KEY", msg)
+
+    def test_gemini_guidance(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError(provider="gemini")
+        msg = str(err)
+        self.assertIn("GOOGLE_API_KEY", msg)
+        self.assertIn("GEMINI_API_KEY", msg)
+
+    def test_minimax_guidance(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError(provider="minimax")
+        msg = str(err)
+        self.assertIn("MINIMAX_API_KEY", msg)
+
+    def test_ollama_guidance(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError(provider="ollama")
+        msg = str(err)
+        self.assertIn("does not require an API key", msg)
+        self.assertIn("OLLAMA_BASE_URL", msg)
+
+    def test_openai_compat_guidance(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError(provider="openai_compat")
+        msg = str(err)
+        self.assertIn("API key", msg)
+        self.assertIn("base URL", msg)
+
+    def test_unknown_provider_generic_guidance(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError(provider="unknown_provider_xyz")
+        msg = str(err)
+        self.assertIn("environment variable", msg)
+        self.assertIn("Rikugan settings", msg)
+
+    def test_explicit_guidance_overrides_provider(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError(
+            provider="openai",
+            guidance="Custom instructions here.",
+        )
+        msg = str(err)
+        self.assertIn("Custom instructions here.", msg)
+
+    def test_no_provider_default_message(self):
+        from rikugan.core.errors import AuthenticationError
+
+        err = AuthenticationError()
+        msg = str(err)
+        self.assertEqual(msg, "Invalid or missing API key")
+
+
 if __name__ == "__main__":
     unittest.main()

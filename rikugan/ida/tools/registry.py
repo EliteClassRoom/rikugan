@@ -9,9 +9,11 @@ Hex-Rays / type / network dependencies before the UI appears.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
-from rikugan.core.host import HAS_HEXRAYS
+from rikugan.core.host import HAS_HEXRAYS, has_ida_ui
 from rikugan.core.thread_safety import idasync
 from rikugan.tools.registry import ToolRegistry
 
@@ -19,7 +21,6 @@ from rikugan.tools.registry import ToolRegistry
 # Boot-critical tool modules — imported eagerly.
 # These are the read-only foundation tools most agents rely on.
 # ---------------------------------------------------------------------------
-
 from . import (
     annotations,
     database,
@@ -85,15 +86,32 @@ class AdvancedToolRegistrationResult:
 # ---------------------------------------------------------------------------
 
 
-def create_default_registry() -> ToolRegistry:
+def create_default_registry(
+    dispatch_wrapper: Callable[..., Any] | None = None,
+    ida_ui: bool | None = None,
+) -> ToolRegistry:
     """Create a registry with built-in IDA tools.
+
+    Parameters
+    ----------
+    dispatch_wrapper:
+        Optional callable that wraps tool handlers for main-thread
+        dispatch.  Defaults to ``idasync`` in UI mode.  Headless
+        controllers pass their ``IdaHeadlessDispatcher.wrap``.
+    ida_ui:
+        Whether IDA has an interactive UI.  Defaults to auto-detect
+        via ``has_ida_ui()``.
 
     Boot-critical tools are registered immediately.  Advanced tools are
     deferred — call ``register_advanced_tools(registry)`` before the
     first agent turn to ensure all tools are available.
     """
-    registry = ToolRegistry(dispatch_wrapper=idasync)
-    registry.set_capabilities({"hexrays": HAS_HEXRAYS})
+    if dispatch_wrapper is None:
+        dispatch_wrapper = idasync
+    if ida_ui is None:
+        ida_ui = has_ida_ui()
+    registry = ToolRegistry(dispatch_wrapper=dispatch_wrapper)
+    registry.set_capabilities({"hexrays": HAS_HEXRAYS, "ida_ui": ida_ui})
     for mod in _BOOT_TOOL_MODULES:
         registry.register_module(mod)
     return registry

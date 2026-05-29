@@ -20,3 +20,8 @@ scorecard.png
 .kilo/plans/
 
 rikugan/.kilo/
+
+.kilo/
+
+# Local tool output
+.reasonix/

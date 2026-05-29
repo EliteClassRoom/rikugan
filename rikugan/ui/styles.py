@@ -67,23 +67,8 @@ QFrame#message_thinking {
     margin: 2px 8px;
 }
 
-QFrame#thinking_block {
-    background: #f0e8e0;
-    border: 1px solid #d2c9c4;
-    border-radius: 6px;
-}
 
-QFrame#message_queued {
-    border: 1px dashed #2473b6;
-    border-radius: 6px;
-    background: #f8efe7;
-}
 
-QFrame#message_question {
-    border: 1px solid #b16803;
-    border-radius: 6px;
-    background: #f0e8e0;
-}
 
 QLabel#msg_role_label {
     color: #218871;
@@ -108,70 +93,21 @@ QLabel#collapse_button {
     font-size: inherit;
 }
 
-QLabel#thinking_header {
-    color: #92898a;
-    font-size: inherit;
-    font-style: italic;
-}
 
-QLabel#thinking_content {
-    color: #72696d;
-    font-size: inherit;
-}
 
-QLabel#star_label {
-    color: #b16803;
-    font-size: inherit;
-}
 
-QLabel#phrase_label {
-    color: #92898a;
-    font-style: italic;
-    font-size: inherit;
-}
 
-QLabel#queued_badge {
-    color: #92898a;
-    font-size: inherit;
-    font-style: italic;
-}
 
-QLabel#question_header {
-    color: #b16803;
-    font-weight: bold;
-    font-size: inherit;
-}
 
-QLabel#question_content {
-    color: #2c232e;
-    font-size: inherit;
-}
 
-QLabel#phase_label {
-    color: #b16803;
-    font-weight: bold;
-    font-size: inherit;
-}
 
-QLabel#reason_label {
-    color: #a59c9c;
-    font-size: inherit;
-}
 
 QLabel#cat_label {
     font-weight: bold;
     font-size: inherit;
 }
 
-QLabel#addr_label {
-    color: #92898a;
-    font-size: inherit;
-}
 
-QLabel#finding_summary {
-    color: #2c232e;
-    font-size: inherit;
-}
 
 QLabel#note_title {
     font-weight: bold;
@@ -184,15 +120,7 @@ QLabel#note_genre {
     font-style: italic;
 }
 
-QLabel#note_path {
-    color: #72696d;
-    font-size: inherit;
-}
 
-QLabel#note_preview {
-    color: #a59c9c;
-    font-size: inherit;
-}
 
 QLabel#subagent_icon {
     font-size: inherit;
@@ -203,21 +131,8 @@ QLabel#subagent_label {
     font-size: inherit;
 }
 
-QLabel#subagent_detail {
-    color: #72696d;
-    font-size: inherit;
-}
 
-QLabel#error_header {
-    color: #ce4770;
-    font-weight: bold;
-    font-size: inherit;
-}
 
-QLabel#error_content {
-    color: #2c232e;
-    font-size: inherit;
-}
 
 QLabel#msg_content {
     color: inherit;
@@ -709,16 +624,7 @@ QFrame#message_thinking {
     margin: 2px 8px;
 }
 
-QLabel#tool_header {
-    color: #569cd6;
-    font-weight: bold;
-    font-size: inherit;
-}
 
-QLabel#tool_content {
-    color: #9cdcfe;
-    font-size: inherit;
-}
 
 QPlainTextEdit#input_area {
     background-color: #2d2d2d;
@@ -2216,225 +2122,187 @@ SETTINGS_BTN_STYLE = {
 
 # Helper functions to get themed styles
 
+def _theme_get(name: str) -> str | dict[str, str]:
+    """Look up a theme-aware dict by name for the active theme."""
+    d = globals()[name]
+    return d["dark" if is_dark_theme() else "light"]
+
+
 
 def get_small_btn_style() -> str:
-    """Get the small button style for the current theme."""
-    return SMALL_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("SMALL_BTN_STYLE")
 
 
 def get_cancel_btn_style() -> str:
-    """Get the cancel button style for the current theme."""
-    return CANCEL_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("CANCEL_BTN_STYLE")
 
 
 def get_mode_bar_style() -> str:
-    """Get the mode bar style for the current theme."""
-    return MODE_BAR_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("MODE_BAR_STYLE")
 
 
 def get_tab_widget_style() -> str:
-    """Get the tab widget style for the current theme."""
-    return TAB_WIDGET_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TAB_WIDGET_STYLE")
 
 
 def get_tools_panel_header_style() -> str:
-    """Get the tools panel header style for the current theme."""
-    return TOOLS_PANEL_HEADER_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOLS_PANEL_HEADER_STYLE")
 
 
 def get_placeholder_style() -> str:
-    """Get the placeholder label style for the current theme."""
-    return PLACEHOLDER_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("PLACEHOLDER_STYLE")
 
 
 def get_tools_panel_btn_style() -> str:
-    """Get the tools panel button style for the current theme."""
-    return TOOLS_PANEL_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOLS_PANEL_BTN_STYLE")
 
 
 def get_tools_panel_style() -> str:
-    """Get the tools panel stylesheet for the current theme."""
-    return TOOLS_PANEL_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOLS_PANEL_STYLE")
 
 
 def get_add_tab_btn_style() -> str:
-    """Get the add tab button style for the current theme."""
-    return ADD_TAB_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("ADD_TAB_BTN_STYLE")
 
 
 def get_splitter_handle_style() -> str:
-    """Get the splitter handle style for the current theme."""
-    return SPLITTER_HANDLE_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("SPLITTER_HANDLE_STYLE")
 
 
 def get_message_dialog_style() -> str:
-    """Get the message dialog style for the current theme."""
-    return MESSAGE_DIALOG_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("MESSAGE_DIALOG_STYLE")
 
 
 def get_error_label_style() -> str:
-    """Get the error label style for the current theme."""
-    return ERROR_LABEL_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("ERROR_LABEL_STYLE")
 
 
 def get_ok_status_style() -> str:
-    """Get the OK status label style for the current theme."""
-    return OK_STATUS_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("OK_STATUS_STYLE")
 
 
 def get_hint_status_style() -> str:
-    """Get the hint status label style for the current theme."""
-    return HINT_STATUS_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("HINT_STATUS_STYLE")
 
 
 def get_err_status_style() -> str:
-    """Get the error status label style for the current theme."""
-    return ERR_STATUS_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("ERR_STATUS_STYLE")
 
 
 def get_bulk_btn_style() -> str:
-    """Get the bulk renamer button style for the current theme."""
-    return BULK_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_BTN_STYLE")
 
 
 def get_bulk_stop_btn_style() -> str:
-    """Get the bulk renamer stop button style for the current theme."""
-    return BULK_STOP_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_STOP_BTN_STYLE")
 
 
 def get_bulk_start_btn_style() -> str:
-    """Get the bulk renamer start button style for the current theme."""
-    return BULK_START_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_START_BTN_STYLE")
 
 
 def get_bulk_table_style() -> str:
-    """Get the bulk renamer table style for the current theme."""
-    return BULK_TABLE_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_TABLE_STYLE")
 
 
 def get_bulk_filter_style() -> str:
-    """Get the bulk renamer filter style for the current theme."""
-    return BULK_FILTER_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_FILTER_STYLE")
 
 
 def get_bulk_combo_style() -> str:
-    """Get the bulk renamer combo style for the current theme."""
-    return BULK_COMBO_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_COMBO_STYLE")
 
 
 def get_bulk_num_input_style() -> str:
-    """Get the bulk renamer number input style for the current theme."""
-    return BULK_NUM_INPUT_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_NUM_INPUT_STYLE")
 
 
 def get_bulk_progress_style() -> str:
-    """Get the bulk renamer progress bar style for the current theme."""
-    return BULK_PROGRESS_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_PROGRESS_STYLE")
 
 
 def get_bulk_radio_style() -> str:
-    """Get the bulk renamer radio button style for the current theme."""
-    return BULK_RADIO_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_RADIO_STYLE")
 
 
 def get_bulk_check_style() -> str:
-    """Get the bulk renamer check box style for the current theme."""
-    return BULK_CHECK_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_CHECK_STYLE")
 
 
 def get_bulk_selection_label_style() -> str:
-    """Get the bulk renamer selection label style for the current theme."""
-    return BULK_SELECTION_LABEL_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_SELECTION_LABEL_STYLE")
 
 
 def get_bulk_mode_label_style() -> str:
-    """Get the bulk renamer mode label style for the current theme."""
-    return BULK_MODE_LABEL_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_MODE_LABEL_STYLE")
 
 
 def get_bulk_status_colors() -> dict[str, str]:
-    """Get the bulk renamer status colors for the current theme."""
-    return BULK_STATUS_COLORS["dark" if is_dark_theme() else "light"]
+    return _theme_get("BULK_STATUS_COLORS")
 
 
 def get_agent_btn_style() -> str:
-    """Get the agent tree button style for the current theme."""
-    return AGENT_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("AGENT_BTN_STYLE")
 
 
 def get_agent_tree_style() -> str:
-    """Get the agent tree style for the current theme."""
-    return AGENT_TREE_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("AGENT_TREE_STYLE")
 
 
 def get_agent_combo_style() -> str:
-    """Get the agent tree combo style for the current theme."""
-    return AGENT_COMBO_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("AGENT_COMBO_STYLE")
 
 
 def get_agent_status_label_style() -> str:
-    """Get the agent tree status label style for the current theme."""
-    return AGENT_STATUS_LABEL_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("AGENT_STATUS_LABEL_STYLE")
 
 
 def get_agent_preview_style() -> str:
-    """Get the agent tree preview style for the current theme."""
-    return AGENT_PREVIEW_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("AGENT_PREVIEW_STYLE")
 
 
 def get_agent_status_colors() -> dict[str, str]:
-    """Get the agent tree status colors for the current theme."""
-    return AGENT_STATUS_COLORS["dark" if is_dark_theme() else "light"]
+    return _theme_get("AGENT_STATUS_COLORS")
 
 
 def get_orchestra_panel_style() -> str:
-    """Get the orchestra panel style for the current theme."""
-    return ORCHESTRA_PANEL_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("ORCHESTRA_PANEL_STYLE")
 
 
 def get_orchestra_stats_style() -> str:
-    """Get the orchestra stats label style for the current theme."""
-    return ORCHESTRA_STATS_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("ORCHESTRA_STATS_STYLE")
 
 
 def get_delegation_dialog_style() -> str:
-    """Get the delegation dialog style for the current theme."""
-    return DELEGATION_DIALOG_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("DELEGATION_DIALOG_STYLE")
 
 
 def get_delegation_approval_widget_style() -> str:
-    """Get the delegation approval widget style for the current theme."""
-    return DELEGATION_APPROVAL_WIDGET_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("DELEGATION_APPROVAL_WIDGET_STYLE")
 
 
 def get_delegation_header_style() -> str:
-    """Get the delegation header style for the current theme."""
-    return DELEGATION_HEADER_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("DELEGATION_HEADER_STYLE")
 
 
 def get_delegation_info_style() -> str:
-    """Get the delegation info label style for the current theme."""
-    return DELEGATION_INFO_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("DELEGATION_INFO_STYLE")
 
 
 def get_delegation_preview_style() -> str:
-    """Get the delegation preview style for the current theme."""
-    return DELEGATION_PREVIEW_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("DELEGATION_PREVIEW_STYLE")
 
 
 def get_profiles_btn_style() -> str:
-    """Get the profiles tab button style for the current theme."""
-    return PROFILES_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("PROFILES_BTN_STYLE")
 
 
 def get_profiles_group_style() -> str:
-    """Get the profiles tab group box style for the current theme."""
-    return PROFILES_GROUP_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("PROFILES_GROUP_STYLE")
 
 
 def get_profiles_header_style() -> str:
-    """Get the profiles tab header style for the current theme."""
-    return PROFILES_HEADER_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("PROFILES_HEADER_STYLE")
 
 
 def get_mutation_indicator_style(reversible: bool) -> str:
@@ -2445,70 +2313,56 @@ def get_mutation_indicator_style(reversible: bool) -> str:
 
 
 def get_mutation_desc_style() -> str:
-    """Get the mutation description style for the current theme."""
-    return MUTATION_DESC_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("MUTATION_DESC_STYLE")
 
 
 def get_mutation_badge_style() -> str:
-    """Get the mutation badge style for the current theme."""
-    return MUTATION_BADGE_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("MUTATION_BADGE_STYLE")
 
 
 def get_mutation_undo_btn_style() -> str:
-    """Get the mutation undo button style for the current theme."""
-    return MUTATION_UNDO_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("MUTATION_UNDO_BTN_STYLE")
 
 
 def get_mutation_title_style() -> str:
-    """Get the mutation log title style for the current theme."""
-    return MUTATION_TITLE_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("MUTATION_TITLE_STYLE")
 
 
 def get_mutation_count_style() -> str:
-    """Get the mutation count label style for the current theme."""
-    return MUTATION_COUNT_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("MUTATION_COUNT_STYLE")
 
 
 def get_tool_approval_frame_style() -> str:
-    """Get the tool approval frame style for the current theme."""
-    return TOOL_APPROVAL_FRAME_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOL_APPROVAL_FRAME_STYLE")
 
 
 def get_tool_approval_header_style() -> str:
-    """Get the tool approval header style for the current theme."""
-    return TOOL_APPROVAL_HEADER_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOL_APPROVAL_HEADER_STYLE")
 
 
 def get_tool_approval_code_editor_style() -> str:
-    """Get the tool approval code editor style for the current theme."""
-    return TOOL_APPROVAL_CODE_EDITOR_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOL_APPROVAL_CODE_EDITOR_STYLE")
 
 
 def get_tool_approval_allow_btn_style() -> str:
-    """Get the tool approval allow button style for the current theme."""
-    return TOOL_APPROVAL_ALLOW_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOL_APPROVAL_ALLOW_BTN_STYLE")
 
 
 def get_tool_approval_always_btn_style() -> str:
-    """Get the tool approval always allow button style for the current theme."""
-    return TOOL_APPROVAL_ALWAYS_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOL_APPROVAL_ALWAYS_BTN_STYLE")
 
 
 def get_tool_approval_deny_btn_style() -> str:
-    """Get the tool approval deny button style for the current theme."""
-    return TOOL_APPROVAL_DENY_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOL_APPROVAL_DENY_BTN_STYLE")
 
 
 def get_tool_approval_disabled_btn_style() -> str:
-    """Get the tool approval disabled button style for the current theme."""
-    return TOOL_APPROVAL_DISABLED_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOL_APPROVAL_DISABLED_BTN_STYLE")
 
 
 def get_settings_btn_style() -> str:
-    """Get the settings dialog button style for the current theme."""
-    return SETTINGS_BTN_STYLE["dark" if is_dark_theme() else "light"]
+    return _theme_get("SETTINGS_BTN_STYLE")
 
 
 def get_tool_colors() -> dict[str, str]:
-    """Get the tool call colors for the current theme."""
-    return TOOL_COLORS["dark" if is_dark_theme() else "light"]
+    return _theme_get("TOOL_COLORS")

@@ -162,6 +162,15 @@ class ToolRegistry:
         with self._lock:
             return list(self._tools.values())
 
+    def list_available_tools(self) -> list[ToolDefinition]:
+        """Return only tools whose capability requirements are satisfied.
+
+        Filters with ``_available()`` so callers (e.g. headless ``/tools``
+        endpoint) see exactly the same subset the provider schema exposes.
+        """
+        with self._lock:
+            return [t for t in self._tools.values() if self._available(t)]
+
     def list_names(self) -> list[str]:
         with self._lock:
             return list(self._tools.keys())

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Rikugan (六眼) is a reverse-engineering agent plugin that integrates an LLM-powered assistant directly inside **IDA Pro**. It has its own agentic loop, in-process tool orchestration, streaming UI, multi-tab chat, session persistence, MCP client support, and host-native tool sets.
+Rikugan (六眼) is a reverse-engineering agent plugin that integrates an LLM-powered assistant directly inside **IDA Pro**. It has its own agentic loop, in-process tool orchestration, streaming UI, multi-tab chat, session persistence, MCP client support, and host-native tool sets. It also supports **headless automation** — running inside ``idat.exe`` (Windows) / ``idat64`` (Linux/macOS) from the CLI without a GUI, including a local HTTP control server for external clients.
 
 ## Directory Structure
 
@@ -31,6 +31,10 @@ rikugan/
 │   └── types.py              # Core data types (Message, ToolCall, StreamChunk, etc.)
 │
 ├── ida/                      # IDA Pro host package
+│   ├── dispatch.py           # IdaUiDispatcher / IdaHeadlessDispatcher (main-thread)
+│   ├── headless_bootstrap.py # -S script entry point for headless mode
+│   ├── headless_controller.py# HeadlessSessionController (no Qt/UI tools)
+│   ├── session_controller.py # Re-export of ui/session_controller.py
 │   ├── tools/
 │   │   └── registry.py       # IDA create_default_registry() — imports rikugan.tools.*
 │   └── ui/
@@ -66,6 +70,16 @@ rikugan/
 │   ├── ollama_provider.py    # Ollama (local)
 │   ├── minimax_provider.py   # MiniMax (subclasses OpenAICompatProvider)
 │   └── openai_compat.py      # OpenAI-compatible endpoints
+│
+├── cli/                       # CLI launchers (run outside IDA)
+│   └── headless.py            # Headless CLI: ask, serve, status, tools, cancel, shutdown
+│
+├── control/                   # Control server & protocol (host-agnostic)
+│   ├── server.py              # ControlServer — local HTTP server for headless mode
+│   └── protocol.py            # HTTP request/response helpers
+│
+├── headless/                  # Headless execution utilities (host-agnostic)
+│   └── runner.py              # run_prompt() — drain agent events and collect results
 │
 ├── mcp/                      # MCP client (host-agnostic)
 │   ├── config.py             # MCP server config loader
@@ -110,6 +124,81 @@ rikugan/
 
 Entry points (root directory):
 - **IDA Pro**: `rikugan_plugin.py` — `PLUGIN_ENTRY()` → `RikuganPlugin` → `RikuganPlugmod`
+- **Headless CLI**: `python -m rikugan.cli.headless ask|serve|status|tools|events|cancel|shutdown`
+- **Headless bootstrap**: `rikugan/ida/headless_bootstrap.py` — runs inside IDA via ``-A -S``
+
+## IDA Headless Mode
+
+Rikugan supports running inside ``idat.exe`` (Windows) / ``idat64`` (Linux/macOS) without the Qt GUI via two modes:
+
+### One-Shot Mode (`ask`)
+
+The agent receives a single prompt, processes it to completion, and outputs structured results (JSON with exit code, final text, errors, and optionally all events). Useful for CI/CD integration, batch analysis, and scripted workflows.
+
+### Server Mode (`serve`)
+
+The agent starts a local HTTP control server (stdlib ``ThreadingHTTPServer``, ``127.0.0.1`` by default) that external clients can use to:
+- Start prompts (`POST /prompt`)
+- Poll events as JSON envelope (`GET /events?index=0&wait=1&run_id=...`)
+- Approve or deny tool executions (`POST /tool-approval`)
+- Answer agent questions (`POST /answer`)
+- Cancel runs (`POST /cancel`)
+- Shut down IDA (`POST /shutdown`)
+
+### Key Differences from UI Mode
+
+| Aspect | UI Mode | Headless Mode |
+|--------|---------|---------------|
+| Qt widgets | ``RikuganPanelCore``, ``ChatView`` | None |
+| Thread dispatch | ``ida_kernwin.execute_sync(MFF_WRITE)`` | ``IdaHeadlessDispatcher`` (queue-based pump) |
+| Cursor/selection context | Available (``get_cursor_position``, ``get_current_function``) | Not available |
+| ``jump_to`` tool | Available | Not available (``ida_kernwin`` absent or batch) |
+| ``ida_kernwin`` | Required | Optional — may be absent |
+| Multi-tab chat | Supported | Single session |
+| Approval flow | UI buttons (Approve/Reject) | HTTP endpoints or automatic policy |
+
+### Event Flow (Headless)
+
+```
+User / External Client
+  → CLI launcher (python -m rikugan.cli.headless ask)
+    → Launches IDA with -A -S<headless_bootstrap>
+      → headless_bootstrap reads bootstrap JSON from env
+      → Creates IdaHeadlessDispatcher + HeadlessSessionController
+      → Waits for auto-analysis (ida_auto.auto_wait())
+      → One-shot: starts agent → drains events → writes result → exits IDA
+      → Server: starts ControlServer → pumps dispatcher → waits for /shutdown
+```
+
+The ``HeadlessSessionController`` reuses ``SessionControllerBase`` and uses the IDA tool registry with ``ida_ui=False``, which excludes cursor/JUMP-dependent tools.
+
+### Threading / Main-Thread Pump
+
+- **UI mode**: tool calls are marshalled to the main thread via ``ida_kernwin.execute_sync``.
+- **Headless mode**: the ``IdaHeadlessDispatcher`` uses a ``queue.Queue``. Worker threads enqueue callables and wait; the bootstrap loop calls ``dispatcher.pump_once()`` on the IDA main thread.
+- **One-shot**: the bootstrap spawns a background thread for ``run_prompt()`` and pumps the queue on the main thread until the prompt finishes.
+- **Server**: ``ControlServer.start()`` spawns a daemon thread for ``serve_forever()``; the bootstrap loop pumps the queue until ``/shutdown`` is received.
+
+### Headless Approval Policy
+
+In headless mode, approval events (``execute_python``, ``PLAN_GENERATED``, ``SAVE_APPROVAL_REQUEST``, ``USER_QUESTION``) are handled differently:
+
+| Mode | Behavior |
+|------|----------|
+| **One-shot** (default) | Any approval-required event produces an error and exit code 7 (``EXIT_APPROVAL_REQUIRED``). The agent is NOT silently auto-approved. |
+| **Server** | The external client is expected to call ``POST /tool-approval`` or ``POST /answer`` to forward the user's decision. If no client responds, the agent waits (the event broker prevents deadlock). |
+
+**Security rule**: ``execute_python`` is **never** auto-approved.
+
+## Headless Secure Coding Rules
+
+- **Never bind the control server to ``0.0.0.0``** — default is ``127.0.0.1``.
+- **Never expose ``/prompt``, ``/cancel``, ``/shutdown``, ``/tool-approval``, ``/approval`` without auth** — all require a bearer token.
+- **Never auto-approve ``execute_python``**.
+- **Auth token should only appear in the ready-file or startup stdout**, not in log output.
+- **MCP servers may still start in headless** — treat MCP output as untrusted (same as UI mode).
+- **The ``/health`` endpoint** does NOT require auth and should NOT leak sensitive info (paths, tokens, config).
+- **Bootstrap parameters are passed via a temp JSON file** (``RIKUGAN_HEADLESS_BOOTSTRAP`` env var), NOT via ``-S`` arguments, to avoid Windows quoting issues.
 
 ## How the Agent Loop Works
 
@@ -1158,3 +1247,20 @@ Cancellation via `threading.Event` checked every loop iteration.
   records `MutationRecord` entries → fully undoable.
 - **Rate limiting**: Respect provider rate limits. `BulkRenamerEngine`
   implements exponential backoff on 429 responses.
+- **Headless dispatch**: ``IdaHeadlessDispatcher`` must not import ``ida_kernwin``.
+- **Headless server**: Binds to ``127.0.0.1``; requires bearer token for all non-health endpoints.
+- **Headless scripts**: ``execute_python`` is NEVER auto-approved in headless mode.
+- **Headless bootstrap**: Parameters passed via ``RIKUGAN_HEADLESS_BOOTSTRAP`` env var JSON file, NOT ``-S`` args.
+
+### Headless PR Verification Checklist
+
+- [ ] ``IdaHeadlessDispatcher`` does not depend on ``ida_kernwin``
+- [ ] Control server binds to ``127.0.0.1`` only (never ``0.0.0.0``)
+- [ ] Auth token required for ``/prompt``, ``/cancel``, ``/shutdown``, ``/tool-approval``, ``/approval``
+- [ ] ``/health`` does not leak paths, tokens, or config
+- [ ] ``execute_python`` is never auto-approved
+- [ ] Bootstrap parameters use env var JSON file, not ``-S`` args
+- [ ] ``HeadlessSessionController`` omits ``ida_ui`` capability
+- [ ] ``IdaHeadlessDispatcher.wrap`` used as tool registry dispatch wrapper
+- [ ] Auto-analysis wait is configurable
+- [ ] Event broker prevents agent deadlock when no /events client is connected

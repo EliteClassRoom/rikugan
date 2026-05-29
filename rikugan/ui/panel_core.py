@@ -875,7 +875,6 @@ class RikuganPanelCore(QWidget):
         if hasattr(self, "_bulk_renamer"):
             self._bulk_renamer.clear_functions()
         # Cancel any in-flight renamer engine
-        # Cancel any in-flight renamer engine
         self._cancel_renamer_engine()
         # Remove all existing tabs
         for cv in self._chat_views.values():
