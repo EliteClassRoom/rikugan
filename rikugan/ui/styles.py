@@ -150,6 +150,12 @@ def build_small_button_stylesheet(source=None, danger: bool = False) -> str:
     """Return a palette-aware small button stylesheet for host UIs."""
     if use_native_host_theme() and not danger:
         return ""
+    if use_native_host_theme() and danger:
+        # In native theme, only override colors — keep native sizing/layout
+        return (
+            "QPushButton { color: #c42b1c; border: 1px solid #c42b1c; }"
+            "QPushButton:hover { background: #3a1a1a; }"
+        )
     colors = get_host_palette_colors(source)
     bg = colors["button"]
     fg = colors["button_text"]
