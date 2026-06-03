@@ -46,11 +46,13 @@ md_to_html(text, source)
 
 | Syntax | Example | markdown-it-py Feature |
 |--------|---------|----------------------|
-| Tables | `\| col1 \| col2 \|` | `table` plugin |
+| Tables | `\| col1 \| col2 \|` | `table` rule (built-in, `.enable('table')`) |
 | Blockquotes | `> quote text` | Core (blockquote token) |
-| Strikethrough | `~~text~~` | `strikethrough` plugin |
-| Task lists | `- [ ] / - [x]` | `tasklists` plugin — rendered as Unicode ☐/☑ symbols |
+| Strikethrough | `~~text~~` | `strikethrough` rule (built-in, `.enable('strikethrough')`) |
+| Task lists | `- [ ] / - [x]` | Custom post-processing on list items — render as Unicode ☐/☑ |
 | Nested lists | `  - sub item` | Core (nested token tree) |
+
+**Note on task lists:** markdown-it-py does not ship a `tasklists` extension (unlike the JS markdown-it). Task list rendering is implemented as a post-processing step in `QtRenderer`: detect `[- ]` / `[x]` patterns in list item content and replace with Unicode checkbox symbols.
 
 ## Visual Styling Improvements
 
@@ -160,10 +162,13 @@ rikugan/ui/
 ## Dependencies
 
 ```
-# pyproject.toml — add to dependencies
+# requirements.txt — add
 markdown-it-py>=3.0
-pygments>=2.17        # likely already present in IDA
 ```
+
+**Pygments is already available** in the IDA venv (`D:\ProgramFiles\IDAdata\.venv`, v2.19.2) and does not need to be added as a new dependency. The `highlight.py` module uses `try/except ImportError` to gracefully degrade when Pygments is absent.
+
+**markdown-it-py** is also present in the IDA venv (v4.0.0). Adding it to `requirements.txt` ensures it's available in dev environments and future installs.
 
 Both are pure-Python packages with no native compilation required. `markdown-it-py` depends only on `mdurl` (small URL parser).
 
@@ -206,8 +211,29 @@ The legacy converter is kept as `_legacy_md_to_html()` during transition. It is 
 
 ## Constraints
 
-- **Python 3.10+**: IDA Pro compatibility
+- **Python 3.12+**: IDA venv at `D:\ProgramFiles\IDAdata\.venv` uses Python 3.12.11. Code must remain compatible with 3.10+ for other deployment scenarios.
 - **No Qt signals in renderer**: Pure functions, stateless rendering
-- **QLabel RichText limits**: No `<table>` styling via CSS classes (must use inline styles)
-- **Streaming compatible**: `md_to_html()` is called repeatedly during streaming; must be fast enough for 120-char batch interval
+- **QLabel RichText limits**: No `<table>` styling via CSS classes (must use inline styles). Qt's RichText engine supports `<table>`, `<tr>`, `<td>`, `<th>` with inline `style=` attributes only.
+- **Streaming compatible**: `md_to_html()` is called repeatedly during streaming (every 120 chars); must be fast enough and handle incomplete Markdown gracefully
 - **Thread safety**: Renderer is stateless per call; no shared mutable state
+
+## Streaming Behavior
+
+`md_to_html()` is called incrementally during LLM streaming — every 120 characters of new text. The input is frequently **incomplete Markdown** (unclosed code blocks, broken tables, half-written bold markers).
+
+**markdown-it-py handles incomplete input well:**
+
+| Incomplete Input | Result | Acceptable? |
+|-----------------|--------|-------------|
+| `` ```python\ndef foo(` `` | Renders as code block with partial content | ✅ Yes |
+| `\| Name \| Type \|\n\|---` | Renders as plain text (table not complete enough) | ✅ Yes |
+| `Some **bold te` | Renders literal `**bold te` | ✅ Yes |
+| `> quote text (no trailing newline)` | Renders as blockquote | ✅ Yes |
+
+**Key design decisions for streaming:**
+1. No special streaming mode — markdown-it-py's default behavior is sufficient
+2. Each call to `md_to_html()` is independent (stateless) — re-parses full accumulated text
+3. The `_RENDER_BATCH = 120` interval in `AssistantMessageWidget` remains unchanged
+4. On `TEXT_DONE`, the final `set_text()` call produces the definitive render
+
+**HTML output format:** Use `<div style="...">` wrappers (not native `<h1>`, `<p>`, etc.) to match current behavior and avoid Qt RichText spacing inconsistencies. Native HTML tags (`<table>`, `<ul>`, `<ol>`, `<pre>`) are used only where Qt's rendering requires them.
