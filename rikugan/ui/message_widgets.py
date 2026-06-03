@@ -393,6 +393,7 @@ class AssistantMessageWidget(QFrame):
         self._content.setMinimumWidth(0)
         self._content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self._content)
+        self._content.hide()  # shown in _render() when visible text arrives
 
     def _render(self) -> None:
         thinking, visible = _split_thinking(self._full_text)
@@ -401,7 +402,11 @@ class AssistantMessageWidget(QFrame):
             self._thinking_block.set_thinking(thinking, in_progress=in_progress)
         else:
             self._thinking_block.hide()
-        self._content.setText(md_to_html(visible, self))
+        if visible:
+            self._content.setText(md_to_html(visible, self))
+            self._content.show()
+        else:
+            self._content.hide()
         self._pending_delta = 0
 
     def append_text(self, delta: str) -> None:

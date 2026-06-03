@@ -7,7 +7,7 @@ import unittest
 from tests.qt_stubs import ensure_pyside6_stubs
 ensure_pyside6_stubs()
 
-from rikugan.ui.message_widgets import _split_thinking  # noqa: E402
+from rikugan.ui.message_widgets import AssistantMessageWidget, _split_thinking  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +74,32 @@ class TestSplitThinking(unittest.TestCase):
         self.assertEqual(thinking, "")  # empty partial not added
         self.assertEqual(visible, "Before")
 
+
+
+# ---------------------------------------------------------------------------
+# AssistantMessageWidget - content visibility
+# ---------------------------------------------------------------------------
+
+
+class TestAssistantMessageContentVisibility(unittest.TestCase):
+    """Verify _content is hidden when no visible text is present."""
+
+    def _make(self) -> AssistantMessageWidget:
+        return AssistantMessageWidget()
+
+    def test_content_hidden_initially(self):
+        w = self._make()
+        self.assertFalse(w._content.isVisible())
+
+    def test_content_hidden_on_plain_empty(self):
+        w = self._make()
+        w.set_text("")
+        self.assertFalse(w._content.isVisible())
+
+    def test_content_shown_with_plain_text(self):
+        w = self._make()
+        w.set_text("Hello world")
+        self.assertTrue(w._content.isVisible())
 
 if __name__ == "__main__":
     unittest.main()

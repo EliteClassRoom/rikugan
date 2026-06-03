@@ -16,8 +16,75 @@ _installed = False
 
 
 def _qt_class(name: str) -> type:
-    """Create a minimal stubbed Qt class that supports subclassing."""
-    return type(name, (), {"__init__": lambda self, *a, **k: None})
+    """Create a minimal stubbed Qt class that supports subclassing.
+
+    Provides common QWidget / QLayout methods as no-ops so that
+    constructor chains (super().__init__ → setObjectName → setStyleSheet)
+    succeed without a real Qt runtime.
+    """
+
+    def _noop(self, *a, **k):
+        return None
+
+    def _visible_getter(self):
+        return getattr(self, "_visible", True)
+
+    def _visible_setter(self, val):
+        self._visible = val
+
+    def _text_getter(self):
+        return getattr(self, "_text", "")
+
+    def _text_setter(self, val):
+        self._text = val
+
+    attrs = {
+        "__init__": _noop,
+        # QWidget common
+        "setObjectName": _noop,
+        "setStyleSheet": _noop,
+        "setMinimumWidth": _noop,
+        "setSizePolicy": _noop,
+        "setFixedSize": _noop,
+        "setWordWrap": _noop,
+        "setTextFormat": _noop,
+        "setTextInteractionFlags": _noop,
+        "setOpenExternalLinks": _noop,
+        "setContentsMargins": _noop,
+        "setSpacing": _noop,
+        "setFixedWidth": _noop,
+        "setFixedHeight": _noop,
+        "setMaximumHeight": _noop,
+        "setAlignment": _noop,
+        "setCheckable": _noop,
+        "setChecked": _noop,
+        "setChecked": _noop,
+        "setText": _noop,
+        "addLayout": _noop,
+        "addWidget": _noop,
+        "addSpacing": _noop,
+        "addStretch": _noop,
+        "addItem": _noop,
+        "setToolButtonStyle": _noop,
+        "setArrowType": _noop,
+        "setPopupMode": _noop,
+        "setMenu": _noop,
+        "setDefault": _noop,
+        "clicked": _Signal(),
+        "setVisible": _noop,
+        "setParent": _noop,
+        "setLayout": _noop,
+        "resize": _noop,
+        "sizeHint": lambda self: None,
+        # Visibility with tracking
+        "hide": lambda self: setattr(self, "_visible", False),
+        "show": lambda self: setattr(self, "_visible", True),
+        "isVisible": _visible_getter,
+        "close": lambda self: True,
+        # Text with tracking
+        "text": _text_getter,
+    }
+    return type(name, (), attrs)
 
 
 class _Signal:
@@ -105,6 +172,32 @@ def ensure_pyside6_stubs() -> None:
 
     _sentinel = type("_Qt", (), {})()
     _sentinel.ItemDataRole = type("_ItemDataRole", (), {"UserRole": 32})()
+    _sentinel.TextFormat = type("_TextFormat", (), {"PlainText": 0, "RichText": 1, "AutoText": 2})()
+    _sentinel.TextInteractionFlag = type(
+        "_TextInteractionFlag", (),
+        {
+            "NoTextInteraction": 0,
+            "TextSelectableByMouse": 1,
+            "TextSelectableByKeyboard": 2,
+            "TextEditable": 4,
+            "TextEditorInteraction": 6,
+            "TextBrowserInteraction": 13,
+            "LinksAccessibleByMouse": 8,
+            "LinksAccessibleByKeyboard": 16,
+        },
+    )()
+    _sentinel.AlignmentFlag = type(
+        "_AlignmentFlag", (),
+        {
+            "AlignLeft": 1, "AlignRight": 2, "AlignHCenter": 4,
+            "AlignTop": 32, "AlignBottom": 64, "AlignVCenter": 128,
+            "AlignCenter": 132, "AlignAbsolute": 16, "AlignLeading": 1,
+            "AlignTrailing": 2,
+        },
+    )()
+    _sentinel.Orientation = type(
+        "_Orientation", (), {"Horizontal": 1, "Vertical": 2}
+    )()
 
     sys.modules.setdefault("PySide6", _stub_mod("PySide6"))
     sys.modules.setdefault(
@@ -118,12 +211,23 @@ def ensure_pyside6_stubs() -> None:
             QTimer=_qt_class("QTimer"),
         ),
     )
+
+    # QSizePolicy needs nested Policy enum
+    _size_policy = _qt_class("QSizePolicy")
+    _size_policy.Policy = type(
+        "_SizePolicyPolicy", (),
+        {
+            "Fixed": 0, "Minimum": 1, "Maximum": 4, "Preferred": 5,
+            "Expanding": 7, "MinimumExpanding": 3, "Ignored": 13,
+        },
+    )()
+
+    _widget_stubs = {n: _qt_class(n) for n in _WIDGET_NAMES}
+    _widget_stubs["QSizePolicy"] = _size_policy
+
     sys.modules.setdefault(
         "PySide6.QtWidgets",
-        _stub_mod(
-            "PySide6.QtWidgets",
-            **{n: _qt_class(n) for n in _WIDGET_NAMES},
-        ),
+        _stub_mod("PySide6.QtWidgets", **_widget_stubs),
     )
     sys.modules.setdefault(
         "PySide6.QtGui",
