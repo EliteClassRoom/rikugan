@@ -44,21 +44,26 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
     mid = colors["mid"]
     border = blend_theme_color(mid, window, 0.35)
     heading_color = blend_theme_color(highlight, text, 0.15)
-    code_bg = blend_theme_color(base, window, 0.15)
+    # Code background: recessed (darker than window) for visual distinction.
+    # Blend window toward base at 50% → slightly darker than window, lighter
+    # than pure window.  Combined with the blue border-left this creates a
+    # clear "code panel" feel without clashing with the chat background.
+    code_bg = blend_theme_color(window, base, 0.50)
+    inline_code_bg = blend_theme_color(window, base, 0.30)
     inline_fg = blend_theme_color(highlight, text, 0.3)
     muted = blend_theme_color(text, window, 0.45)
-    accent_border = blend_theme_color(highlight, window, 0.25)
+    accent_border = blend_theme_color(highlight, window, 0.30)
     is_dark = _hex_luminance(window) < 0.5
 
     return {
         # Inline code
         "inline_code": (
-            f"background-color:{code_bg}; color:{inline_fg}; "
+            f"background-color:{inline_code_bg}; color:{inline_fg}; "
             "padding:1px 4px; border-radius:3px; font-family:monospace; font-size:12px;"
         ),
         # Fenced code block container
         "code_block": (
-            f"background-color:{base}; color:{text}; "
+            f"background-color:{code_bg}; color:{text}; "
             f"border-left:3px solid {accent_border}; border-radius:6px; "
             "padding:8px; font-family:monospace; font-size:12px; "
             "white-space:pre-wrap; word-break:break-all;"
@@ -105,8 +110,12 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
 def _native_theme_styles() -> dict[str, str]:
     """Minimal styles for IDA native theme — let host handle colors."""
     return {
-        "inline_code": "font-family:monospace; font-size:12px;",
-        "code_block": "font-family:monospace; white-space:pre-wrap;",
+        "inline_code": "font-family:monospace; font-size:12px; background-color:#1a1a1a; padding:1px 4px;",
+        "code_block": (
+            "font-family:monospace; white-space:pre-wrap; "
+            "border-left:3px solid #569cd6; padding:8px; "
+            "background-color:#151515;"
+        ),
         "lang_tag": "font-size:10px;",
         "link": "text-decoration:underline;",
         "heading": "font-weight:bold;",
