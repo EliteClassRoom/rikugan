@@ -58,9 +58,9 @@ _SMALL_BTN_STYLE = (
     "QPushButton:hover { background: #3c3c3c; }"
 )
 _CANCEL_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #c42b1c; border: 2px solid #c42b1c; "
-    "border-radius: 6px; padding: 4px; font-size: 11px; font-weight: bold; }"
-    "QPushButton:hover { background: #3a1a1a; border-color: #e8442f; }"
+    "QPushButton { background: #2d2d2d; color: #c42b1c; border: 1px solid #c42b1c; "
+    "border-radius: 6px; padding: 4px; font-size: 11px; }"
+    "QPushButton:hover { background: #3a1a1a; }"
 )
 
 _SANITIZER_TAG_RE = re.compile(
