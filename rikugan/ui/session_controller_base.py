@@ -429,6 +429,22 @@ class SessionControllerBase:
         for session in self._sessions.values():
             session.provider_name = self.config.provider.name
             session.model_name = self.config.provider.model
+        # Reload skills so newly enabled/disabled external skills take effect
+        self._reload_skills()
+
+    def _reload_skills(self) -> None:
+        """Re-discover skills and apply current config for enabled/disabled state.
+
+        Called after settings change so newly enabled external skills appear
+        immediately without requiring an IDA restart.
+        """
+        if not self._runtime_init_done.is_set():
+            return
+        self._skill_registry.discover()
+        self._skill_registry.load_external_skills(
+            self.config.enabled_external_skills,
+            self.config.disabled_skills,
+        )
 
     def reload_mcp(self) -> None:
         """Reload MCP config and restart servers in the background.

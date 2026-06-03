@@ -965,6 +965,8 @@ class RikuganPanelCore(QWidget):
                 self._config.save(password=dlg.encryption_password)
                 self._ctrl.update_settings()
                 self._ctrl.reload_mcp()
+                # Refresh autocomplete with updated skill list
+                self._input_area.set_skill_slugs(self._ctrl.skill_slugs)
                 if self._context_bar is not None:
                     self._context_bar.set_model(self._config.provider.model)
                 log_info(f"Settings updated: {self._config.provider.name}/{self._config.provider.model}")
