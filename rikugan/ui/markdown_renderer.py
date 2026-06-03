@@ -167,7 +167,6 @@ class QtRenderer(RendererHTML):
 
     _styles: dict[str, str] = {}
     _in_list_item: bool = False
-    _list_item_content: str = ""
 
     def render_with_styles(
         self, tokens: Sequence[Token], options: OptionsDict, env: EnvType, styles: dict[str, str]
@@ -208,14 +207,9 @@ class QtRenderer(RendererHTML):
             return ""
         return "</div>"
 
-    # The actual heading content is in the "inline" child of heading_open/close.
-    # We intercept inline rendering inside headings to wrap them.
-    _in_heading_level: int = 0
-
     def render(self, tokens: Sequence[Token], options: OptionsDict, env: EnvType) -> str:
         """Override render to track heading context and list item content."""
         result = ""
-        self._in_heading_level = 0
 
         i = 0
         while i < len(tokens):
@@ -238,8 +232,6 @@ class QtRenderer(RendererHTML):
             elif token.type == "inline":
                 if token.children:
                     inline_html = self.renderInline(token.children, options, env)
-                    if self._in_list_item:
-                        self._list_item_content += inline_html
                     result += inline_html
                 i += 1
                 continue
@@ -340,7 +332,6 @@ class QtRenderer(RendererHTML):
         self, tokens: Sequence[Token], idx: int, options: OptionsDict, env: EnvType
     ) -> str:
         self._in_list_item = True
-        self._list_item_content = ""
         return "<li>"
 
     def list_item_close(
