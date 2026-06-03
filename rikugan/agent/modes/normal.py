@@ -31,6 +31,17 @@ def run_normal_loop(
         log_debug(f"Turn {turn} start")
         yield TurnEvent.turn_start(turn)
 
+        # Rebuild schema each turn so late-registering MCP tools appear.
+        # _schema_cache is invalidated by register(), so this is cheap when
+        # nothing changed (returns cached list) but picks up new tools when
+        # an MCP server finished handshake between turns.
+        if turn > 1:
+            tools_schema = loop._build_tools_schema(
+                active_skill=None,
+                use_exploration_mode=False,
+                use_research_mode=False,
+            )
+
         # If tools were disabled due to consecutive errors, force text-only
         turn_tools = None if loop._tools_disabled_for_turn else tools_schema
         loop._tools_disabled_for_turn = False
