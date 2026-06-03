@@ -12,7 +12,7 @@ _HAS_PYGMENTS = False
 try:
     from pygments import highlight as _pygments_highlight
     from pygments.formatters import HtmlFormatter
-    from pygments.lexers import get_lexer_by_name, TextLexer
+    from pygments.lexers import get_lexer_by_name
     from pygments.util import ClassNotFound
 
     _HAS_PYGMENTS = True

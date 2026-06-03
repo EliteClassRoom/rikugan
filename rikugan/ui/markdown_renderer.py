@@ -8,10 +8,9 @@ self-contained HTML fragments.
 
 from __future__ import annotations
 
-import html as _html
 import re as _re
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 from markdown_it.common.utils import escapeHtml
 from markdown_it.renderer import RendererHTML
@@ -83,7 +82,7 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
             "padding:4px 12px; margin:4px 0;"
         ),
         # Table
-        "table": f"border-collapse:collapse; width:100%;",
+        "table": "border-collapse:collapse; width:100%;",
         "table_cell": (
             f"border:1px solid {border}; padding:4px 8px; "
             "vertical-align:top; word-wrap:break-word;"
@@ -165,8 +164,8 @@ class QtRenderer(RendererHTML):
     call via ``render_with_styles()``.
     """
 
-    _styles: dict[str, str] = {}
-    _in_list_item: bool = False
+    _styles: ClassVar[dict[str, str]] = {}
+    _in_list_item: ClassVar[bool] = False
 
     def render_with_styles(
         self, tokens: Sequence[Token], options: OptionsDict, env: EnvType, styles: dict[str, str]
