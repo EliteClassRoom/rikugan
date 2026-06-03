@@ -159,9 +159,12 @@ def build_small_button_stylesheet(source=None, danger: bool = False) -> str:
     if danger:
         fg = "#f87171"
         border = blend_theme_color("#f44747", colors["window"], 0.2)
+        hover = blend_theme_color("#3a1a1a", colors["light"], 0.12)
+    bw = 2 if danger else 1
+    fw = "font-weight: bold; " if danger else ""
     return (
-        f"QPushButton {{ background-color: {bg}; color: {fg}; border: 1px solid {border}; "
-        "border-radius: 6px; padding: 4px; font-size: 11px; }"
+        f"QPushButton {{ background-color: {bg}; color: {fg}; border: {bw}px solid {border}; "
+        f"border-radius: 6px; padding: 4px; font-size: 11px; {fw}}}"
         f"QPushButton:hover {{ background-color: {hover}; }}"
         f"QPushButton:pressed {{ background-color: {pressed}; }}"
         f"QPushButton:disabled {{ color: {blend_theme_color(fg, colors['window'], 0.45)}; "
