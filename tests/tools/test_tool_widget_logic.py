@@ -10,17 +10,19 @@ import json
 import unittest
 
 from tests.qt_stubs import ensure_pyside6_stubs
+
 ensure_pyside6_stubs()
 
 from rikugan.ui.tool_widgets import (  # noqa: E402
-    _strip_mcp_prefix,
-    _tool_color,
+    _DEFAULT_TOOL_COLOR,
+    _KW_NAMES,
     _format_tool_group_label,
     _format_tool_summary,
+    _PythonHighlighter,
+    _strip_mcp_prefix,
+    _tool_color,
     _truncate_preview,
-    _DEFAULT_TOOL_COLOR,
 )
-
 
 # ---------------------------------------------------------------------------
 # _strip_mcp_prefix
@@ -194,6 +196,71 @@ class TestTruncatePreview(unittest.TestCase):
         text = "a\nb\nc\nd\ne"
         result = _truncate_preview(text, max_lines=2)
         self.assertIn("… +3 lines", result)
+
+
+# ---------------------------------------------------------------------------
+# _PythonHighlighter palettes
+# ---------------------------------------------------------------------------
+
+# Token categories that must be present in every palette. Locking the keys
+# down here means adding/renaming a token forces a test failure rather than
+# silently producing an unhighlighted class.
+_REQUIRED_TOKENS: tuple[str, ...] = (
+    "keyword",
+    "builtin",
+    "number",
+    "string",
+    "comment",
+    "decorator",
+    "self",
+)
+
+
+class TestPythonHighlighterPalettes(unittest.TestCase):
+    def test_dark_palette_has_all_tokens(self):
+        palette = _PythonHighlighter._dark_palette()
+        for token in _REQUIRED_TOKENS:
+            self.assertIn(token, palette, f"dark palette missing {token!r}")
+            self.assertRegex(palette[token], r"^#[0-9a-fA-F]{6}$")
+
+    def test_light_palette_has_all_tokens(self):
+        palette = _PythonHighlighter._light_palette()
+        for token in _REQUIRED_TOKENS:
+            self.assertIn(token, palette, f"light palette missing {token!r}")
+            self.assertRegex(palette[token], r"^#[0-9a-fA-F]{6}$")
+
+    def test_dark_and_light_palettes_differ(self):
+        # Locking this in prevents a future refactor from accidentally
+        # aliasing one palette to the other.
+        dark = _PythonHighlighter._dark_palette()
+        light = _PythonHighlighter._light_palette()
+        self.assertNotEqual(dark, light)
+        # At least the keyword colour must differ — they're the most
+        # semantically loaded token and the easiest to misread.
+        self.assertNotEqual(dark["keyword"], light["keyword"])
+
+    def test_build_rules_uses_palette_colours(self):
+        # The keyword colour from the palette must flow through to the
+        # QTextCharFormat attached to the keyword rule.
+        palette = {"keyword": "#abcdef", "builtin": "#111111", "number": "#222222",
+                   "string": "#333333", "comment": "#444444", "decorator": "#555555",
+                   "self": "#666666"}
+        rules = _PythonHighlighter._build_rules(palette)
+        # First rule is the first keyword in _KW_NAMES ("and"). Its format
+        # must carry the keyword colour from the palette.
+        self.assertGreater(len(rules), 0)
+        kw_pattern, kw_fmt = rules[0]
+        self.assertEqual(kw_pattern.pattern, r"\band\b")
+        # QTextCharFormat stores foreground as a QColor in the stub —
+        # inspect its name. The stub's QColor stores the hex as `_name`.
+        self.assertEqual(kw_fmt.foreground()._name.lower(), "#abcdef")
+
+    def test_kw_and_builtin_lists_cover_python_keywords(self):
+        # Sanity check that the keyword list contains the most common ones.
+        # If a future refactor drops one of these, the test forces the author
+        # to confirm the omission is intentional.
+        for kw in ("def", "class", "if", "else", "return", "import", "for", "while"):
+            self.assertIn(kw, _KW_NAMES)
 
 
 if __name__ == "__main__":

@@ -58,7 +58,6 @@ def _qt_class(name: str) -> type:
         "setAlignment": _noop,
         "setCheckable": _noop,
         "setChecked": _noop,
-        "setChecked": _noop,
         "setText": _text_setter,
         "addLayout": _noop,
         "addWidget": _noop,
@@ -225,13 +224,21 @@ def ensure_pyside6_stubs() -> None:
         },
     )()
 
+    # QFont needs a nested Weight enum (QFont.Weight.Bold) so the syntax
+    # highlighter can mark keywords as bold without hitting AttributeError.
+    _qfont = _qt_class("QFont")
+    _qfont.Weight = type(
+        "_QFontWeight", (),
+        {
+            "Thin": 0, "ExtraLight": 12, "Light": 25, "Normal": 50, "Medium": 63,
+            "DemiBold": 75, "Bold": 75, "ExtraBold": 81, "Black": 87,
+        },
+    )()
+
     _widget_stubs = {n: _qt_class(n) for n in _WIDGET_NAMES}
     _widget_stubs["QSizePolicy"] = _size_policy
-
-    sys.modules.setdefault(
-        "PySide6.QtWidgets",
-        _stub_mod("PySide6.QtWidgets", **_widget_stubs),
-    )
+    # QFont lives under QtGui, but we build it here so we can attach the
+    # nested Weight enum before exposing it to the module below.
     sys.modules.setdefault(
         "PySide6.QtGui",
         _stub_mod(
@@ -239,3 +246,66 @@ def ensure_pyside6_stubs() -> None:
             **{n: _qt_class(n) for n in _GUI_NAMES},
         ),
     )
+    sys.modules["PySide6.QtGui"].QFont = _qfont
+
+    sys.modules.setdefault(
+        "PySide6.QtWidgets",
+        _stub_mod("PySide6.QtWidgets", **_widget_stubs),
+    )
+
+    # Replace QColor and QTextCharFormat with state-tracking stubs so the
+    # syntax highlighter test can verify that palette colours flow through
+    # to the QTextCharFormat foreground property. Plain `_qt_class` stubs
+    # would be no-ops and swallow the colour information.
+    def _qcolor_init(self, name=""):
+        self._name = str(name).lower()
+
+    def _qcolor_name(self):
+        return self._name
+
+    def _qtext_char_format_init(self):
+        self._fg = _qcolor("")
+        self._bold = False
+        self._italic = False
+
+    def _qtext_char_format_set_foreground(self, c):
+        self._fg = c
+
+    def _qtext_char_format_foreground(self):
+        return self._fg
+
+    def _qtext_char_format_set_font_weight(self, w):
+        self._bold = w
+
+    def _qtext_char_format_set_font_italic(self, i):
+        self._italic = bool(i)
+
+    def _qtext_char_format_font_italic(self):
+        return self._italic
+
+    def _qtext_char_format_font_weight(self):
+        return self._bold
+
+    _qcolor = type(
+        "QColor",
+        (),
+        {
+            "__init__": _qcolor_init,
+            "name": _qcolor_name,
+        },
+    )
+    _qtext_char_format = type(
+        "QTextCharFormat",
+        (),
+        {
+            "__init__": _qtext_char_format_init,
+            "setForeground": _qtext_char_format_set_foreground,
+            "foreground": _qtext_char_format_foreground,
+            "setFontWeight": _qtext_char_format_set_font_weight,
+            "fontWeight": _qtext_char_format_font_weight,
+            "setFontItalic": _qtext_char_format_set_font_italic,
+            "fontItalic": _qtext_char_format_font_italic,
+        },
+    )
+    sys.modules["PySide6.QtGui"].QColor = _qcolor
+    sys.modules["PySide6.QtGui"].QTextCharFormat = _qtext_char_format
