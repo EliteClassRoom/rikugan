@@ -53,10 +53,52 @@ class RikuganPlugmod(idaapi.plugmod_t):
         self._panel = None
 
     def run(self, arg: int) -> bool:
+        # Initialize theme system (best-effort). Lazy imports keep
+        # rikugan.* off the module-load path to avoid import-time
+        # crashes during plugin enumeration.
+        try:
+            from rikugan.core.config import RikuganConfig
+            from rikugan.core.host import is_ida
+            from rikugan.ui.theme.manager import ThemeManager
+            from rikugan.ui.theme.tokens import ThemeMode
+
+            config = RikuganConfig.load_or_create()
+            theme_mgr = ThemeManager.instance()
+            try:
+                theme_mgr.set_mode(ThemeMode(config.theme_mode))
+            except Exception:
+                # Fall back to AUTO if config has an unknown mode
+                theme_mgr.set_mode(ThemeMode.AUTO)
+
+            # Start IDA palette watcher (IDA host only — Binja is not
+            # theme-aware via QPalette). The getattr guard prevents a
+            # second start when run() is invoked more than once.
+            if is_ida() and not getattr(self, "_theme_watcher", None):
+                from rikugan.ui.theme.watcher import IDAThemeWatcher
+
+                self._theme_watcher = IDAThemeWatcher(interval_ms=500)
+                self._theme_watcher.start()
+        except Exception as e:
+            # Theme init is best-effort — the plugin must still work
+            # even if the theme system is unavailable (e.g. headless
+            # IDA, missing PySide6, or a Qt stub without QTimer.singleShot).
+            _log(f"Theme init failed: {e}")
+
         self._toggle_panel()
         return True
 
     def term(self) -> None:
+        # Stop theme watcher first so it cannot fire while we tear down
+        # the panel (the watcher polls QApplication.palette() and the
+        # panel close may flush Qt events).
+        watcher = getattr(self, "_theme_watcher", None)
+        if watcher is not None:
+            try:
+                watcher.stop()
+            except Exception as e:
+                _log(f"Theme watcher stop failed: {e}")
+            self._theme_watcher = None
+
         _log("RikuganPlugmod.term() called")
         panel = self._panel
         self._panel = None

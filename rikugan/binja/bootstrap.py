@@ -274,6 +274,24 @@ def register_plugin() -> None:
     if _REGISTERED:
         return
 
+    # Initialize theme system (best-effort). No IDAThemeWatcher for
+    # Binja — the host does not expose theme state via QPalette in a
+    # way we can poll, so the theme is set once at startup and Binja
+    # gets the DARK fallback under AUTO mode.
+    try:
+        from ..core.config import RikuganConfig
+        from ..ui.theme.manager import ThemeManager
+        from ..ui.theme.tokens import ThemeMode
+
+        config = RikuganConfig.load_or_create()
+        theme_mgr = ThemeManager.instance()
+        try:
+            theme_mgr.set_mode(ThemeMode(config.theme_mode))
+        except Exception:
+            theme_mgr.set_mode(ThemeMode.AUTO)
+    except Exception as e:
+        log_debug(f"Rikugan theme init failed: {e}")
+
     _register_sidebar()
 
     plugin_cmd = getattr(bn, "PluginCommand", None)
