@@ -90,19 +90,31 @@ def _qt_class(name: str) -> type:
 
 
 class _Signal:
-    """Minimal Signal stub that acts as a descriptor."""
+    """Minimal Signal stub that acts as a descriptor.
+
+    Tracks connected slots in a list and invokes them on emit, so tests
+    can verify signal-driven behavior (e.g. ``sig.connect(lambda x: ...)``
+    followed by ``sig.emit(value)``). Disconnecting a slot not in the
+    list is a no-op, matching PySide6 semantics.
+    """
 
     def __init__(self, *a):
-        pass
+        self._connections: list = []
 
-    def connect(self, *a):
-        pass
+    def connect(self, slot):
+        self._connections.append(slot)
 
-    def disconnect(self, *a):
-        pass
+    def disconnect(self, *slots):
+        if not slots:
+            self._connections.clear()
+            return
+        for slot in slots:
+            if slot in self._connections:
+                self._connections.remove(slot)
 
     def emit(self, *a):
-        pass
+        for slot in self._connections:
+            slot(*a)
 
     def __get__(self, obj, objtype=None):
         return self
