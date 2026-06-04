@@ -397,5 +397,157 @@ class TestDeferredInit(unittest.TestCase):
         # No way to verify directly but ensure it doesn't crash
 
 
+# ---------------------------------------------------------------------------
+# Appearance tab — Task 14 of the theme system plan.
+#
+# The full SettingsDialog constructor pulls in SettingsService + SkillsTab +
+# MCPTab + ProfilesTab, each of which does I/O (disk reads, network, etc.).
+# To test the Appearance tab in isolation we install lightweight stubs for
+# those modules in setUp, so the dialog builds but doesn't touch the host
+# filesystem. ThemeManager itself is the *real* manager (we want to verify
+# that changing the combo actually updates the singleton), so we reset it
+# before each test to keep state from leaking between cases.
+# ---------------------------------------------------------------------------
+
+
+def _install_tab_stubs() -> None:
+    """Stub out settings_service and the three tab packages.
+
+    Each stub provides the public class names imported inside
+    ``_build_ui`` as no-op constructors that return a MagicMock widget.
+    """
+    _tab_classes = {
+        "settings_service": "SettingsService",
+        "tabs.skills_tab": "SkillsTab",
+        "tabs.mcp_tab": "MCPTab",
+        "tabs.profiles_tab": "ProfilesTab",
+    }
+    _tab_factories = {
+        "SettingsService": _FakeService,
+        "SkillsTab": _make_fake_tab,
+        "MCPTab": _make_fake_tab,
+        "ProfilesTab": _make_fake_tab,
+    }
+    for _name, _class_name in _tab_classes.items():
+        _mod = sys.modules.get(f"rikugan.ui.{_name}")
+        if _mod is None:
+            _mod = types.ModuleType(f"rikugan.ui.{_name}")
+            sys.modules[f"rikugan.ui.{_name}"] = _mod
+        # Provide the class the dialog imports inside _build_ui
+        setattr(_mod, _class_name, _tab_factories[_class_name])
+
+
+def _make_fake_tab(*_a, **_k):
+    """Return a MagicMock that looks like a tab widget."""
+    mock = MagicMock()
+    mock._build_ui = MagicMock()
+    return mock
+
+
+class _FakeService:
+    """Stand-in for SettingsService that doesn't touch the disk."""
+
+    def __init__(self, *_a, **_k):
+        self._skills = MagicMock()
+        self._skills.rikugan = []
+        self._skills.external = {}
+        self._mcp = MagicMock()
+        self._mcp.rikugan = []
+        self._mcp.external = {}
+        self._tools_by_category = {}
+
+    @property
+    def skills(self):
+        return self._skills
+
+    @property
+    def mcp(self):
+        return self._mcp
+
+    @property
+    def tools_by_category(self):
+        return self._tools_by_category
+
+    def save_mcp_servers(self, *_a, **_k):
+        return None
+
+
+def _install_real_config_module() -> None:
+    """Reinstall the real rikugan.core.config + rikugan.core.logging so
+    RikuganConfig() returns a real dataclass with theme_mode."""
+    # Remove stubs so the real modules get imported on next access
+    for _name in (
+        "rikugan.core.config",
+        "rikugan.core.logging",
+    ):
+        sys.modules.pop(_name, None)
+
+
+class TestAppearanceTab(unittest.TestCase):
+    def setUp(self):
+        # Use the real ThemeManager (its tokens() / set_mode() / reset() /
+        # instance() API is part of the contract we're testing). Reset so
+        # state from earlier tests doesn't leak in.
+        from rikugan.ui.theme.manager import ThemeManager
+        from rikugan.ui.theme.tokens import ThemeMode, ThemeTokens  # noqa: F401
+
+        self._ThemeManager = ThemeManager
+        self._ThemeMode = ThemeMode
+        ThemeManager.reset()
+
+        # Make sure rikugan.core.config is the real module so the dialog
+        # gets a real RikuganConfig instance with theme_mode field.
+        _install_real_config_module()
+        _install_tab_stubs()
+
+    def tearDown(self):
+        self._ThemeManager.reset()
+
+    def _build_dialog(self, config=None):
+        from rikugan.core.config import RikuganConfig
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        if config is None:
+            config = RikuganConfig()
+        return SettingsDialog(config=config)
+
+    def test_appearance_tab_in_dialog(self):
+        """SettingsDialog should have an 'Appearance' tab at index 1."""
+        dlg = self._build_dialog()
+        labels = [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())]
+        self.assertIn("Appearance", labels)
+        appearance_idx = labels.index("Appearance")
+        self.assertEqual(appearance_idx, 1)
+
+    def test_theme_combo_has_four_modes(self):
+        dlg = self._build_dialog()
+        self.assertTrue(hasattr(dlg, "_theme_combo"))
+        self.assertEqual(dlg._theme_combo.count(), 4)
+        modes = [dlg._theme_combo.itemData(i) for i in range(4)]
+        self.assertEqual(modes, ["auto", "dark", "light", "ida"])
+
+    def test_theme_combo_reflects_config(self):
+        from rikugan.core.config import RikuganConfig
+
+        config = RikuganConfig()
+        config.theme_mode = "light"
+        dlg = self._build_dialog(config=config)
+        idx = dlg._theme_combo.currentIndex()
+        self.assertEqual(dlg._theme_combo.itemData(idx), "light")
+
+    def test_changing_combo_updates_manager(self):
+        from rikugan.core.config import RikuganConfig
+
+        config = RikuganConfig()
+        dlg = self._build_dialog(config=config)
+        for i in range(dlg._theme_combo.count()):
+            if dlg._theme_combo.itemData(i) == "dark":
+                dlg._theme_combo.setCurrentIndex(i)
+                break
+        # setCurrentIndex emits currentIndexChanged synchronously in the stub
+        self.assertEqual(self._ThemeManager.instance().mode.value, "dark")
+        self.assertEqual(config.theme_mode, "dark")
+
+
 if __name__ == "__main__":
     unittest.main()
