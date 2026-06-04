@@ -39,7 +39,9 @@ for _mod_name in [
         "ProviderRegistry",
         "DARK_THEME",
         "build_theme_stylesheet",
+        "build_small_button_stylesheet",
         "maybe_host_stylesheet",
+        "use_native_host_theme",
     ]:
         setattr(_stub, _attr, MagicMock())
     sys.modules[_mod_name] = _stub
