@@ -213,7 +213,6 @@ class TestIDAThemeWatcher(unittest.TestCase):
         """
         QPalette = self.QPalette
         QColor = self.QColor
-        QApplication = self.QApplication
         IDAThemeWatcher = self.IDAThemeWatcher
         ThemeManager = self.ThemeManager
 
@@ -224,13 +223,15 @@ class TestIDAThemeWatcher(unittest.TestCase):
         # Switch out of AUTO first so the next set_mode(AUTO) is
         # non-idempotent (defeats the same-mode early-return).
         mgr.set_mode(ThemeMode.DARK)
+        # Inject the test seam — overrides the class method on this
+        # instance, so the watcher's _tick reads source.palette()
+        # instead of QApplication.instance().palette().
+        mgr._app_source = lambda: source
 
         captured: list = []
         mgr.themeChanged.connect(lambda t: captured.append(t))
 
-        with patch("rikugan.core.host.is_ida", return_value=True), patch.object(
-            QApplication, "instance", return_value=source
-        ):
+        with patch("rikugan.core.host.is_ida", return_value=True):
             mgr.set_mode(ThemeMode.AUTO)
             watcher = IDAThemeWatcher(interval_ms=50)
             self._watcher = watcher
@@ -253,7 +254,6 @@ class TestIDAThemeWatcher(unittest.TestCase):
 
     def test_no_signal_on_no_change(self) -> None:
         """When the palette is unchanged, no themeChanged is emitted."""
-        QApplication = self.QApplication
         IDAThemeWatcher = self.IDAThemeWatcher
         ThemeManager = self.ThemeManager
 
@@ -262,13 +262,13 @@ class TestIDAThemeWatcher(unittest.TestCase):
 
         mgr = ThemeManager.instance()
         mgr.set_mode(ThemeMode.DARK)
+        # Inject the test seam.
+        mgr._app_source = lambda: source
 
         captured: list = []
         mgr.themeChanged.connect(lambda t: captured.append(t))
 
-        with patch("rikugan.core.host.is_ida", return_value=True), patch.object(
-            QApplication, "instance", return_value=source
-        ):
+        with patch("rikugan.core.host.is_ida", return_value=True):
             mgr.set_mode(ThemeMode.AUTO)
             watcher = IDAThemeWatcher(interval_ms=50)
             self._watcher = watcher

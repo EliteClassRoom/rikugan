@@ -78,19 +78,15 @@ class IDAThemeWatcher(QObject):
         if not self._alive.is_set():
             return
         try:
-            from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
-
-            # Use getattr for graceful stub fallback (matches the
-            # manager's own _apply_now pattern). When QApplication has
-            # no ``instance`` attribute at all, we silently skip the
-            # tick — typical of stubbed Qt environments in tests.
-            instance = getattr(QApplication, "instance", None)
-            if instance is None:
+            # ThemeManager._app_source is the test seam — production
+            # returns QApplication.instance(); tests can override the
+            # method (or assign an instance attribute) to inject a
+            # fake source. The seam keeps PySide6 imports out of the
+            # tick body, so stub environments degrade gracefully.
+            source = ThemeManager.instance()._app_source()
+            if source is None:
                 return
-            app = instance()
-            if app is None:
-                return
-            sig = _palette_signature(app.palette())
+            sig = _palette_signature(source.palette())
             if sig != self._last_sig:
                 self._last_sig = sig
                 ThemeManager.instance().refresh_from_host()

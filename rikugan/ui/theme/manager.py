@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal  # type: ignore[import-not-found]
 from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
@@ -311,6 +312,19 @@ class ThemeManager(QObject):
             self._pending_apply = None
         self._apply_now()
 
+    def _app_source(self) -> Any:
+        """Return the object to read QPalette from. Patchable for tests.
+
+        Production: returns ``QApplication.instance()`` (the QApplication
+        singleton). Tests: can be overridden (e.g.
+        ``mgr._app_source = lambda: fake_source``) to inject a fake
+        QApplication without monkey-patching PySide6.
+
+        The method is deliberately annotated as ``Any`` — the seam is
+        duck-typed: any object with a ``.palette()`` method works.
+        """
+        return QApplication.instance()
+
     def _apply_now(self) -> None:
         """Compute current tokens, apply QSS, emit themeChanged."""
         tokens = self.tokens()
@@ -341,6 +355,12 @@ class ThemeManager(QObject):
         DARK: DARK_TOKENS.
         LIGHT: LIGHT_TOKENS.
         IDA_NATIVE: derive_ida_tokens (Binja → DARK_TOKENS + warning log).
+
+        Palette reads go through ``_app_source()`` so tests can inject a
+        fake QApplication (or an offline stub) without monkey-patching
+        ``QApplication.instance``. Production behavior is unchanged
+        because the seam's default implementation delegates to
+        ``QApplication.instance()``.
         """
         from ...core.host import is_ida
         from ...core.logging import log_warning
@@ -360,7 +380,7 @@ class ThemeManager(QObject):
                     # tests that don't load the real PySide6).
                     from .palette_ida import derive_ida_tokens
 
-                    app = QApplication.instance()
+                    app = self._app_source()
                     if app is not None:
                         return derive_ida_tokens(app)
                 except Exception:
@@ -376,7 +396,7 @@ class ThemeManager(QObject):
             try:
                 from .palette_ida import derive_ida_tokens
 
-                app = QApplication.instance()
+                app = self._app_source()
                 if app is not None:
                     return derive_ida_tokens(app)
             except Exception:
