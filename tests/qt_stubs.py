@@ -89,6 +89,42 @@ def _qt_class(name: str) -> type:
     return type(name, (), attrs)
 
 
+def _make_qtimer_stub() -> type:
+    """Build a QTimer stub that mimics the real QTimer's contract.
+
+    The real QTimer is parented to a QObject, has setSingleShot / start
+    / stop, and exposes a `timeout` signal that fires when the timer
+    expires. The stub fires `timeout` synchronously inside start() —
+    this matches the "0ms debounce" model that lets tests inspect
+    signal payloads without spinning an event loop.
+    """
+
+    class _QTimer:
+        def __init__(self, parent=None):
+            self._parent = parent
+            self._single_shot = False
+            self._active = False
+            self.timeout = _Signal()
+
+        def setSingleShot(self, single_shot: bool) -> None:
+            self._single_shot = bool(single_shot)
+
+        def start(self, ms: int = 0) -> None:
+            self._active = True
+            if self._single_shot:
+                # Fire immediately so stubs behave like a 0ms debounce.
+                self._active = False
+                self.timeout.emit()
+
+        def stop(self) -> None:
+            self._active = False
+
+        def isActive(self) -> bool:
+            return self._active
+
+    return _QTimer
+
+
 class _Signal:
     """Minimal Signal stub that acts as a descriptor.
 
@@ -222,7 +258,7 @@ def ensure_pyside6_stubs() -> None:
             QEvent=_qt_class("QEvent"),
             Qt=_sentinel,
             QObject=_qt_class("QObject"),
-            QTimer=_qt_class("QTimer"),
+            QTimer=_make_qtimer_stub(),
         ),
     )
 

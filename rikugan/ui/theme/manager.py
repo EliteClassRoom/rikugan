@@ -20,12 +20,23 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal  # type: ignore[import-not-found]
 from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
 
 from .palette_dark import DARK_TOKENS
 from .palette_light import LIGHT_TOKENS
 from .tokens import ThemeMode, ThemeTokens, is_dark_tokens  # noqa: F401 — re-exported for tests
+
+# Logging is best-effort: when other tests in the suite replace
+# rikugan.core.logging with a stub module that lacks get_logger, we
+# fall back to a no-op logger so manager.py can still be imported.
+try:
+    from ...core.logging import get_logger
+except ImportError:  # pragma: no cover — defensive guard
+    import logging as _logging
+
+    def get_logger() -> _logging.Logger:  # type: ignore[no-redef]
+        return _logging.getLogger("Rikugan")
 
 # Note: palette_ida is imported lazily inside _compute_tokens to break the
 # manager <-> palette_ida cycle (palette_ida imports _blend_hex / _hex_luminance
@@ -142,6 +153,85 @@ def asdict_fields() -> list[str]:
 
 # === ThemeManager (singleton) ===
 
+_DEBOUNCE_MS = 50
+
+# Minimal QSS template — covers the most-common widget backgrounds. The
+# full template is built incrementally as more widgets subscribe; for
+# now this is enough to verify the rebuild path works.
+_QSS_TEMPLATE = """
+QWidget {{
+    background-color: {window};
+    color: {text};
+}}
+QFrame {{
+    background-color: {base};
+    border: 1px solid {mid};
+}}
+QPushButton {{
+    background-color: {button};
+    color: {button_text};
+    border: 1px solid {mid};
+    padding: 4px;
+    border-radius: 4px;
+}}
+QPushButton:hover {{
+    background-color: {alt_base};
+}}
+QToolButton {{
+    background-color: {button};
+    color: {button_text};
+    border: 1px solid {mid};
+    padding: 2px;
+}}
+QLineEdit, QPlainTextEdit, QTextEdit {{
+    background-color: {base};
+    color: {text};
+    border: 1px solid {mid};
+    selection-background-color: {highlight};
+    selection-color: {highlight_text};
+}}
+QTabWidget::pane {{
+    border: 1px solid {mid};
+    background-color: {window};
+}}
+QTabBar::tab {{
+    background-color: {alt_base};
+    color: {text};
+    padding: 6px 12px;
+    border: 1px solid {mid};
+}}
+QTabBar::tab:selected {{
+    background-color: {window};
+    color: {text};
+}}
+QMenu {{
+    background-color: {window};
+    color: {text};
+    border: 1px solid {mid};
+}}
+QMenu::item:selected {{
+    background-color: {highlight};
+    color: {highlight_text};
+}}
+QScrollBar:vertical {{
+    background-color: {alt_base};
+    width: 12px;
+}}
+QScrollBar::handle:vertical {{
+    background-color: {mid};
+    border-radius: 4px;
+}}
+QScrollBar:horizontal {{
+    background-color: {alt_base};
+    height: 12px;
+}}
+QScrollBar::handle:horizontal {{
+    background-color: {mid};
+    border-radius: 4px;
+}}
+"""
+
+
 class ThemeManager(QObject):
     """Singleton holding the active ThemeMode and resolved ThemeTokens.
 
@@ -160,6 +250,7 @@ class ThemeManager(QObject):
         super().__init__()
         self._mode: ThemeMode = ThemeMode.AUTO
         self._tokens_cache: ThemeTokens | None = None
+        self._pending_apply: QTimer | None = None
         # Compute initial tokens immediately so the first themeChanged
         # listener can render correctly (Task 14 tests this).
         self._tokens_cache = self._compute_tokens()
@@ -180,24 +271,52 @@ class ThemeManager(QObject):
         return self._mode
 
     def set_mode(self, mode: ThemeMode) -> None:
-        """Set the theme mode. No-op if same value. Emits themeChanged on change.
+        """Set the theme mode. No-op if same value. Debounces rapid switches.
 
-        themeChanged now emits the new ThemeTokens (not the mode). QSS rebuild
-        is wired in Task 7; this task only handles the data path.
+        Rapid calls within 50ms coalesce into a single QSS rebuild + signal emit.
         """
         if mode == self._mode:
             return
         self._mode = mode
-        self._tokens_cache = None  # force recompute
-        tokens = self._compute_tokens()
-        self._tokens_cache = tokens
-        self.themeChanged.emit(tokens)
+        self._tokens_cache = None  # force recompute on apply
+        # Debounce: if a previous apply is pending, cancel it.
+        if self._pending_apply is not None:
+            self._pending_apply.stop()
+        # Parent the timer to self so it is destroyed with the manager
+        # and its queued timeout events cannot fire on a freed object.
+        self._pending_apply = QTimer(self)
+        self._pending_apply.setSingleShot(True)
+        self._pending_apply.timeout.connect(self._apply_now)
+        self._pending_apply.start(_DEBOUNCE_MS)
 
     def tokens(self) -> ThemeTokens:
         """Return ThemeTokens for the current mode (cached)."""
         if self._tokens_cache is None:
             self._tokens_cache = self._compute_tokens()
         return self._tokens_cache
+
+    def _apply_now(self) -> None:
+        """Compute current tokens, apply QSS, emit themeChanged."""
+        tokens = self.tokens()
+        # Apply QSS to the QApplication if one exists. Use getattr so
+        # the call degrades gracefully when the QApplication stub used
+        # in tests does not expose a static ``instance`` method.
+        try:
+            instance_fn = getattr(QApplication, "instance", None)
+            app = instance_fn() if instance_fn is not None else None
+            if app is not None:
+                qss = self._build_stylesheet(tokens)
+                app.setStyleSheet(qss)
+        except Exception as e:
+            get_logger().error(f"Failed to apply theme QSS: {e}", exc_info=True)
+        self.themeChanged.emit(tokens)
+        self._pending_apply = None
+
+    def _build_stylesheet(self, tokens: ThemeTokens) -> str:
+        """Build the QSS string from tokens. (Full template is in this file.)"""
+        from dataclasses import asdict
+
+        return format_template(_QSS_TEMPLATE, asdict(tokens))
 
     def _compute_tokens(self) -> ThemeTokens:
         """Compute tokens for the current mode.

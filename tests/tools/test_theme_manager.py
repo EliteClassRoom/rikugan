@@ -204,6 +204,12 @@ class TestThemeManagerModeResolution(unittest.TestCase):
         importlib.reload(palette_ida)
         importlib.reload(manager)
 
+        # Collapse the 50ms debounce to 0ms for these tests so the
+        # synchronous signal payload can be inspected without spinning
+        # an event loop. The debounce itself is exercised by
+        # TestThemeManagerDebounce below.
+        manager._DEBOUNCE_MS = 0
+
         cls.ThemeManager = manager.ThemeManager
         cls.DARK_TOKENS = palette_ida.DARK_TOKENS if hasattr(palette_ida, "DARK_TOKENS") else None
 
@@ -213,6 +219,11 @@ class TestThemeManagerModeResolution(unittest.TestCase):
         cls.QApplication = QApplication
         cls.QColor = QColor
         cls.QPalette = QPalette
+
+        # QApplication is required so that processEvents() can dispatch
+        # 0ms QTimer events. The singleton is reused if it already
+        # exists (e.g. when TestThemeManagerDebounce ran first).
+        cls._app = QApplication.instance() or QApplication([])
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -236,10 +247,14 @@ class TestThemeManagerModeResolution(unittest.TestCase):
 
     def test_set_mode_emits_tokens_not_mode(self):
         """After Task 6, set_mode should emit ThemeTokens, not ThemeMode."""
+        from PySide6.QtCore import QCoreApplication
+
         mgr = self.ThemeManager.instance()
         captured: list = []
         mgr.themeChanged.connect(lambda payload: captured.append(payload))
         mgr.set_mode(ThemeMode.DARK)
+        # Pump the 0ms debounce timer (set in setUpClass).
+        QCoreApplication.processEvents()
         # Token emission — payload is a ThemeTokens instance
         self.assertEqual(len(captured), 1)
         self.assertIsInstance(captured[0], ThemeTokens)
@@ -330,12 +345,136 @@ class TestThemeManagerModeResolution(unittest.TestCase):
 
     def test_set_mode_idempotent(self):
         """Setting the same mode twice should emit only one signal."""
+        from PySide6.QtCore import QCoreApplication
+
         mgr = self.ThemeManager.instance()
         captured: list = []
         mgr.themeChanged.connect(lambda payload: captured.append(payload))
         mgr.set_mode(ThemeMode.DARK)
         mgr.set_mode(ThemeMode.DARK)  # no-op
+        # Pump the 0ms debounce timer (set in setUpClass).
+        QCoreApplication.processEvents()
         self.assertEqual(len(captured), 1)
+
+
+class TestThemeManagerDebounce(unittest.TestCase):
+    """Tests for the 50ms debounce + QSS rebuild on set_mode (Task 7).
+
+    Mirrors TestThemeManagerModeResolution: drops qt_stubs in setUpClass
+    so real PySide6 (QTimer, QCoreApplication, QApplication) drives the
+    test. The setUpClass also instantiates a QApplication — Qt timer
+    events only fire when an event loop is alive, and we rely on
+    processEvents() to drive them after a brief wait (sleep + process
+    is the simplest pattern that works without a QEventLoop.exec()).
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib
+        import sys
+
+        # Save the stub snapshot so tearDownClass can restore it for
+        # downstream tests that depend on the stubs.
+        cls._saved_pyside6_modules = {
+            name: mod
+            for name, mod in sys.modules.items()
+            if name.startswith("PySide6")
+        }
+        for name in list(sys.modules):
+            if name.startswith("PySide6"):
+                del sys.modules[name]
+
+        # Reload the theme module so it binds to real PySide6.
+        from rikugan.ui.theme import manager
+
+        importlib.reload(manager)
+        cls.ThemeManager = manager.ThemeManager
+
+        # QApplication is required for QTimer events to fire under
+        # processEvents(). It is a singleton; the existing instance is
+        # reused if one was already created (e.g. by a prior test class).
+        from PySide6.QtWidgets import QApplication
+
+        cls.QApplication = QApplication
+        cls._app = QApplication.instance() or QApplication([])
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        import sys
+
+        for name in list(sys.modules):
+            if name.startswith("PySide6"):
+                del sys.modules[name]
+        for name, mod in cls._saved_pyside6_modules.items():
+            sys.modules[name] = mod
+
+    def setUp(self) -> None:
+        self.ThemeManager.reset()
+
+    def tearDown(self) -> None:
+        self.ThemeManager.reset()
+
+    @staticmethod
+    def _wait_for_debounce(ms: int = 80) -> None:
+        """Wait for a 50ms debounce timer to expire, then pump the event
+        loop so the queued timeout event is dispatched.
+
+        processEvents() alone does not wait for unexpired timer events;
+        a small sleep + processEvents() is the simplest reliable flush.
+        """
+        import time
+
+        from PySide6.QtCore import QCoreApplication
+
+        time.sleep(ms / 1000.0)
+        QCoreApplication.processEvents()
+
+    def test_rapid_set_mode_emits_only_once(self):
+        """3 rapid set_mode calls within 50ms should emit 1 signal total."""
+        from PySide6.QtCore import QCoreApplication
+
+        mgr = self.ThemeManager.instance()
+        captured: list = []
+        mgr.themeChanged.connect(lambda t: captured.append(t))
+
+        mgr.set_mode(ThemeMode.DARK)
+        mgr.set_mode(ThemeMode.LIGHT)
+        mgr.set_mode(ThemeMode.DARK)
+
+        # Flush the pending debounce apply.
+        self._wait_for_debounce()
+        # Re-entrant processEvents in case the timer fires during the
+        # first dispatch.
+        QCoreApplication.processEvents()
+
+        # Only the LAST mode should result in a single emission
+        self.assertEqual(len(captured), 1)
+        # tokens should be DARK (last mode set)
+        self.assertEqual(captured[0].window.lower(), "#1e1e1e")
+
+    def test_qss_applied_to_application(self):
+        """After debounce flush, qApp.setStyleSheet should be called with the new tokens."""
+        from PySide6.QtCore import QCoreApplication  # noqa: I001
+        from unittest.mock import MagicMock, patch
+
+        mgr = self.ThemeManager.instance()
+        # Warm-up: set to DARK first so the next set_mode is non-idempotent
+        mgr.set_mode(ThemeMode.DARK)
+        self._wait_for_debounce()  # flush the warm-up's pending apply
+        QCoreApplication.processEvents()
+
+        captured_qss: list = []
+        mock_app = MagicMock()
+        mock_app.setStyleSheet.side_effect = lambda qss: captured_qss.append(qss)
+
+        with patch.object(self.QApplication, "instance", return_value=mock_app):
+            mgr.set_mode(ThemeMode.LIGHT)
+            self._wait_for_debounce()
+            QCoreApplication.processEvents()
+            # QSS should be applied
+            self.assertEqual(len(captured_qss), 1)
+            # The QSS should reference LIGHT's window color (white)
+            self.assertIn("#ffffff", captured_qss[0].lower())
 
 
 if __name__ == "__main__":
