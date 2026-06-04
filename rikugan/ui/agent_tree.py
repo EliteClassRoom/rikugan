@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .qt_compat import (
     QAbstractItemView,
@@ -21,60 +22,102 @@ from .qt_compat import (
 )
 from .styles import maybe_host_stylesheet
 
-_STATUS_COLORS: dict[str, str] = {
-    "PENDING": "#808080",
-    "RUNNING": "#dcdcaa",
-    "COMPLETED": "#4ec9b0",
-    "FAILED": "#f44747",
-    "CANCELLED": "#808080",
+if TYPE_CHECKING:
+    from .theme.manager import ThemeTokens
+
+# Status colors are resolved from theme tokens at runtime; the table maps a
+# status string to the token attribute name whose color should be used.
+_STATUS_TOKEN_KEYS: dict[str, str] = {
+    "PENDING": "light",
+    "RUNNING": "warning",
+    "COMPLETED": "success",
+    "FAILED": "error",
+    "CANCELLED": "light",
 }
 
-_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 4px 10px; font-size: 11px; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-    "QPushButton:disabled { color: #555; }"
-)
-_BTN_STYLE = maybe_host_stylesheet(_BTN_STYLE)
 
-_TREE_STYLE = """
-    QTreeWidget {
-        background: #1e1e1e;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
+def _muted(t) -> str:
+    from .theme.manager import _blend_hex
+    return _blend_hex(t.text, t.mid, 0.5)
+
+
+def _hover(t) -> str:
+    from .theme.manager import _blend_hex
+    return _blend_hex(t.alt_base, t.mid, 0.5)
+
+
+def _btn_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 4px 10px; font-size: 11px; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+        f"QPushButton:disabled {{ color: {_muted(t)}; }}"
+    )
+
+
+def _tree_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"""
+    QTreeWidget {{
+        background: {t.base};
+        color: {t.text};
+        border: 1px solid {t.mid};
         font-size: 11px;
-        alternate-background-color: #252525;
-    }
-    QTreeWidget::item {
+        alternate-background-color: {t.alt_base};
+    }}
+    QTreeWidget::item {{
         padding: 2px 4px;
-    }
-    QTreeWidget::item:selected {
-        background: #264f78;
-        color: #ffffff;
-    }
-    QTreeWidget::item:hover {
-        background: #2a2d2e;
-    }
-    QHeaderView::section {
-        background: #2d2d2d;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
+    }}
+    QTreeWidget::item:selected {{
+        background: {t.highlight};
+        color: {t.highlight_text};
+    }}
+    QTreeWidget::item:hover {{
+        background: {_hover(t)};
+    }}
+    QHeaderView::section {{
+        background: {t.alt_base};
+        color: {t.text};
+        border: 1px solid {t.mid};
         padding: 3px 6px;
         font-size: 10px;
-    }
+    }}
 """
-_TREE_STYLE = maybe_host_stylesheet(_TREE_STYLE)
+    )
 
-_COMBO_STYLE = maybe_host_stylesheet(
-    "QComboBox { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 3px 6px; font-size: 11px; }"
-)
 
-_STATUS_LABEL_STYLE = maybe_host_stylesheet("color: #808080; font-size: 11px;")
+def _combo_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"QComboBox {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 3px 6px; font-size: 11px; }}"
+    )
 
-_PREVIEW_STYLE = maybe_host_stylesheet(
-    "QTextEdit { background: #252525; color: #d4d4d4; border: 1px solid #3c3c3c; font-size: 11px; padding: 4px; }"
-)
+
+def _status_label_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return f"color: {_muted(t)}; font-size: 11px;"
+
+
+def _preview_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"QTextEdit {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"font-size: 11px; padding: 4px; }}"
+    )
+
+
+def _status_color(status: str, t: "ThemeTokens") -> str:
+    """Resolve a status string to a color from the current tokens."""
+    key = _STATUS_TOKEN_KEYS.get(status, "text")
+    return getattr(t, key)
 
 
 @dataclass
@@ -100,6 +143,9 @@ class AgentTreeWidget(QWidget):
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("agent_tree_widget")
+        # Wire theme changes so styles refresh when the user switches theme.
+        from .theme.manager import ThemeManager
+        ThemeManager.instance().themeChanged.connect(self._on_theme_changed)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(4, 4, 4, 4)
@@ -110,19 +156,16 @@ class AgentTreeWidget(QWidget):
         toolbar.setSpacing(4)
 
         self._kill_btn = QPushButton("Kill Selected")
-        self._kill_btn.setStyleSheet(_BTN_STYLE)
         self._kill_btn.clicked.connect(self._on_kill_selected)
         toolbar.addWidget(self._kill_btn)
 
         self._clean_btn = QPushButton("Clean")
-        self._clean_btn.setStyleSheet(_BTN_STYLE)
         self._clean_btn.setToolTip("Remove selected finished agents (or all finished if none selected)")
         self._clean_btn.clicked.connect(self._on_clean)
         toolbar.addWidget(self._clean_btn)
 
         self._filter_combo = QComboBox()
         self._filter_combo.setFixedWidth(130)
-        self._filter_combo.setStyleSheet(_COMBO_STYLE)
         self._filter_combo.addItems(["All Agents", "General", "Bulk Rename"])
         self._filter_combo.currentTextChanged.connect(self._apply_filter)
         toolbar.addWidget(self._filter_combo)
@@ -130,7 +173,6 @@ class AgentTreeWidget(QWidget):
         toolbar.addStretch()
 
         self._status_label = QLabel("0 running / 0 completed")
-        self._status_label.setStyleSheet(_STATUS_LABEL_STYLE)
         toolbar.addWidget(self._status_label)
 
         main_layout.addLayout(toolbar)
@@ -138,7 +180,6 @@ class AgentTreeWidget(QWidget):
         # Tree widget
         self._tree = QTreeWidget()
         self._tree.setObjectName("agent_tree")
-        self._tree.setStyleSheet(_TREE_STYLE)
         self._tree.setHeaderLabels(["Name", "Type", "Status", "Turns", "Time"])
         self._tree.setColumnWidth(0, 150)
         self._tree.setColumnWidth(1, 100)
@@ -158,7 +199,6 @@ class AgentTreeWidget(QWidget):
         self._preview.setObjectName("agent_preview")
         self._preview.setReadOnly(True)
         self._preview.setFixedHeight(80)
-        self._preview.setStyleSheet(_PREVIEW_STYLE)
         self._preview.setPlaceholderText("Select an agent to preview its output...")
         main_layout.addWidget(self._preview)
 
@@ -166,6 +206,29 @@ class AgentTreeWidget(QWidget):
         self._agents: dict[str, AgentInfo] = {}
         # Map agent_id -> QTreeWidgetItem
         self._items: dict[str, QTreeWidgetItem] = {}
+
+        # Apply themed styles now that all child widgets exist.
+        self._apply_styles()
+
+    # ----- Theme wiring -------------------------------------------------
+    def _on_theme_changed(self, _tokens) -> None:
+        """Refresh themed styles when the user changes the theme."""
+        self._apply_styles()
+        # Re-render agent items so their status colors track the new theme.
+        for info in list(self._agents.values()):
+            self.update_agent(info)
+
+    def _apply_styles(self) -> None:
+        """Apply all themed stylesheet templates to child widgets."""
+        from .theme.manager import ThemeManager
+
+        t = ThemeManager.instance().tokens()
+        self._kill_btn.setStyleSheet(_btn_style(t))
+        self._clean_btn.setStyleSheet(_btn_style(t))
+        self._filter_combo.setStyleSheet(_combo_style(t))
+        self._status_label.setStyleSheet(_status_label_style(t))
+        self._tree.setStyleSheet(_tree_style(t))
+        self._preview.setStyleSheet(_preview_style(t))
 
     def _on_kill_selected(self) -> None:
         """Cancel the currently selected agent(s)."""
@@ -227,10 +290,11 @@ class AgentTreeWidget(QWidget):
         item.setText(3, str(info.turns))
         item.setText(4, self._format_elapsed(info.elapsed_seconds))
 
-        # Status color
-        color = _STATUS_COLORS.get(info.status, "#d4d4d4")
+        # Status color (resolved from current theme tokens).
         from .qt_compat import QColor
+        from .theme.manager import ThemeManager
 
+        color = _status_color(info.status, ThemeManager.instance().tokens())
         item.setForeground(2, QColor(color))
 
         # Apply current category filter to this item

@@ -15,41 +15,63 @@ from .qt_compat import (
 )
 from .styles import maybe_host_stylesheet
 
-_HEADER_STYLE = "color: #d4d4d4; font-weight: bold; font-size: 12px;"
 
-_PANEL_STYLE = """
-    QWidget#tools_panel {
-        background: #1e1e1e;
-    }
-    QTabWidget::pane {
+def _muted():
+    from .theme.manager import ThemeManager, _blend_hex
+    t = ThemeManager.instance().tokens()
+    return _blend_hex(t.text, t.mid, 0.5)
+
+
+def _hover_bg():
+    from .theme.manager import ThemeManager, _blend_hex
+    t = ThemeManager.instance().tokens()
+    return _blend_hex(t.alt_base, t.mid, 0.5)
+
+
+def _header_style() -> str:
+    from .theme.manager import ThemeManager
+    t = ThemeManager.instance().tokens()
+    return f"color: {t.text}; font-weight: bold; font-size: 12px;"
+
+
+def _panel_style() -> str:
+    from .theme.manager import ThemeManager
+    t = ThemeManager.instance().tokens()
+    return (
+        f"""
+    QWidget#tools_panel {{
+        background: {t.base};
+    }}
+    QTabWidget::pane {{
         border: none;
-        background: #1e1e1e;
-    }
-    QTabBar::tab {
-        background: #2d2d2d;
-        color: #808080;
-        border: 1px solid #3c3c3c;
+        background: {t.base};
+    }}
+    QTabBar::tab {{
+        background: {t.alt_base};
+        color: {_muted()};
+        border: 1px solid {t.mid};
         border-bottom: none;
         padding: 5px 14px;
         font-size: 11px;
         min-width: 60px;
-    }
-    QTabBar::tab:selected {
-        background: #1e1e1e;
-        color: #d4d4d4;
-        border-bottom: 2px solid #4ec9b0;
-    }
-    QTabBar::tab:hover:!selected {
-        background: #353535;
-        color: #d4d4d4;
-    }
+    }}
+    QTabBar::tab:selected {{
+        background: {t.base};
+        color: {t.text};
+        border-bottom: 2px solid {t.success};
+    }}
+    QTabBar::tab:hover:!selected {{
+        background: {_hover_bg()};
+        color: {t.text};
+    }}
 """
+    )
 
-_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 2px 8px; font-size: 11px; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-)
+
+def _placeholder_style() -> str:
+    from .theme.manager import ThemeManager
+    t = ThemeManager.instance().tokens()
+    return f"color: {_muted()}; padding: 20px;"
 
 
 class ToolsPanel(QWidget):
@@ -59,7 +81,8 @@ class ToolsPanel(QWidget):
         super().__init__(parent)
         self.setObjectName("tools_panel")
         self.setWindowTitle("Rikugan Tools")
-        self.setStyleSheet(maybe_host_stylesheet(_PANEL_STYLE))
+        from .theme.manager import ThemeManager
+        ThemeManager.instance().themeChanged.connect(self._apply_styles)
         # No minimum size — this widget is embedded in IDA dockable forms
         # and Binary Ninja sidebars, which can be any size.
 
@@ -73,9 +96,8 @@ class ToolsPanel(QWidget):
         header_layout = QHBoxLayout(self._header)
         header_layout.setContentsMargins(12, 8, 12, 8)
 
-        title = QLabel("Tools")
-        title.setStyleSheet(maybe_host_stylesheet(_HEADER_STYLE))
-        header_layout.addWidget(title)
+        self._title = QLabel("Tools")
+        header_layout.addWidget(self._title)
         header_layout.addStretch()
 
         main_layout.addWidget(self._header)
@@ -86,16 +108,23 @@ class ToolsPanel(QWidget):
 
         # Placeholder tabs
         self._renamer_placeholder = QLabel("Not loaded")
-        self._renamer_placeholder.setStyleSheet(maybe_host_stylesheet("color: #808080; padding: 20px;"))
         self._renamer_placeholder.setWordWrap(True)
         self._tabs.addTab(self._renamer_placeholder, "Renamer")
 
         self._agents_placeholder = QLabel("Not loaded")
-        self._agents_placeholder.setStyleSheet(maybe_host_stylesheet("color: #808080; padding: 20px;"))
         self._agents_placeholder.setWordWrap(True)
         self._tabs.addTab(self._agents_placeholder, "Agents")
 
         main_layout.addWidget(self._tabs)
+
+        # Apply themed styles now that all children exist.
+        self._apply_styles()
+
+    def _apply_styles(self) -> None:
+        self.setStyleSheet(maybe_host_stylesheet(_panel_style()))
+        self._title.setStyleSheet(maybe_host_stylesheet(_header_style()))
+        self._renamer_placeholder.setStyleSheet(maybe_host_stylesheet(_placeholder_style()))
+        self._agents_placeholder.setStyleSheet(maybe_host_stylesheet(_placeholder_style()))
 
     def _replace_tab(self, index: int, widget: QWidget, label: str) -> None:
         """Replace the widget at the given tab index."""

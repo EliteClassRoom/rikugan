@@ -32,22 +32,57 @@ from ..qt_compat import (
     QWidget,
 )
 from ..styles import maybe_host_stylesheet
+from ..theme.manager import ThemeManager
 
 if TYPE_CHECKING:
     from ..settings_service import SettingsService
 
-_BTN_STYLE = maybe_host_stylesheet(
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 4px 12px; font-size: 11px; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-)
 
-_GROUP_STYLE = maybe_host_stylesheet(
-    "QGroupBox { font-weight: bold; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; margin-top: 14px; padding-top: 4px; }"
-    "QGroupBox::title { subcontrol-origin: margin; left: 10px; "
-    "padding: 0 6px; }"
-)
+def _muted():
+    from ..theme.manager import _blend_hex
+    t = ThemeManager.instance().tokens()
+    return _blend_hex(t.text, t.mid, 0.5)
+
+
+def _btn_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 4px 12px; font-size: 11px; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+    )
+
+
+def _group_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QGroupBox {{ font-weight: bold; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; margin-top: 14px; padding-top: 4px; }}"
+        f"QGroupBox::title {{ subcontrol-origin: margin; left: 10px; "
+        f"padding: 0 6px; }}"
+    )
+
+
+def _err_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return f"color: {t.error}; font-size: 11px;"
+
+
+def _muted_small_style() -> str:
+    return f"font-size: 10px; color: {_muted()}; margin-top: 6px;"
+
+
+# Back-compat: existing callers reference the bare constants. They are
+# populated lazily once the theme manager is alive and re-resolved on
+# theme change so the QSS strings track the active tokens.
+_BTN_STYLE: str = ""
+_GROUP_STYLE: str = ""
+
+
+def _resolve_module_styles() -> None:
+    global _BTN_STYLE, _GROUP_STYLE
+    _BTN_STYLE = maybe_host_stylesheet(_btn_style())
+    _GROUP_STYLE = maybe_host_stylesheet(_group_style())
 
 
 class ProfilesTab(QWidget):
@@ -59,8 +94,31 @@ class ProfilesTab(QWidget):
         self._service = service
         self._custom_profiles: dict[str, dict] = copy.deepcopy(config.custom_profiles)
         self._displayed_profile: str = ""  # tracks which profile the UI fields show
+        # Populate the module-level QSS strings from the active theme tokens.
+        _resolve_module_styles()
         self._build_ui()
+        # Track theme changes so buttons/groups repaint automatically.
+        ThemeManager.instance().themeChanged.connect(self._on_theme_changed)
         self._load_profile(self._profile_combo.currentText())
+
+    def _on_theme_changed(self, _tokens) -> None:
+        """Re-resolve the module-level QSS strings and re-apply to all styled widgets."""
+        _resolve_module_styles()
+        for btn in (
+            getattr(self, "_new_btn", None),
+            getattr(self, "_clone_btn", None),
+            getattr(self, "_delete_btn", None),
+            getattr(self, "_ioc_select_all_btn", None),
+            getattr(self, "_ioc_deselect_btn", None),
+            getattr(self, "_add_rule_btn", None),
+            getattr(self, "_remove_rule_btn", None),
+        ):
+            if btn is not None:
+                btn.setStyleSheet(_BTN_STYLE)
+        # Re-apply the group-box QSS to every QGroupBox in the tree.
+        from ..qt_compat import QGroupBox
+        for group in self.findChildren(QGroupBox):
+            group.setStyleSheet(_GROUP_STYLE)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -269,7 +327,7 @@ class ProfilesTab(QWidget):
             for cat_name, tool_names in categories:
                 col = cols[col_idx % n_cols]
                 header = QLabel(f"<b>{cat_name}</b>")
-                header.setStyleSheet(maybe_host_stylesheet("font-size: 10px; color: #888; margin-top: 6px;"))
+                header.setStyleSheet(maybe_host_stylesheet(_muted_small_style()))
                 col.addWidget(header)
                 for tname in tool_names:
                     cb = QCheckBox(tname)
@@ -560,7 +618,7 @@ class ProfilesTab(QWidget):
         lay.addLayout(form)
 
         error_label = QLabel()
-        error_label.setStyleSheet(maybe_host_stylesheet("color: #f44747; font-size: 11px;"))
+        error_label.setStyleSheet(maybe_host_stylesheet(_err_style()))
         error_label.hide()
         lay.addWidget(error_label)
 

@@ -22,6 +22,7 @@ from .qt_compat import (
     qt_flags,
 )
 from .styles import host_stylesheet
+from .theme.manager import ThemeManager, _blend_hex
 
 _THINKING_PHRASES = [
     "analyzing binary structure...",
@@ -43,20 +44,69 @@ _THINKING_PHRASES = [
 ]
 
 
-_USER_ROLE = "#4ec9b0"
-_ASSISTANT_ROLE = "#569cd6"
-_BODY_TEXT = "#d4d4d4"
-_MUTED_TEXT = "#808080"
-_SUBTLE_TEXT = "#b0b0b0"
-_USER_BUBBLE_BG = "#0e639c"
-_USER_BUBBLE_BORDER = "#1177bb"
-_ASSISTANT_BUBBLE_BG = "#151515"
-_ASSISTANT_BUBBLE_BORDER = "#2c2c2c"
-_THINKING_SURFACE_BG = "#1e1e1e"
-_THINKING_BLOCK_BG = "#1a1a2e"
-_THINKING_BLOCK_BORDER = "#2a2a3e"
-_TOOL_BG = "#252526"
-_TOOL_BORDER = "#3c3c3c"
+# ---------------------------------------------------------------------------
+# Token-aware color resolvers
+# ---------------------------------------------------------------------------
+# Each helper takes a ``ThemeTokens`` and returns a hex color. Callers fetch
+# the current tokens once per render via ``ThemeManager.instance().tokens()``
+# so the resolved colors track the active theme.
+
+
+def _user_role(t) -> str:
+    return t.success
+
+
+def _assistant_role(t) -> str:
+    return t.highlight
+
+
+def _body_text(t) -> str:
+    return t.text
+
+
+def _muted_text(t) -> str:
+    return _blend_hex(t.text, t.mid, 0.5)
+
+
+def _subtle_text(t) -> str:
+    return t.light
+
+
+def _user_bubble_bg(t) -> str:
+    # Darker user bubble: blend highlight toward base.
+    return _blend_hex(t.highlight, t.base, 0.4)
+
+
+def _user_bubble_border(t) -> str:
+    return t.highlight
+
+
+def _assistant_bubble_bg(t) -> str:
+    return t.alt_base
+
+
+def _assistant_bubble_border(t) -> str:
+    return t.mid
+
+
+def _thinking_surface_bg(t) -> str:
+    return t.base
+
+
+def _thinking_block_bg(t) -> str:
+    return t.alt_base
+
+
+def _thinking_block_border(t) -> str:
+    return t.mid
+
+
+def _tool_bg(t) -> str:
+    return t.alt_base
+
+
+def _tool_border(t) -> str:
+    return t.mid
 
 
 def _frame_css(*, background: str, border: str | None = None, radius: int = 8) -> str:
@@ -100,23 +150,19 @@ def _native_text_style(
     return " ".join(parts)
 
 
-def _muted_text(colors=None) -> str:
-    return _MUTED_TEXT
-
-
-def _subtle_text(colors=None) -> str:
-    return _SUBTLE_TEXT
-
-
 def _tool_frame_style(
     source=None,
+    *,
+    tokens=None,
     accent: str | None = None,
     background: str | None = None,
     object_name: str = "message_tool",
 ) -> str:
     del source
-    border = accent or _TOOL_BORDER
-    bg = background or _TOOL_BG
+    if tokens is None:
+        tokens = ThemeManager.instance().tokens()
+    border = accent or _tool_border(tokens)
+    bg = background or _tool_bg(tokens)
     return f"QFrame#{object_name} {{ {_frame_css(background=bg, border=border, radius=6)} }}"
 
 
@@ -166,6 +212,7 @@ class CollapsibleSection(QFrame):
     def __init__(self, title: str, parent: QWidget = None):
         super().__init__(parent)
         self._expanded = False
+        ThemeManager.instance().themeChanged.connect(self.update)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -217,6 +264,8 @@ class UserMessageWidget(QFrame):
     def __init__(self, text: str, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("message_user")
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -224,8 +273,8 @@ class UserMessageWidget(QFrame):
         self._role_label = QLabel("You")
         self._role_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_USER_ROLE}; font-weight: bold; font-size: 11px;",
-                f"color: {_USER_ROLE}; {_native_text_style(size=11, bold=True)}",
+                f"color: {_user_role(tokens)}; font-weight: bold; font-size: 11px;",
+                f"color: {_user_role(tokens)}; {_native_text_style(size=11, bold=True)}",
             )
         )
         layout.addWidget(self._role_label)
@@ -240,12 +289,12 @@ class UserMessageWidget(QFrame):
         )
         self._content.setStyleSheet(
             host_stylesheet(
-                f"background-color: {_USER_BUBBLE_BG}; color: #ffffff; "
+                f"background-color: {_user_bubble_bg(tokens)}; color: #ffffff; "
                 "border-radius: 10px; padding: 8px 12px; font-size: 13px;",
                 _bubble_css(
-                    background=_USER_BUBBLE_BG,
+                    background=_user_bubble_bg(tokens),
                     text_color="#ffffff",
-                    border=_USER_BUBBLE_BORDER,
+                    border=_user_bubble_border(tokens),
                 ),
             )
         )
@@ -302,11 +351,14 @@ class _ThinkingBlock(QFrame):
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("thinking_block")
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
         self.setStyleSheet(
             _tool_frame_style(
                 source=parent or self,
-                accent=_THINKING_BLOCK_BORDER,
-                background=_THINKING_BLOCK_BG,
+                tokens=tokens,
+                accent=_thinking_block_border(tokens),
+                background=_thinking_block_bg(tokens),
                 object_name="thinking_block",
             )
         )
@@ -328,8 +380,8 @@ class _ThinkingBlock(QFrame):
         self._header_label = QLabel("Thinking")
         self._header_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_MUTED_TEXT}; font-size: 11px; font-style: italic;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=11, italic=True)}",
+                f"color: {_muted_text(tokens)}; font-size: 11px; font-style: italic;",
+                f"color: {_muted_text(tokens)}; {_native_text_style(size=11, italic=True)}",
             )
         )
         header.addWidget(self._header_label, 1)
@@ -391,6 +443,8 @@ class AssistantMessageWidget(QFrame):
         self._full_text = ""
         self._pending_delta = 0
         self._last_render_time: float = 0.0
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -398,8 +452,8 @@ class AssistantMessageWidget(QFrame):
         self._role_label = QLabel("Rikugan")
         self._role_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_ASSISTANT_ROLE}; font-weight: bold; font-size: 11px;",
-                f"color: {_ASSISTANT_ROLE}; {_native_text_style(size=11, bold=True)}",
+                f"color: {_assistant_role(tokens)}; font-weight: bold; font-size: 11px;",
+                f"color: {_assistant_role(tokens)}; {_native_text_style(size=11, bold=True)}",
             )
         )
         layout.addWidget(self._role_label)
@@ -420,12 +474,12 @@ class AssistantMessageWidget(QFrame):
         self._content.setOpenExternalLinks(True)
         self._content.setStyleSheet(
             host_stylesheet(
-                f"background-color: {_ASSISTANT_BUBBLE_BG}; color: {_BODY_TEXT}; "
+                f"background-color: {_assistant_bubble_bg(tokens)}; color: {_body_text(tokens)}; "
                 "border-radius: 10px; padding: 8px 12px; font-size: 13px;",
                 _bubble_css(
-                    background=_ASSISTANT_BUBBLE_BG,
-                    text_color=_BODY_TEXT,
-                    border=_ASSISTANT_BUBBLE_BORDER,
+                    background=_assistant_bubble_bg(tokens),
+                    text_color=_body_text(tokens),
+                    border=_assistant_bubble_border(tokens),
                 ),
             )
         )
@@ -487,10 +541,13 @@ class ThinkingWidget(QFrame):
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("message_thinking")
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
         self.setStyleSheet(
             _tool_frame_style(
                 source=parent or self,
-                background=_THINKING_SURFACE_BG,
+                tokens=tokens,
+                background=_thinking_surface_bg(tokens),
                 object_name="message_thinking",
             )
         )
@@ -504,8 +561,8 @@ class ThinkingWidget(QFrame):
         self._star_label = QLabel(self._STAR_FRAMES[0])
         self._star_label.setStyleSheet(
             host_stylesheet(
-                "color: #dcdcaa; font-size: 14px;",
-                f"color: #dcdcaa; {_native_text_style(size=14)}",
+                f"color: {tokens.warning}; font-size: 14px;",
+                f"color: {tokens.warning}; {_native_text_style(size=14)}",
             )
         )
         self._star_label.setFixedWidth(18)
@@ -514,8 +571,8 @@ class ThinkingWidget(QFrame):
         self._phrase_label = QLabel(_THINKING_PHRASES[self._phrase_idx])
         self._phrase_label.setStyleSheet(
             host_stylesheet(
-                "color: #808080; font-style: italic; font-size: 12px;",
-                f"color: #808080; {_native_text_style(size=12, italic=True)}",
+                f"color: {_muted_text(tokens)}; font-style: italic; font-size: 12px;",
+                f"color: {_muted_text(tokens)}; {_native_text_style(size=12, italic=True)}",
             )
         )
         layout.addWidget(self._phrase_label, 1)
@@ -556,12 +613,13 @@ class QueuedMessageWidget(QFrame):
     def __init__(self, text: str, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("message_queued")
-        self.setStyleSheet(
-            host_stylesheet(
-                "QFrame#message_queued { border: 1px dashed #007acc; border-radius: 6px; background: #1e1e2e; }",
-                "QFrame#message_queued { border: 1px dashed #007acc; border-radius: 6px; background: #1e1e2e; }",
-            )
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
+        queued_css = (
+            f"QFrame#message_queued {{ border: 1px dashed {tokens.highlight}; "
+            f"border-radius: 6px; background: {_thinking_block_bg(tokens)}; }}"
         )
+        self.setStyleSheet(host_stylesheet(queued_css, queued_css))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -571,8 +629,8 @@ class QueuedMessageWidget(QFrame):
         self._role_label = QLabel("You")
         self._role_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_USER_ROLE}; font-weight: bold; font-size: 11px;",
-                f"color: {_USER_ROLE}; {_native_text_style(size=11, bold=True)}",
+                f"color: {_user_role(tokens)}; font-weight: bold; font-size: 11px;",
+                f"color: {_user_role(tokens)}; {_native_text_style(size=11, bold=True)}",
             )
         )
         content_layout.addWidget(self._role_label)
@@ -587,8 +645,8 @@ class QueuedMessageWidget(QFrame):
         )
         self._content.setStyleSheet(
             host_stylesheet(
-                f"color: {_BODY_TEXT}; font-size: 13px;",
-                f"color: {_BODY_TEXT}; {_native_text_style(size=13)}",
+                f"color: {_body_text(tokens)}; font-size: 13px;",
+                f"color: {_body_text(tokens)}; {_native_text_style(size=13)}",
             )
         )
         content_layout.addWidget(self._content)
@@ -598,8 +656,8 @@ class QueuedMessageWidget(QFrame):
         self._badge = QLabel("[queued]")
         self._badge.setStyleSheet(
             host_stylesheet(
-                f"color: {_MUTED_TEXT}; font-size: 10px; font-style: italic;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=10, italic=True)}",
+                f"color: {_muted_text(tokens)}; font-size: 10px; font-style: italic;",
+                f"color: {_muted_text(tokens)}; {_native_text_style(size=10, italic=True)}",
             )
         )
         self._badge.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -613,11 +671,14 @@ class UserQuestionWidget(QFrame):
         super().__init__(parent)
         self._option_selected_callback = None
         self.setObjectName("message_question")
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
         self.setStyleSheet(
             _tool_frame_style(
                 source=parent or self,
-                accent="#dcdcaa",
-                background="#2d2d1e",
+                tokens=tokens,
+                accent=tokens.warning,
+                background=_blend_hex(tokens.warning, tokens.base, 0.85),
                 object_name="message_question",
             )
         )
@@ -629,8 +690,8 @@ class UserQuestionWidget(QFrame):
         self._header = QLabel("Rikugan asks:")
         self._header.setStyleSheet(
             host_stylesheet(
-                "color: #dcdcaa; font-weight: bold; font-size: 11px;",
-                f"color: #dcdcaa; {_native_text_style(size=11, bold=True)}",
+                f"color: {tokens.warning}; font-weight: bold; font-size: 11px;",
+                f"color: {tokens.warning}; {_native_text_style(size=11, bold=True)}",
             )
         )
         layout.addWidget(self._header)
@@ -645,8 +706,8 @@ class UserQuestionWidget(QFrame):
         )
         self._q_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_BODY_TEXT}; font-size: 13px;",
-                f"color: {_BODY_TEXT}; {_native_text_style(size=13)}",
+                f"color: {_body_text(tokens)}; font-size: 13px;",
+                f"color: {_body_text(tokens)}; {_native_text_style(size=13)}",
             )
         )
         layout.addWidget(self._q_label)
@@ -658,12 +719,22 @@ class UserQuestionWidget(QFrame):
             for opt in options:
                 label = opt if isinstance(opt, str) else str(opt.get("label", opt))
                 btn = QPushButton(label)
+                # Button chrome: blue accent matching the highlight token so it
+                # stays in lockstep with the rest of the theme.
+                btn_bg = _blend_hex(tokens.highlight, tokens.base, 0.55)
+                btn_bg_hover = _blend_hex(tokens.highlight, tokens.base, 0.40)
+                btn_bg_pressed = _blend_hex(tokens.highlight, tokens.base, 0.70)
+                btn_fg = _blend_hex(tokens.highlight_text, tokens.highlight, 0.35)
+                btn_border = _blend_hex(tokens.highlight, tokens.mid, 0.5)
+                disabled_bg = _blend_hex(tokens.base, tokens.alt_base, 0.5)
                 button_css = (
-                    "QPushButton { background: #2d4a6e; color: #9cdcfe; border: 1px solid #4a7ab5; "
-                    "border-radius: 4px; padding: 4px 14px; font-size: 12px; }"
-                    "QPushButton:hover { background: #3a5a8a; }"
-                    "QPushButton:pressed { background: #1a3a5e; }"
-                    "QPushButton:disabled { color: #808080; background: #1e2a3a; border-color: #444; }"
+                    f"QPushButton {{ background: {btn_bg}; color: {btn_fg}; "
+                    f"border: 1px solid {btn_border}; border-radius: 4px; "
+                    f"padding: 4px 14px; font-size: 12px; }}"
+                    f"QPushButton:hover {{ background: {btn_bg_hover}; }}"
+                    f"QPushButton:pressed {{ background: {btn_bg_pressed}; }}"
+                    f"QPushButton:disabled {{ color: {_muted_text(tokens)}; "
+                    f"background: {disabled_bg}; border-color: {tokens.mid}; }}"
                 )
                 btn.setStyleSheet(host_stylesheet(button_css, button_css))
                 btn.clicked.connect(lambda checked, o=label: self._on_option(o))
@@ -698,11 +769,17 @@ class ExplorationPhaseWidget(QFrame):
     def __init__(self, from_phase: str, to_phase: str, reason: str = "", parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
+        phase_accent = _blend_hex(tokens.warning, tokens.text, 0.25)
+        phase_bg = _blend_hex(tokens.warning, tokens.base, 0.9)
+        phase_reason = _blend_hex(tokens.warning, tokens.text, 0.45)
         self.setStyleSheet(
             _tool_frame_style(
                 source=parent or self,
-                accent="#d7ba7d",
-                background="#2d2a1f",
+                tokens=tokens,
+                accent=phase_accent,
+                background=phase_bg,
             )
         )
 
@@ -714,8 +791,8 @@ class ExplorationPhaseWidget(QFrame):
         self._phase_label = QLabel(f"{icon}  Phase: {to_phase.upper()}")
         self._phase_label.setStyleSheet(
             host_stylesheet(
-                "color: #d7ba7d; font-weight: bold; font-size: 11px;",
-                f"color: #d7ba7d; {_native_text_style(size=11, bold=True)}",
+                f"color: {phase_accent}; font-weight: bold; font-size: 11px;",
+                f"color: {phase_accent}; {_native_text_style(size=11, bold=True)}",
             )
         )
         layout.addWidget(self._phase_label)
@@ -725,8 +802,8 @@ class ExplorationPhaseWidget(QFrame):
             self._reason_label.setWordWrap(True)
             self._reason_label.setStyleSheet(
                 host_stylesheet(
-                    "color: #b0a070; font-size: 11px;",
-                    f"color: #b0a070; {_native_text_style(size=11)}",
+                    f"color: {phase_reason}; font-size: 11px;",
+                    f"color: {phase_reason}; {_native_text_style(size=11)}",
                 )
             )
             layout.addWidget(self._reason_label, 1)
@@ -735,15 +812,16 @@ class ExplorationPhaseWidget(QFrame):
 class ExplorationFindingWidget(QFrame):
     """Displays a single exploration finding."""
 
-    _CATEGORY_COLORS: ClassVar[dict[str, str]] = {
-        "function_purpose": "#4ec9b0",
-        "hypothesis": "#d7ba7d",
-        "constant": "#b5cea8",
-        "data_structure": "#c586c0",
-        "string_ref": "#ce9178",
-        "import_usage": "#569cd6",
-        "patch_result": "#6a9955",
-        "general": "#808080",
+    # Category color keys (resolved through tokens at render time).
+    _CATEGORY_TOKEN_KEYS: ClassVar[dict[str, str]] = {
+        "function_purpose": "success",
+        "hypothesis": "warning",
+        "constant": "success",
+        "data_structure": "highlight",
+        "string_ref": "warning",
+        "import_usage": "highlight",
+        "patch_result": "success",
+        "general": "light",
     }
 
     def __init__(
@@ -756,8 +834,11 @@ class ExplorationFindingWidget(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("message_tool")
-        color = self._CATEGORY_COLORS.get(category, "#808080")
-        self.setStyleSheet(_tool_frame_style(source=parent or self, accent=color))
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
+        key = self._CATEGORY_TOKEN_KEYS.get(category, "light")
+        color = getattr(tokens, key)
+        self.setStyleSheet(_tool_frame_style(source=parent or self, tokens=tokens, accent=color))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -776,8 +857,8 @@ class ExplorationFindingWidget(QFrame):
             self._addr_label = QLabel(address)
             self._addr_label.setStyleSheet(
                 host_stylesheet(
-                    f"color: {_MUTED_TEXT}; font-family: monospace; font-size: 10px;",
-                    f"color: {_MUTED_TEXT}; {_native_text_style(size=10, monospace=True)}",
+                    f"color: {_muted_text(tokens)}; font-family: monospace; font-size: 10px;",
+                    f"color: {_muted_text(tokens)}; {_native_text_style(size=10, monospace=True)}",
                 )
             )
             layout.addWidget(self._addr_label)
@@ -786,8 +867,8 @@ class ExplorationFindingWidget(QFrame):
         self._summary_label.setWordWrap(True)
         self._summary_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_BODY_TEXT}; font-size: 11px;",
-                f"color: {_BODY_TEXT}; {_native_text_style(size=11)}",
+                f"color: {_body_text(tokens)}; font-size: 11px;",
+                f"color: {_body_text(tokens)}; {_native_text_style(size=11)}",
             )
         )
         layout.addWidget(self._summary_label, 1)
@@ -796,8 +877,8 @@ class ExplorationFindingWidget(QFrame):
             rel_label = QLabel("\u2605")
             rel_label.setStyleSheet(
                 host_stylesheet(
-                    "color: #d7ba7d; font-size: 12px;",
-                    f"color: #d7ba7d; {_native_text_style(size=12, bold=True)}",
+                    f"color: {tokens.warning}; font-size: 12px;",
+                    f"color: {tokens.warning}; {_native_text_style(size=12, bold=True)}",
                 )
             )
             rel_label.setToolTip("High relevance")
@@ -818,8 +899,10 @@ class ResearchNoteWidget(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("message_tool")
-        accent = "#6a9955" if review_passed else "#d7ba7d"
-        self.setStyleSheet(_tool_frame_style(source=parent or self, accent=accent))
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
+        accent = tokens.success if review_passed else tokens.warning
+        self.setStyleSheet(_tool_frame_style(source=parent or self, tokens=tokens, accent=accent))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -840,8 +923,8 @@ class ResearchNoteWidget(QFrame):
         self._genre_label = QLabel(f"#{genre}")
         self._genre_label.setStyleSheet(
             host_stylesheet(
-                f"color: {_MUTED_TEXT}; font-size: 10px; font-style: italic;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=10, italic=True)}",
+                f"color: {_muted_text(tokens)}; font-size: 10px; font-style: italic;",
+                f"color: {_muted_text(tokens)}; {_native_text_style(size=10, italic=True)}",
             )
         )
         header.addWidget(self._genre_label)
@@ -852,8 +935,10 @@ class ResearchNoteWidget(QFrame):
         self._path_label = QLabel(path)
         self._path_label.setStyleSheet(
             host_stylesheet(
-                "color: #606060; font-family: monospace; font-size: 10px;",
-                f"color: #606060; {_native_text_style(size=10, monospace=True)}",
+                f"color: {_blend_hex(tokens.text, tokens.mid, 0.3)}; "
+                f"font-family: monospace; font-size: 10px;",
+                f"color: {_blend_hex(tokens.text, tokens.mid, 0.3)}; "
+                f"{_native_text_style(size=10, monospace=True)}",
             )
         )
         layout.addWidget(self._path_label)
@@ -864,8 +949,8 @@ class ResearchNoteWidget(QFrame):
             self._preview_label.setWordWrap(True)
             self._preview_label.setStyleSheet(
                 host_stylesheet(
-                    "color: #a0a0a0; font-size: 11px;",
-                    f"color: #a0a0a0; {_native_text_style(size=11)}",
+                    f"color: {_subtle_text(tokens)}; font-size: 11px;",
+                    f"color: {_subtle_text(tokens)}; {_native_text_style(size=11)}",
                 )
             )
             layout.addWidget(self._preview_label)
@@ -874,10 +959,11 @@ class ResearchNoteWidget(QFrame):
 class SubagentEventWidget(QFrame):
     """Displays a subagent lifecycle event (spawned, completed, failed)."""
 
-    _STATUS_COLORS: ClassVar[dict[str, str]] = {
-        "spawned": "#569cd6",
-        "completed": "#4ec9b0",
-        "failed": "#f44747",
+    # Maps a status to the token name whose color is used for accent + label.
+    _STATUS_TOKEN_KEYS: ClassVar[dict[str, str]] = {
+        "spawned": "highlight",
+        "completed": "success",
+        "failed": "error",
     }
 
     def __init__(
@@ -889,12 +975,16 @@ class SubagentEventWidget(QFrame):
     ):
         super().__init__(parent)
         self.setObjectName("message_tool")
-        color = self._STATUS_COLORS.get(status, "#808080")
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
+        key = self._STATUS_TOKEN_KEYS.get(status, "light")
+        color = getattr(tokens, key)
         self.setStyleSheet(
             _tool_frame_style(
                 source=parent or self,
+                tokens=tokens,
                 accent=color,
-                background="#252530",
+                background=_blend_hex(tokens.alt_base, tokens.mid, 0.85),
             )
         )
 
@@ -928,8 +1018,8 @@ class SubagentEventWidget(QFrame):
             self._detail.setWordWrap(True)
             self._detail.setStyleSheet(
                 host_stylesheet(
-                    "color: #b0b0b0; font-size: 11px;",
-                    f"color: #b0b0b0; {_native_text_style(size=11)}",
+                    f"color: {_subtle_text(tokens)}; font-size: 11px;",
+                    f"color: {_subtle_text(tokens)}; {_native_text_style(size=11)}",
                 )
             )
             layout.addWidget(self._detail, 1)
@@ -941,10 +1031,13 @@ class ErrorMessageWidget(QFrame):
     def __init__(self, error_text: str, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
         self.setStyleSheet(
             _tool_frame_style(
                 source=parent or self,
-                accent="#f44747",
+                tokens=tokens,
+                accent=tokens.error,
             )
         )
 
@@ -954,8 +1047,8 @@ class ErrorMessageWidget(QFrame):
         self._header = QLabel("Error")
         self._header.setStyleSheet(
             host_stylesheet(
-                "color: #f44747; font-weight: bold; font-size: 11px;",
-                f"color: #f44747; {_native_text_style(size=11, bold=True)}",
+                f"color: {tokens.error}; font-weight: bold; font-size: 11px;",
+                f"color: {tokens.error}; {_native_text_style(size=11, bold=True)}",
             )
         )
         layout.addWidget(self._header)
@@ -970,8 +1063,8 @@ class ErrorMessageWidget(QFrame):
         )
         self._content.setStyleSheet(
             host_stylesheet(
-                "color: #f44747; font-size: 12px;",
-                f"color: #f44747; {_native_text_style(size=12)}",
+                f"color: {tokens.error}; font-size: 12px;",
+                f"color: {tokens.error}; {_native_text_style(size=12)}",
             )
         )
         self._content.setMinimumWidth(0)

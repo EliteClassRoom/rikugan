@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .qt_compat import (
     QAbstractItemView,
@@ -27,98 +28,163 @@ from .qt_compat import (
 )
 from .styles import maybe_host_stylesheet
 
-_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 4px 10px; font-size: 11px; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-    "QPushButton:disabled { color: #555; }"
-)
-_BTN_STYLE = maybe_host_stylesheet(_BTN_STYLE)
+if TYPE_CHECKING:
+    from .theme.manager import ThemeTokens
 
-_STOP_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #c42b1c; border: 1px solid #c42b1c; "
-    "border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-    "QPushButton:disabled { color: #555; border-color: #555; }"
-)
-_STOP_BTN_STYLE = maybe_host_stylesheet(_STOP_BTN_STYLE)
+# Status colors are resolved from theme tokens at runtime.
+_STATUS_TOKEN_KEYS: dict[str, str] = {
+    "queued": "light",
+    "analyzing": "warning",
+    "renamed": "success",
+    "reverted": "highlight",
+    "skipped": "light",  # muted via blend
+    "error": "error",
+}
 
-_START_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #d4d4d4; "
-    "border-radius: 4px; padding: 4px 14px; font-size: 11px; font-weight: bold; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-    "QPushButton:disabled { color: #555; border-color: #555; }"
-)
-_START_BTN_STYLE = maybe_host_stylesheet(_START_BTN_STYLE)
 
-_TABLE_STYLE = """
-    QTableWidget {
-        background: #1e1e1e;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
-        gridline-color: #3c3c3c;
+def _muted(t) -> str:
+    from .theme.manager import _blend_hex
+    return _blend_hex(t.text, t.mid, 0.5)
+
+
+def _btn_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 4px 10px; font-size: 11px; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+        f"QPushButton:disabled {{ color: {_muted(t)}; }}"
+    )
+
+
+def _stop_btn_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    danger_border = t.error
+    danger_text = t.error
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {danger_text}; border: 1px solid {danger_border}; "
+        f"border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+        f"QPushButton:disabled {{ color: {_muted(t)}; border-color: {_muted(t)}; }}"
+    )
+
+
+def _start_btn_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.text}; "
+        f"border-radius: 4px; padding: 4px 14px; font-size: 11px; font-weight: bold; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+        f"QPushButton:disabled {{ color: {_muted(t)}; border-color: {_muted(t)}; }}"
+    )
+
+
+def _table_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"""
+    QTableWidget {{
+        background: {t.base};
+        color: {t.text};
+        border: 1px solid {t.mid};
+        gridline-color: {t.mid};
         font-size: 11px;
-        alternate-background-color: #252525;
-    }
-    QTableWidget::item {
+        alternate-background-color: {t.alt_base};
+    }}
+    QTableWidget::item {{
         padding: 2px 4px;
-    }
-    QTableWidget::item:selected {
-        background: #2d2d2d;
-    }
-    QHeaderView::section {
-        background: #2d2d2d;
-        color: #d4d4d4;
-        border: 1px solid #3c3c3c;
+    }}
+    QTableWidget::item:selected {{
+        background: {t.alt_base};
+    }}
+    QHeaderView::section {{
+        background: {t.alt_base};
+        color: {t.text};
+        border: 1px solid {t.mid};
         padding: 3px 6px;
         font-size: 10px;
-    }
+    }}
 """
-_TABLE_STYLE = maybe_host_stylesheet(_TABLE_STYLE)
+    )
 
-_FILTER_STYLE = (
-    "QLineEdit { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 3px; padding: 3px 6px; font-size: 11px; }"
-    "QLineEdit:focus { border-color: #4ec9b0; }"
-)
-_FILTER_STYLE = maybe_host_stylesheet(_FILTER_STYLE)
 
-_COMBO_STYLE = (
-    "QComboBox { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 3px; padding: 3px 6px; font-size: 11px; }"
-)
-_COMBO_STYLE = maybe_host_stylesheet(_COMBO_STYLE)
+def _filter_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"QLineEdit {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 3px; padding: 3px 6px; font-size: 11px; }}"
+        f"QLineEdit:focus {{ border-color: {t.success}; }}"
+    )
 
-_NUM_INPUT_STYLE = (
-    "QLineEdit { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 3px; padding: 2px 4px; font-size: 11px; }"
-)
-_NUM_INPUT_STYLE = maybe_host_stylesheet(_NUM_INPUT_STYLE)
 
-_PROGRESS_STYLE = (
-    "QProgressBar { background: #2d2d2d; border: 1px solid #3c3c3c; "
-    "border-radius: 3px; text-align: center; color: #d4d4d4; font-size: 10px; }"
-    "QProgressBar::chunk { background: #808080; border-radius: 2px; }"
-)
-_PROGRESS_STYLE = maybe_host_stylesheet(_PROGRESS_STYLE)
+def _combo_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"QComboBox {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 3px; padding: 3px 6px; font-size: 11px; }}"
+    )
 
-_RADIO_STYLE = "QRadioButton { color: #d4d4d4; font-size: 11px; spacing: 4px; }"
-_RADIO_STYLE = maybe_host_stylesheet(_RADIO_STYLE)
 
-_CHECK_STYLE = "QCheckBox { spacing: 0px; } QCheckBox::indicator { width: 14px; height: 14px; }"
-_CHECK_STYLE = maybe_host_stylesheet(_CHECK_STYLE)
+def _num_input_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return (
+        f"QLineEdit {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 3px; padding: 2px 4px; font-size: 11px; }}"
+    )
 
-_MUTED_LABEL_STYLE = maybe_host_stylesheet("color: #808080; font-size: 11px;")
-_LABEL_STYLE = maybe_host_stylesheet("color: #d4d4d4; font-size: 11px;")
 
-_STATUS_COLORS: dict[str, str] = {
-    "queued": "#808080",
-    "analyzing": "#dcdcaa",
-    "renamed": "#4ec9b0",
-    "reverted": "#569cd6",
-    "skipped": "#d7ba7d",
-    "error": "#f44747",
-}
+def _progress_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    chunk = _blend_text(t, 0.5)
+    return (
+        f"QProgressBar {{ background: {t.alt_base}; border: 1px solid {t.mid}; "
+        f"border-radius: 3px; text-align: center; color: {t.text}; font-size: 10px; }}"
+        f"QProgressBar::chunk {{ background: {chunk}; border-radius: 2px; }}"
+    )
+
+
+def _blend_text(t, amount: float) -> str:
+    from .theme.manager import _blend_hex
+    return _blend_hex(t.text, t.mid, amount)
+
+
+def _radio_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return f"QRadioButton {{ color: {t.text}; font-size: 11px; spacing: 4px; }}"
+
+
+def _check_style() -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return "QCheckBox { spacing: 0px; } QCheckBox::indicator { width: 14px; height: 14px; }"
+
+
+def _muted_label_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return f"color: {_muted(t)}; font-size: 11px;"
+
+
+def _label_style(t: "ThemeTokens") -> str:
+    if maybe_host_stylesheet(""):
+        return ""
+    return f"color: {t.text}; font-size: 11px;"
+
+
+def _status_color(status: str, t: "ThemeTokens") -> str:
+    key = _STATUS_TOKEN_KEYS.get(status, "text")
+    if key == "light" and status == "skipped":
+        return _blend_text(t, 0.5)
+    return getattr(t, key)
 
 # Column indices
 _COL_CHECK = 0
@@ -165,6 +231,9 @@ class BulkRenamerWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("bulk_renamer_widget")
         self._loading = False  # guard to suppress filter during load
+        # Wire theme changes so styles refresh when the user switches theme.
+        from .theme.manager import ThemeManager
+        ThemeManager.instance().themeChanged.connect(self._on_theme_changed)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(4, 4, 4, 4)
@@ -176,18 +245,15 @@ class BulkRenamerWidget(QWidget):
 
         self._filter_edit = QLineEdit()
         self._filter_edit.setPlaceholderText("Filter by name or address...")
-        self._filter_edit.setStyleSheet(_FILTER_STYLE)
         self._filter_edit.textChanged.connect(self._on_filter_changed)
         top_bar.addWidget(self._filter_edit, 1)
 
         self._filter_combo = QComboBox()
-        self._filter_combo.setStyleSheet(_COMBO_STYLE)
         self._filter_combo.addItems(["All Functions", "Auto-named Only", "User-renamed", "Imports"])
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
         top_bar.addWidget(self._filter_combo)
 
         self._selection_label = QLabel("0 / 0 selected")
-        self._selection_label.setStyleSheet(_MUTED_LABEL_STYLE)
         top_bar.addWidget(self._selection_label)
 
         main_layout.addLayout(top_bar)
@@ -195,7 +261,6 @@ class BulkRenamerWidget(QWidget):
         # --- Table ---
         self._table = QTableWidget()
         self._table.setObjectName("renamer_table")
-        self._table.setStyleSheet(_TABLE_STYLE)
         self._table.setColumnCount(6)
         self._table.setHorizontalHeaderLabels(["", "Address", "Current Name", "Length", "New Name", "Status"])
         self._table.setAlternatingRowColors(True)
@@ -206,7 +271,6 @@ class BulkRenamerWidget(QWidget):
 
         # Header checkbox for column 0 (select all / deselect all)
         self._header_check = QCheckBox()
-        self._header_check.setStyleSheet(_CHECK_STYLE)
         self._header_check.setChecked(False)
         self._header_check.stateChanged.connect(self._on_header_check_changed)
         header = self._table.horizontalHeader()
@@ -238,29 +302,24 @@ class BulkRenamerWidget(QWidget):
         analysis_bar = QHBoxLayout()
         analysis_bar.setSpacing(6)
 
-        mode_label = QLabel("Mode:")
-        mode_label.setStyleSheet(_LABEL_STYLE)
-        analysis_bar.addWidget(mode_label)
+        self._mode_label = QLabel("Mode:")
+        analysis_bar.addWidget(self._mode_label)
 
         self._quick_radio = QRadioButton("Quick")
-        self._quick_radio.setStyleSheet(_RADIO_STYLE)
         self._quick_radio.setChecked(True)
         analysis_bar.addWidget(self._quick_radio)
 
         self._deep_radio = QRadioButton("Deep")
-        self._deep_radio.setStyleSheet(_RADIO_STYLE)
         self._deep_radio.toggled.connect(lambda: self._update_selection_count())
         analysis_bar.addWidget(self._deep_radio)
 
         analysis_bar.addSpacing(12)
 
-        batch_label = QLabel("Batch:")
-        batch_label.setStyleSheet(_LABEL_STYLE)
-        batch_label.setToolTip("Quick: functions per LLM prompt. Deep: ignored (1 agent per function).")
-        analysis_bar.addWidget(batch_label)
+        self._batch_label = QLabel("Batch:")
+        self._batch_label.setToolTip("Quick: functions per LLM prompt. Deep: ignored (1 agent per function).")
+        analysis_bar.addWidget(self._batch_label)
 
         self._batch_input = QLineEdit("10")
-        self._batch_input.setStyleSheet(_NUM_INPUT_STYLE)
         self._batch_input.setValidator(QIntValidator(1, 999999))
         self._batch_input.setFixedWidth(50)
         self._batch_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -268,13 +327,11 @@ class BulkRenamerWidget(QWidget):
         self._batch_input.textChanged.connect(lambda: self._update_selection_count())
         analysis_bar.addWidget(self._batch_input)
 
-        concurrent_label = QLabel("Jobs:")
-        concurrent_label.setStyleSheet(_LABEL_STYLE)
-        concurrent_label.setToolTip("Max parallel agents/requests running at the same time")
-        analysis_bar.addWidget(concurrent_label)
+        self._concurrent_label = QLabel("Jobs:")
+        self._concurrent_label.setToolTip("Max parallel agents/requests running at the same time")
+        analysis_bar.addWidget(self._concurrent_label)
 
         self._concurrent_input = QLineEdit("3")
-        self._concurrent_input.setStyleSheet(_NUM_INPUT_STYLE)
         self._concurrent_input.setValidator(QIntValidator(1, 999999))
         self._concurrent_input.setFixedWidth(50)
         self._concurrent_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -289,36 +346,30 @@ class BulkRenamerWidget(QWidget):
         action_bar.setSpacing(4)
 
         self._start_btn = QPushButton("Start")
-        self._start_btn.setStyleSheet(_START_BTN_STYLE)
         self._start_btn.clicked.connect(self._on_start)
         action_bar.addWidget(self._start_btn)
 
         self._stop_btn = QPushButton("Stop")
-        self._stop_btn.setStyleSheet(_STOP_BTN_STYLE)
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self._on_stop)
         action_bar.addWidget(self._stop_btn)
 
         self._pause_btn = QPushButton("Pause")
-        self._pause_btn.setStyleSheet(_BTN_STYLE)
         self._pause_btn.setEnabled(False)
         self._pause_btn.clicked.connect(self._on_pause_toggle)
         action_bar.addWidget(self._pause_btn)
 
         self._undo_btn = QPushButton("Undo All")
-        self._undo_btn.setStyleSheet(_BTN_STYLE)
         self._undo_btn.setEnabled(False)
         self._undo_btn.clicked.connect(self.undo_requested.emit)
         action_bar.addWidget(self._undo_btn)
 
         self._progress = QProgressBar()
-        self._progress.setStyleSheet(_PROGRESS_STYLE)
         self._progress.setFixedHeight(18)
         self._progress.setValue(0)
         action_bar.addWidget(self._progress, 1)
 
         self._progress_label = QLabel("0 / 0")
-        self._progress_label.setStyleSheet(_MUTED_LABEL_STYLE)
         action_bar.addWidget(self._progress_label)
 
         main_layout.addLayout(action_bar)
@@ -328,6 +379,52 @@ class BulkRenamerWidget(QWidget):
         self._addr_to_entry: dict[int, int] = {}  # address -> index in _entries
         self._addr_to_row: dict[int, int] = {}  # address -> current table row when unsorted/load order row
         self._paused = False
+
+        # Apply themed styles now that every child widget exists.
+        self._apply_styles()
+
+    # ----- Theme wiring -------------------------------------------------
+    def _on_theme_changed(self, _tokens) -> None:
+        """Refresh themed styles when the user changes the theme."""
+        self._apply_styles()
+        # Re-render status cells so colors track the new theme.
+        for row in range(self._table.rowCount()):
+            entry_idx = self._row_to_entry.get(row)
+            if entry_idx is None:
+                continue
+            self._set_status(row, self._entries[entry_idx].status)
+
+    def _apply_styles(self) -> None:
+        """Apply all themed stylesheet templates to child widgets."""
+        from .theme.manager import ThemeManager
+
+        t = ThemeManager.instance().tokens()
+        self._filter_edit.setStyleSheet(_filter_style(t))
+        self._filter_combo.setStyleSheet(_combo_style(t))
+        self._selection_label.setStyleSheet(_muted_label_style(t))
+        self._table.setStyleSheet(_table_style(t))
+        self._header_check.setStyleSheet(_check_style())
+        self._quick_radio.setStyleSheet(_radio_style(t))
+        self._deep_radio.setStyleSheet(_radio_style(t))
+        # Mode/batch/concurrent labels are stored as local vars; their
+        # style is applied during theme change via the queued children
+        # walk below.
+        self._batch_input.setStyleSheet(_num_input_style(t))
+        self._concurrent_input.setStyleSheet(_num_input_style(t))
+        self._start_btn.setStyleSheet(_start_btn_style(t))
+        self._stop_btn.setStyleSheet(_stop_btn_style(t))
+        self._pause_btn.setStyleSheet(_btn_style(t))
+        self._undo_btn.setStyleSheet(_btn_style(t))
+        self._progress.setStyleSheet(_progress_style(t))
+        self._progress_label.setStyleSheet(_muted_label_style(t))
+        # Labels live as locals in __init__; we apply the label style to
+        # the action bar's mode/batch/concurrent labels by re-creating
+        # them on each theme change isn't ideal — instead, re-apply
+        # directly to the surviving references.
+        if hasattr(self, "_mode_label"):
+            self._mode_label.setStyleSheet(_label_style(t))
+            self._batch_label.setStyleSheet(_label_style(t))
+            self._concurrent_label.setStyleSheet(_label_style(t))
 
     def _reposition_header_check(self, _idx: int = 0, _old: int = 0, _new: int = 0) -> None:
         """Keep the header checkbox centred in the first header section."""
@@ -483,9 +580,10 @@ class BulkRenamerWidget(QWidget):
         if status_item:
             display = error if error else status
             status_item.setText(display)
-            color = _STATUS_COLORS.get(status, "#d4d4d4")
             from .qt_compat import QColor
+            from .theme.manager import ThemeManager
 
+            color = _status_color(status, ThemeManager.instance().tokens())
             status_item.setForeground(QColor(color))
 
         self._table.blockSignals(False)

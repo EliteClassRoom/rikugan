@@ -16,9 +16,17 @@ from .qt_compat import (
     QWidget,
     Signal,
 )
+from .theme.manager import ThemeManager
+from .styles import maybe_host_stylesheet
 
 if TYPE_CHECKING:
     from ..agent.mutation import MutationRecord
+
+
+def _muted():
+    from .theme.manager import _blend_hex
+    t = ThemeManager.instance().tokens()
+    return _blend_hex(t.text, t.mid, 0.5)
 
 
 class MutationEntryWidget(QFrame):
@@ -31,6 +39,8 @@ class MutationEntryWidget(QFrame):
         self.setObjectName("mutation_entry")
         self._index = index
         self._record = record
+        from .theme.manager import ThemeManager
+        ThemeManager.instance().themeChanged.connect(self._apply_styles)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -38,9 +48,6 @@ class MutationEntryWidget(QFrame):
         # Reversibility indicator
         self._indicator = QLabel("↩" if record.reversible else "⊘")
         self._indicator.setFixedWidth(20)
-        self._indicator.setStyleSheet(
-            "color: #4ec9b0; font-size: 14px;" if record.reversible else "color: #808080; font-size: 14px;"
-        )
         self._indicator.setToolTip("Reversible" if record.reversible else "Not reversible")
         layout.addWidget(self._indicator)
 
@@ -48,15 +55,28 @@ class MutationEntryWidget(QFrame):
         ts = time.strftime("%H:%M:%S", time.localtime(record.timestamp))
         self._desc = QLabel(f"[{ts}] {record.description}")
         self._desc.setWordWrap(True)
-        self._desc.setStyleSheet("color: #d4d4d4; font-size: 11px;")
         layout.addWidget(self._desc, 1)
 
         # Tool name badge
         self._tool_badge = QLabel(record.tool_name)
-        self._tool_badge.setStyleSheet(
-            "color: #808080; font-size: 10px; padding: 1px 4px; background: #2d2d2d; border-radius: 3px;"
-        )
+        self._apply_styles()
         layout.addWidget(self._tool_badge)
+
+    def _apply_styles(self, *_args) -> None:
+        t = ThemeManager.instance().tokens()
+        indicator_color = t.success if self._record.reversible else _muted()
+        self._indicator.setStyleSheet(
+            maybe_host_stylesheet(f"color: {indicator_color}; font-size: 14px;")
+        )
+        self._desc.setStyleSheet(
+            maybe_host_stylesheet(f"color: {t.text}; font-size: 11px;")
+        )
+        self._tool_badge.setStyleSheet(
+            maybe_host_stylesheet(
+                f"color: {_muted()}; font-size: 10px; padding: 1px 4px; "
+                f"background: {t.alt_base}; border-radius: 3px;"
+            )
+        )
 
     @property
     def record(self) -> MutationRecord:
@@ -71,6 +91,8 @@ class MutationLogPanel(QFrame):
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("mutation_log_panel")
+        from .theme.manager import ThemeManager
+        ThemeManager.instance().themeChanged.connect(self._apply_styles)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -83,28 +105,21 @@ class MutationLogPanel(QFrame):
         header_layout.setContentsMargins(12, 8, 12, 8)
 
         self._title = QLabel("Mutation Log")
-        self._title.setStyleSheet("color: #d4d4d4; font-weight: bold; font-size: 12px;")
         header_layout.addWidget(self._title)
 
         self._count_label = QLabel("0 mutations")
-        self._count_label.setStyleSheet("color: #808080; font-size: 11px;")
         header_layout.addWidget(self._count_label)
 
         header_layout.addStretch()
 
         self._undo_btn = QPushButton("Undo Last")
-        self._undo_btn.setStyleSheet(
-            "QPushButton { color: #4ec9b0; background: #2d2d2d; "
-            "border: 1px solid #4ec9b0; border-radius: 3px; "
-            "padding: 3px 10px; font-size: 11px; }"
-            "QPushButton:hover { background: #3d3d3d; }"
-            "QPushButton:disabled { color: #555; border-color: #555; }"
-        )
         self._undo_btn.clicked.connect(lambda: self.undo_requested.emit(1))
         self._undo_btn.setEnabled(False)
         header_layout.addWidget(self._undo_btn)
 
         main_layout.addWidget(self._header)
+
+        self._apply_styles()
 
         # Scroll area for entries
         self._scroll = QScrollArea()
@@ -122,6 +137,28 @@ class MutationLogPanel(QFrame):
         main_layout.addWidget(self._scroll)
 
         self._entries: list[MutationEntryWidget] = []
+
+    def _apply_styles(self, *_args) -> None:
+        t = ThemeManager.instance().tokens()
+        from .theme.manager import _blend_hex
+        self._title.setStyleSheet(
+            maybe_host_stylesheet(f"color: {t.text}; font-weight: bold; font-size: 12px;")
+        )
+        self._count_label.setStyleSheet(
+            maybe_host_stylesheet(f"color: {_muted()}; font-size: 11px;")
+        )
+        # Undo button: success-tinted outline, blends to mid on hover, mid on disabled.
+        hover_bg = _blend_hex(t.alt_base, t.mid, 0.5)
+        disabled_color = _blend_hex(t.text, t.mid, 0.5)
+        self._undo_btn.setStyleSheet(
+            maybe_host_stylesheet(
+                f"QPushButton {{ color: {t.success}; background: {t.alt_base}; "
+                f"border: 1px solid {t.success}; border-radius: 3px; "
+                f"padding: 3px 10px; font-size: 11px; }}"
+                f"QPushButton:hover {{ background: {hover_bg}; }}"
+                f"QPushButton:disabled {{ color: {disabled_color}; border-color: {disabled_color}; }}"
+            )
+        )
 
     def add_mutation(self, record: MutationRecord) -> None:
         """Add a new mutation entry to the log."""

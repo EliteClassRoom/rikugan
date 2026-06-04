@@ -48,20 +48,51 @@ from .styles import (
     maybe_host_stylesheet,
     use_native_host_theme,
 )
+from .theme.manager import ThemeManager
 from .tool_widgets import _SharedSpinnerTimer
 from .tools_panel import ToolsPanel
 
 _TOOL_RESULT_TRUNCATE_CHARS = 2000
-_SMALL_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 6px; padding: 4px; font-size: 11px; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-)
-_CANCEL_BTN_STYLE = (
-    "QPushButton { background: #2d2d2d; color: #c42b1c; border: 1px solid #c42b1c; "
-    "border-radius: 6px; padding: 4px; font-size: 11px; }"
-    "QPushButton:hover { background: #3a1a1a; }"
-)
+
+
+def _muted():
+    from .theme.manager import _blend_hex
+    t = ThemeManager.instance().tokens()
+    return _blend_hex(t.text, t.mid, 0.5)
+
+
+def _small_btn_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 6px; padding: 4px; font-size: 11px; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+    )
+
+
+def _cancel_btn_style() -> str:
+    from .theme.manager import _blend_hex
+    t = ThemeManager.instance().tokens()
+    danger_hover = _blend_hex(t.alt_base, t.error, 0.3)
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {t.error}; border: 1px solid {t.error}; "
+        f"border-radius: 6px; padding: 4px; font-size: 11px; }}"
+        f"QPushButton:hover {{ background: {danger_hover}; }}"
+    )
+
+
+# Legacy module-level aliases used by callers expecting string constants.
+# They are resolved lazily on first access so the theme manager is
+# available. Existing references (e.g. ``_SMALL_BTN_STYLE``) keep working.
+_SMALL_BTN_STYLE: str = ""  # populated lazily by ``_resolve_module_styles``
+_CANCEL_BTN_STYLE: str = ""  # populated lazily by ``_resolve_module_styles``
+
+
+def _resolve_module_styles() -> None:
+    global _SMALL_BTN_STYLE, _CANCEL_BTN_STYLE
+    if not _SMALL_BTN_STYLE:
+        _SMALL_BTN_STYLE = _small_btn_style()
+        _CANCEL_BTN_STYLE = _cancel_btn_style()
 
 _SANITIZER_TAG_RE = re.compile(
     r"^\[The following is (?:a tool execution result|output from an EXTERNAL MCP server)"
@@ -184,14 +215,18 @@ class _AddButtonTabBar(QTabBar):
         self._add_btn.setText("+")
         self._add_btn.setAutoRaise(True)
         self._add_btn.setFixedSize(20, 20)
+        self._add_btn.clicked.connect(self._handle_add_tab)
+        self._apply_styles()
+
+    def _apply_styles(self) -> None:
+        t = ThemeManager.instance().tokens()
         self._add_btn.setStyleSheet(
             maybe_host_stylesheet(
-                "QToolButton { color: #d4d4d4; font-size: 14px; font-weight: bold; "
-                "border: none; background: transparent; }"
-                "QToolButton:hover { background: #3c3c3c; border-radius: 3px; }"
+                f"QToolButton {{ color: {t.text}; font-size: 14px; font-weight: bold; "
+                f"border: none; background: transparent; }}"
+                f"QToolButton:hover {{ background: {t.mid}; border-radius: 3px; }}"
             )
         )
-        self._add_btn.clicked.connect(self._handle_add_tab)
 
     def set_add_tab_callback(self, callback: Callable[[], None] | None) -> None:
         self._add_tab_callback = callback
@@ -290,6 +325,8 @@ class RikuganPanelCore(QWidget):
 
         threading.Thread(target=_warm_oauth, daemon=True).start()
         self._build_ui()
+        # Refresh themed widgets when the user switches the active theme.
+        ThemeManager.instance().themeChanged.connect(self._on_theme_changed)
 
     def _prompt_decryption_password(self) -> None:
         """Prompt for the encryption password at session start."""
@@ -368,13 +405,56 @@ class RikuganPanelCore(QWidget):
             # Runtime init completed but no skills found; stop polling.
             self._stop_skills_refresh_timer()
 
-    _MODE_BAR_STYLE = (
-        "QTabBar { background: #2d2d2d; border: none; border-bottom: 1px solid #3c3c3c; }"
-        "QTabBar::tab { background: #2d2d2d; color: #808080; padding: 4px 16px; "
-        "border: none; border-bottom: 2px solid transparent; font-size: 11px; }"
-        "QTabBar::tab:selected { color: #d4d4d4; border-bottom: 2px solid #4ec9b0; }"
-        "QTabBar::tab:hover:!selected { color: #d4d4d4; }"
-    )
+    @property
+    def _MODE_BAR_STYLE_TEMPLATE(self) -> str:
+        """Themed mode-bar (top tab) QSS, regenerated on theme change."""
+        t = ThemeManager.instance().tokens()
+        return (
+            f"QTabBar {{ background: {t.alt_base}; border: none; border-bottom: 1px solid {t.mid}; }}"
+            f"QTabBar::tab {{ background: {t.alt_base}; color: {_muted()}; padding: 4px 16px; "
+            f"border: none; border-bottom: 2px solid transparent; font-size: 11px; }}"
+            f"QTabBar::tab:selected {{ color: {t.text}; border-bottom: 2px solid {t.success}; }}"
+            f"QTabBar::tab:hover:!selected {{ color: {t.text}; }}"
+        )
+
+    def _dependency_banner_style(self) -> str:
+        """Themed QSS for the yellow dependency-warnings banner."""
+        from .theme.manager import _blend_hex
+        t = ThemeManager.instance().tokens()
+        # Derive a warning pair: muted amber background, brighter amber border.
+        warn_bg = _blend_hex(t.base, t.error, 0.2)  # dark amber
+        warn_fg = _blend_hex(t.error, t.highlight_text, 0.4)
+        warn_border = _blend_hex(t.error, t.highlight, 0.4)
+        return (
+            f"QLabel#dependency_banner {{"
+            f"background: {warn_bg}; color: {warn_fg}; "
+            f"border-top: 1px solid {warn_border}; "
+            f"border-bottom: 1px solid {warn_border}; "
+            f"padding: 6px 8px; font-size: 11px; }}"
+        )
+
+    def _tab_widget_style(self) -> str:
+        """Themed QSS for the inner tab widget (chat tabs)."""
+        t = ThemeManager.instance().tokens()
+        return (
+            f"QTabWidget::pane {{ border: none; }}"
+            f"QTabBar {{ background: {t.base}; border: none; }}"
+            f"QTabBar::tab {{ background: {t.alt_base}; color: {t.light}; padding: 2px 8px; "
+            f"border: none; border-right: 1px solid {t.mid}; "
+            f"font-size: 11px; max-width: 140px; }}"
+            f"QTabBar::tab:selected {{ background: {t.base}; color: {t.highlight_text}; }}"
+            f"QTabBar::tab:hover {{ background: {t.alt_base}; }}"
+            f"QTabBar::close-button {{ image: none; border: none; padding: 1px; }}"
+            f"QTabBar::close-button:hover {{ background: {t.error}; border-radius: 2px; }}"
+        )
+
+    def _main_splitter_style(self) -> str:
+        """Themed QSS for the main horizontal splitter handle."""
+        t = ThemeManager.instance().tokens()
+        return f"QSplitter::handle {{ background: {t.mid}; }}"
+
+    # Backward-compat alias: legacy callers referencing ``_MODE_BAR_STYLE``
+    # directly get the themed value at access time.
 
     def _build_ui(self) -> None:
         self.setObjectName("rikugan_panel")
@@ -388,7 +468,7 @@ class RikuganPanelCore(QWidget):
         # Hosts may optionally provide tools in a separate form.
         self._mode_bar = QTabBar()
         self._mode_bar.setObjectName("mode_bar")
-        self._mode_bar.setStyleSheet("" if self._use_native_host_theme else self._MODE_BAR_STYLE)
+        self._mode_bar.setStyleSheet("" if self._use_native_host_theme else self._MODE_BAR_STYLE_TEMPLATE)
         self._mode_bar.setExpanding(False)
         self._mode_bar.setDrawBase(False)
         self._mode_bar.addTab("Chat")
@@ -405,13 +485,7 @@ class RikuganPanelCore(QWidget):
         self._dependency_banner = QLabel()
         self._dependency_banner.setObjectName("dependency_banner")
         self._dependency_banner.setWordWrap(True)
-        self._dependency_banner.setStyleSheet(
-            maybe_host_stylesheet(
-                "QLabel#dependency_banner {"
-                "background: #4b3900; color: #f5d98b; border-top: 1px solid #6b5000; "
-                "border-bottom: 1px solid #6b5000; padding: 6px 8px; font-size: 11px; }"
-            )
-        )
+        self._dependency_banner.setStyleSheet(maybe_host_stylesheet(self._dependency_banner_style()))
         if self._dependency_warnings:
             self._dependency_banner.setText("Warnings: " + " ".join(self._dependency_warnings))
             layout.insertWidget(1, self._dependency_banner)
@@ -469,19 +543,7 @@ class RikuganPanelCore(QWidget):
         self._tab_bar.set_add_tab_callback(self._on_new_tab)
         self._tab_bar.set_export_tab_callback(self._on_export_tab)
         self._tab_bar.set_fork_tab_callback(self._on_fork_tab)
-        self._tab_widget.setStyleSheet(
-            maybe_host_stylesheet(
-                "QTabWidget::pane { border: none; }"
-                "QTabBar { background: #1e1e1e; border: none; }"
-                "QTabBar::tab { background: #252526; color: #cccccc; padding: 2px 8px; "
-                "border: none; border-right: 1px solid #3c3c3c; "
-                "font-size: 11px; max-width: 140px; }"
-                "QTabBar::tab:selected { background: #1e1e1e; color: #ffffff; }"
-                "QTabBar::tab:hover { background: #2d2d2d; }"
-                "QTabBar::close-button { image: none; border: none; padding: 1px; }"
-                "QTabBar::close-button:hover { background: #c42b1c; border-radius: 2px; }"
-            )
-        )
+        self._tab_widget.setStyleSheet(maybe_host_stylesheet(self._tab_widget_style()))
         self._tab_bar.setExpanding(False)
         self._tab_bar.setVisible(False)  # hidden until 2+ tabs
 
@@ -489,7 +551,7 @@ class RikuganPanelCore(QWidget):
         """Create the horizontal splitter (chat | mutation log) and add to layout."""
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.setHandleWidth(1)
-        self._main_splitter.setStyleSheet(maybe_host_stylesheet("QSplitter::handle { background: #3c3c3c; }"))
+        self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
         self._main_splitter.addWidget(self._tab_widget)
 
         self._mutation_panel = MutationLogPanel()
@@ -525,34 +587,28 @@ class RikuganPanelCore(QWidget):
         self._send_btn = QPushButton("Send")
         self._send_btn.setObjectName("send_button")
         self._send_btn.setFixedWidth(64)
-        self._send_btn.setStyleSheet(maybe_host_stylesheet(_SMALL_BTN_STYLE))
         self._send_btn.clicked.connect(self._on_send_clicked)
         btn_layout.addWidget(self._send_btn)
         self._cancel_btn = QPushButton("Stop")
         self._cancel_btn.setObjectName("cancel_button")
         self._cancel_btn.setFixedWidth(64)
-        self._cancel_btn.setStyleSheet(maybe_host_stylesheet(_CANCEL_BTN_STYLE))
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._on_cancel)
         btn_layout.addWidget(self._cancel_btn)
         self._new_btn = QPushButton("New")
         self._new_btn.setFixedWidth(64)
-        self._new_btn.setStyleSheet(maybe_host_stylesheet(_SMALL_BTN_STYLE))
         self._new_btn.clicked.connect(self._on_new_tab)
         btn_layout.addWidget(self._new_btn)
         self._export_btn = QPushButton("Export")
         self._export_btn.setFixedWidth(64)
-        self._export_btn.setStyleSheet(maybe_host_stylesheet(_SMALL_BTN_STYLE))
         self._export_btn.clicked.connect(self._on_export_current)
         btn_layout.addWidget(self._export_btn)
         self._settings_btn = QPushButton("Settings")
         self._settings_btn.setFixedWidth(64)
-        self._settings_btn.setStyleSheet(maybe_host_stylesheet(_SMALL_BTN_STYLE))
         self._settings_btn.clicked.connect(self._on_settings)
         btn_layout.addWidget(self._settings_btn)
         self._mutations_btn = QPushButton("Mutations")
         self._mutations_btn.setFixedWidth(64)
-        self._mutations_btn.setStyleSheet(maybe_host_stylesheet(_SMALL_BTN_STYLE))
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
         self._mutations_btn.setVisible(False)  # shown when first mutation is recorded
@@ -560,7 +616,6 @@ class RikuganPanelCore(QWidget):
 
         self._tools_btn = QPushButton("Tools")
         self._tools_btn.setFixedWidth(64)
-        self._tools_btn.setStyleSheet(maybe_host_stylesheet(_SMALL_BTN_STYLE))
         self._tools_btn.setCheckable(True)
         self._tools_btn.clicked.connect(self._on_toggle_tools)
         btn_layout.addWidget(self._tools_btn)
@@ -575,9 +630,45 @@ class RikuganPanelCore(QWidget):
             self._settings_btn.setStyleSheet(default_btn_style)
             self._mutations_btn.setStyleSheet(default_btn_style)
             self._tools_btn.setStyleSheet(default_btn_style)
+        else:
+            # Apply themed styles so colours track the current ThemeTokens.
+            self._apply_action_button_styles()
 
         btn_layout.addStretch()
         return btn_layout
+
+    def _apply_action_button_styles(self) -> None:
+        """Refresh the action-bar button styles from the current theme."""
+        self._send_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+        self._cancel_btn.setStyleSheet(maybe_host_stylesheet(_cancel_btn_style()))
+        self._new_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+        self._export_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+        self._settings_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+        self._mutations_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+        self._tools_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+
+    def _on_theme_changed(self, _tokens) -> None:
+        """Refresh themed widgets when the user switches the active theme."""
+        if not self._use_native_host_theme:
+            # Re-apply the global QSS template with the new token values.
+            self.setStyleSheet(build_theme_stylesheet(self))
+            self._apply_action_button_styles()
+            if hasattr(self, "_mode_bar") and self._mode_bar is not None:
+                self._mode_bar.setStyleSheet(
+                    self._MODE_BAR_STYLE_TEMPLATE
+                )
+            if hasattr(self, "_dependency_banner") and self._dependency_banner is not None:
+                self._dependency_banner.setStyleSheet(
+                    maybe_host_stylesheet(self._dependency_banner_style())
+                )
+            if hasattr(self, "_tab_widget") and self._tab_widget is not None:
+                self._tab_widget.setStyleSheet(maybe_host_stylesheet(self._tab_widget_style()))
+            if hasattr(self, "_main_splitter") and self._main_splitter is not None:
+                self._main_splitter.setStyleSheet(
+                    maybe_host_stylesheet(self._main_splitter_style())
+                )
+            if hasattr(self, "_add_btn") and hasattr(self, "_tab_bar"):
+                self._tab_bar._apply_styles()
 
     # --- Tab management ---
 
@@ -674,11 +765,12 @@ class RikuganPanelCore(QWidget):
         if session.subagent_logs:
             dlg = QDialog(self)
             dlg.setWindowTitle("Export Options")
+            t = ThemeManager.instance().tokens()
             dlg.setStyleSheet(
                 maybe_host_stylesheet(
-                    "QDialog { background: #1e1e1e; }"
-                    "QLabel { color: #d4d4d4; font-size: 12px; }"
-                    "QCheckBox { color: #d4d4d4; font-size: 12px; }"
+                    f"QDialog {{ background: {t.base}; }}"
+                    f"QLabel {{ color: {t.text}; font-size: 12px; }}"
+                    f"QCheckBox {{ color: {t.text}; font-size: 12px; }}"
                 )
             )
             layout = QVBoxLayout(dlg)
@@ -980,13 +1072,14 @@ class RikuganPanelCore(QWidget):
         dlg.setWindowTitle("New Chat")
         dlg.setText("Start a new chat? Current conversation will be saved.")
         dlg.setInformativeText(f"Context usage: {context_pct}%")
+        t = ThemeManager.instance().tokens()
         dlg.setStyleSheet(
             maybe_host_stylesheet(
-                "QMessageBox { background: #1e1e1e; color: #d4d4d4; }"
-                "QLabel { color: #d4d4d4; font-size: 12px; }"
-                "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-                "border-radius: 4px; padding: 6px 16px; font-size: 11px; min-width: 80px; }"
-                "QPushButton:hover { background: #3c3c3c; }"
+                f"QMessageBox {{ background: {t.base}; color: {t.text}; }}"
+                f"QLabel {{ color: {t.text}; font-size: 12px; }}"
+                f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+                f"border-radius: 4px; padding: 6px 16px; font-size: 11px; min-width: 80px; }}"
+                f"QPushButton:hover {{ background: {t.mid}; }}"
             )
         )
         yes_btn = dlg.addButton("Yes", QMessageBox.ButtonRole.AcceptRole)

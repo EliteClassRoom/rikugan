@@ -38,6 +38,70 @@ from .theme.manager import ThemeManager
 from .theme.tokens import ThemeMode
 
 _DEFAULT_MINIMAX_URL = "https://api.minimax.io/anthropic"
+
+
+# ---------------------------------------------------------------------------
+# Tokenized style helpers
+# ---------------------------------------------------------------------------
+# These produce small QSS fragments for the labels and small buttons that
+# the dialog creates in many places. Each helper pulls colours from the
+# current :class:`ThemeTokens` so a theme change repaints them. Native
+# (host) theme mode is a no-op (empty string), matching the old behaviour.
+
+def _muted():
+    from .theme.manager import _blend_hex
+    t = ThemeManager.instance().tokens()
+    return _blend_hex(t.text, t.mid, 0.5)
+
+
+def _ok_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return f"color: {t.success}; font-size: 11px; font-weight: bold;"
+
+
+def _err_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return f"color: {t.error}; font-size: 11px;"
+
+
+def _hint_style() -> str:
+    return f"color: {_muted()}; font-size: 10px;"
+
+
+def _ok_hint_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return f"color: {t.success}; font-size: 10px;"
+
+
+def _err_hint_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return f"color: {t.error}; font-size: 10px;"
+
+
+def _warning_style() -> str:
+    t = ThemeManager.instance().tokens()
+    # Yellowish accent: use warning token when present, else blend to text.
+    from .theme.manager import _blend_hex
+    warn = getattr(t, "warning", None) or _blend_hex(t.error, t.highlight, 0.5)
+    return f"color: {warn}; font-size: 11px;"
+
+
+def _small_btn_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 4px; font-size: 11px; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+    )
+
+
+def _icon_btn_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; font-size: 13px; font-weight: bold; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+    )
 _CUSTOM_PROVIDER_URL_PLACEHOLDER = "https://api.example.com/v1"
 
 # Known default API base URLs per provider — used to auto-clear on switch
@@ -144,7 +208,7 @@ class _AddProviderDialog(QDialog):
         layout.addLayout(form)
 
         self._error_label = QLabel()
-        self._error_label.setStyleSheet(maybe_host_stylesheet("color: #f44747; font-size: 11px;"))
+        self._error_label.setStyleSheet(maybe_host_stylesheet(_err_style()))
         self._error_label.hide()
         layout.addWidget(self._error_label)
 
@@ -356,7 +420,7 @@ class SettingsDialog(QDialog):
         warnings = self._registry.dependency_warnings()
         self._dependency_label = QLabel()
         self._dependency_label.setWordWrap(True)
-        self._dependency_label.setStyleSheet(maybe_host_stylesheet("color: #f5d98b; font-size: 11px;"))
+        self._dependency_label.setStyleSheet(maybe_host_stylesheet(_warning_style()))
         if warnings:
             self._dependency_label.setText("Warnings: " + " ".join(warnings))
             provider_form.addRow(self._dependency_label)
@@ -396,11 +460,7 @@ class SettingsDialog(QDialog):
 
     def _build_provider_row(self) -> QHBoxLayout:
         """Build the provider combo + add/remove buttons row."""
-        btn_style = maybe_host_stylesheet(
-            "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-            "border-radius: 4px; font-size: 13px; font-weight: bold; }"
-            "QPushButton:hover { background: #3c3c3c; }"
-        )
+        btn_style = maybe_host_stylesheet(_icon_btn_style())
         row = QHBoxLayout()
         self._provider_combo = QComboBox()
         self._populate_provider_combo()
@@ -436,18 +496,12 @@ class SettingsDialog(QDialog):
 
         self._fetch_btn = QPushButton("Refresh")
         self._fetch_btn.setFixedWidth(70)
-        self._fetch_btn.setStyleSheet(
-            maybe_host_stylesheet(
-                "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-                "border-radius: 4px; padding: 4px; font-size: 11px; }"
-                "QPushButton:hover { background: #3c3c3c; }"
-            )
-        )
+        self._fetch_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
         self._fetch_btn.clicked.connect(self._fetch_models)
         model_layout.addWidget(self._fetch_btn)
 
         self._model_status = QLabel()
-        self._model_status.setStyleSheet(maybe_host_stylesheet("color: #808080; font-size: 10px;"))
+        self._model_status.setStyleSheet(maybe_host_stylesheet(_hint_style()))
         self._model_status.setWordWrap(True)
         model_layout.addWidget(self._model_status)
         return model_layout
@@ -687,9 +741,17 @@ class SettingsDialog(QDialog):
 
     # --- Auth status ---
 
-    _OK_STYLE = maybe_host_stylesheet("color: #4ec9b0; font-size: 11px; font-weight: bold;")
-    _ERR_STYLE = maybe_host_stylesheet("color: #f44747; font-size: 11px;")
-    _HINT_STYLE = maybe_host_stylesheet("color: #808080; font-size: 10px;")
+    @property
+    def _OK_STYLE(self) -> str:
+        return maybe_host_stylesheet(_ok_style())
+
+    @property
+    def _ERR_STYLE(self) -> str:
+        return maybe_host_stylesheet(_err_style())
+
+    @property
+    def _HINT_STYLE(self) -> str:
+        return maybe_host_stylesheet(_hint_style())
 
     def _update_auth_status(self) -> None:
         provider_name = self._provider_combo.currentText()
@@ -761,10 +823,10 @@ class SettingsDialog(QDialog):
 
         if models:
             self._model_status.setText(f"{len(models)} models")
-            self._model_status.setStyleSheet(maybe_host_stylesheet("color: #4ec9b0; font-size: 10px;"))
+            self._model_status.setStyleSheet(maybe_host_stylesheet(_ok_hint_style()))
         else:
             self._model_status.setText("Type model name manually")
-            self._model_status.setStyleSheet(maybe_host_stylesheet("color: #808080; font-size: 10px;"))
+            self._model_status.setStyleSheet(maybe_host_stylesheet(_hint_style()))
 
         # Auto-fill generation defaults based on selected model
         self._update_generation_defaults()
@@ -772,7 +834,7 @@ class SettingsDialog(QDialog):
     def _on_fetch_error(self, error: str) -> None:
         self._fetch_btn.setEnabled(True)
         self._model_status.setText(error)
-        self._model_status.setStyleSheet(maybe_host_stylesheet("color: #f44747; font-size: 10px;"))
+        self._model_status.setStyleSheet(maybe_host_stylesheet(_err_hint_style()))
         self._model_restore_hint = ""
 
     def _update_generation_defaults(self) -> None:

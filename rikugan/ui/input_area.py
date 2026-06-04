@@ -13,6 +13,17 @@ from .qt_compat import (
     QWidget,
 )
 from .styles import build_input_area_stylesheet, host_stylesheet, use_native_host_theme
+from .theme.manager import ThemeManager
+
+
+def _skill_popup_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QFrame#skill_popup {{ background: {t.alt_base}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 2px; }}"
+        f"QLabel {{ color: {t.text}; padding: 3px 8px; }}"
+        f'QLabel[selected="true"] {{ background: {t.highlight}; border-radius: 3px; }}'
+    )
 
 
 class _SkillPopup(QFrame):
@@ -31,10 +42,7 @@ class _SkillPopup(QFrame):
         self.setWindowFlags(Qt.WindowType.ToolTip)
         self.setStyleSheet(
             host_stylesheet(
-                "QFrame#skill_popup { background: #2d2d2d; border: 1px solid #555; "
-                "border-radius: 4px; padding: 2px; }"
-                "QLabel { color: #d4d4d4; padding: 3px 8px; }"
-                'QLabel[selected="true"] { background: #094771; border-radius: 3px; }',
+                _skill_popup_style(),
                 'QLabel[selected="true"] { font-weight: bold; }',
             )
         )

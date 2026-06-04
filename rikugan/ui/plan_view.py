@@ -12,6 +12,27 @@ from .qt_compat import (
 )
 from .styles import maybe_host_stylesheet
 
+# Status → token key for the per-step indicator colour.
+_PLAN_STATUS_TOKEN: dict[str, str] = {
+    "pending": "light",
+    "active": "highlight",
+    "done": "success",
+    "error": "error",
+    "skipped": "light",
+}
+
+
+def _status_color(status: str) -> str:
+    from .theme.manager import ThemeManager
+    t = ThemeManager.instance().tokens()
+    key = _PLAN_STATUS_TOKEN.get(status, "text")
+    return getattr(t, key)
+
+
+def _text_color() -> str:
+    from .theme.manager import ThemeManager
+    return ThemeManager.instance().tokens().text
+
 
 class PlanStepWidget(QFrame):
     """Single plan step with status indicator."""
@@ -27,34 +48,32 @@ class PlanStepWidget(QFrame):
 
         self._status_label = QLabel("○")
         self._status_label.setFixedWidth(20)
-        self._status_label.setStyleSheet(maybe_host_stylesheet("color: #808080; font-size: 14px;"))
+        self._status_label.setStyleSheet(maybe_host_stylesheet(f"color: {_status_color('pending')}; font-size: 14px;"))
         layout.addWidget(self._status_label)
 
         self._step_label = QLabel(f"{index + 1}. {text}")
         self._step_label.setWordWrap(True)
-        self._step_label.setStyleSheet(maybe_host_stylesheet("color: #d4d4d4; font-size: 12px;"))
+        self._step_label.setStyleSheet(maybe_host_stylesheet(f"color: {_text_color()}; font-size: 12px;"))
         layout.addWidget(self._step_label, 1)
 
     def set_status(self, status: str) -> None:
         self._status = status
+        color = _status_color(status)
         if status == "active":
             self.setObjectName("plan_step_active")
             self._status_label.setText("▶")
-            self._status_label.setStyleSheet(maybe_host_stylesheet("color: #007acc; font-size: 14px;"))
         elif status == "done":
             self.setObjectName("plan_step_done")
             self._status_label.setText("✓")
-            self._status_label.setStyleSheet(maybe_host_stylesheet("color: #4ec9b0; font-size: 14px;"))
         elif status == "error":
             self._status_label.setText("✗")
-            self._status_label.setStyleSheet(maybe_host_stylesheet("color: #f44747; font-size: 14px;"))
         elif status == "skipped":
+            self.setObjectName("plan_step")
             self._status_label.setText("−")
-            self._status_label.setStyleSheet(maybe_host_stylesheet("color: #808080; font-size: 14px;"))
         else:
             self.setObjectName("plan_step")
             self._status_label.setText("○")
-            self._status_label.setStyleSheet(maybe_host_stylesheet("color: #808080; font-size: 14px;"))
+        self._status_label.setStyleSheet(maybe_host_stylesheet(f"color: {color}; font-size: 14px;"))
         self.style().unpolish(self)
         self.style().polish(self)
 
@@ -72,6 +91,8 @@ class PlanView(QFrame):
         self._steps: list[PlanStepWidget] = []
         self._on_approved = None
         self._on_rejected = None
+        from .theme.manager import ThemeManager
+        ThemeManager.instance().themeChanged.connect(self._on_theme_changed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -79,7 +100,6 @@ class PlanView(QFrame):
 
         # Header
         self._header = QLabel("Plan")
-        self._header.setStyleSheet(maybe_host_stylesheet("color: #569cd6; font-weight: bold; font-size: 13px;"))
         layout.addWidget(self._header)
 
         # Steps container
@@ -90,30 +110,51 @@ class PlanView(QFrame):
         btn_layout = QHBoxLayout()
 
         self._approve_btn = QPushButton("Approve & Execute")
-        self._approve_btn.setStyleSheet(
-            maybe_host_stylesheet(
-                "QPushButton { background: #2ea043; color: white; border: none; "
-                "border-radius: 6px; padding: 6px 16px; font-weight: bold; }"
-                "QPushButton:hover { background: #3fb950; }"
-            )
-        )
         self._approve_btn.clicked.connect(self._fire_approved)
         btn_layout.addWidget(self._approve_btn)
 
         self._reject_btn = QPushButton("Reject")
-        self._reject_btn.setStyleSheet(
-            maybe_host_stylesheet(
-                "QPushButton { background: #c72e2e; color: white; border: none; "
-                "border-radius: 6px; padding: 6px 16px; font-weight: bold; }"
-                "QPushButton:hover { background: #d73a49; }"
-            )
-        )
         self._reject_btn.clicked.connect(self._fire_rejected)
         btn_layout.addWidget(self._reject_btn)
 
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
         layout.addStretch()
+
+        self._apply_styles()
+
+    # ----- Theme wiring -------------------------------------------------
+    def _on_theme_changed(self, _tokens) -> None:
+        self._apply_styles()
+        # Re-render every step so its indicator colour follows the new theme.
+        for step in self._steps:
+            step.set_status(step._status)
+
+    def _apply_styles(self) -> None:
+        from .theme.manager import ThemeManager, _blend_hex
+
+        t = ThemeManager.instance().tokens()
+        self._header.setStyleSheet(
+            maybe_host_stylesheet(f"color: {t.highlight}; font-weight: bold; font-size: 13px;")
+        )
+        # Approve: green-tinted from success token; brighten for hover.
+        approve_hover = _blend_hex(t.success, t.highlight_text, 0.2)
+        self._approve_btn.setStyleSheet(
+            maybe_host_stylesheet(
+                f"QPushButton {{ background: {t.success}; color: {t.highlight_text}; border: none; "
+                f"border-radius: 6px; padding: 6px 16px; font-weight: bold; }}"
+                f"QPushButton:hover {{ background: {approve_hover}; }}"
+            )
+        )
+        # Reject: red-tinted from error token; brighten for hover.
+        reject_hover = _blend_hex(t.error, t.highlight_text, 0.2)
+        self._reject_btn.setStyleSheet(
+            maybe_host_stylesheet(
+                f"QPushButton {{ background: {t.error}; color: {t.highlight_text}; border: none; "
+                f"border-radius: 6px; padding: 6px 16px; font-weight: bold; }}"
+                f"QPushButton:hover {{ background: {reject_hover}; }}"
+            )
+        )
 
     def set_plan(self, steps: list[str]) -> None:
         """Set plan steps and display them."""

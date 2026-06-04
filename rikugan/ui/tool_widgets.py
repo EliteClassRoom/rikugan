@@ -23,6 +23,7 @@ from .qt_compat import (
     qt_flags,
 )
 from .styles import _hex_luminance, get_host_palette_colors, host_stylesheet
+from .theme.manager import ThemeManager, _blend_hex
 
 
 def _is_dark_background(widget: QWidget | None) -> bool:
@@ -49,22 +50,34 @@ def _is_dark_background(widget: QWidget | None) -> bool:
 _MAX_ARGS_DISPLAY = 2000
 _MAX_RESULT_DISPLAY = 3000
 _TOOL_PREVIEW_LINES = 3
-_MUTED_TEXT = "#808080"
-_TOOL_BG = "#252526"
-_TOOL_BORDER = "#3c3c3c"
+
+
+def _muted_text(t) -> str:
+    return _blend_hex(t.text, t.mid, 0.5)
+
+
+def _tool_bg(t) -> str:
+    return t.alt_base
+
+
+def _tool_border(t) -> str:
+    return t.mid
 
 
 def _tool_card_css(
     source=None,
     *,
+    tokens=None,
     accent: str | None = None,
     background: str | None = None,
     radius: int = 6,
     object_name: str = "message_tool",
 ) -> str:
     del source
-    border = accent or _TOOL_BORDER
-    bg = background or _TOOL_BG
+    if tokens is None:
+        tokens = ThemeManager.instance().tokens()
+    border = accent or _tool_border(tokens)
+    bg = background or _tool_bg(tokens)
     return f"QFrame#{object_name} {{ background-color: {bg}; border: 1px solid {border}; border-radius: {radius}px; }}"
 
 
@@ -422,10 +435,13 @@ def _make_preview_label(source=None) -> QLabel:
     lbl = QLabel()
     lbl.setObjectName("tool_content")
     lbl.setWordWrap(True)
+    tokens = ThemeManager.instance().tokens()
+    muted = _muted_text(tokens)
+    ThemeManager.instance().themeChanged.connect(lbl.update)
     lbl.setStyleSheet(
         host_stylesheet(
             "color: #6a6a7a; font-family: monospace; font-size: 10px; margin-left: 28px;",
-            f"color: {_MUTED_TEXT}; {_native_text_style(size=10, monospace=True)}",
+            f"color: {muted}; {_native_text_style(size=10, monospace=True)}",
         )
     )
     lbl.setVisible(False)
@@ -521,6 +537,7 @@ class ToolCallWidget(QFrame):
     def __init__(self, tool_name: str, tool_call_id: str, parent: QWidget = None):
         super().__init__(parent)
         self.setObjectName("message_tool")
+        ThemeManager.instance().themeChanged.connect(self.update)
         self.setStyleSheet(_tool_card_css(object_name="message_tool"))
         self._tool_name = tool_name
         self._tool_call_id = tool_call_id
@@ -575,10 +592,12 @@ class ToolCallWidget(QFrame):
         header_layout.addWidget(self._name_label)
 
         self._summary_label = QLabel("")
+        tokens = ThemeManager.instance().tokens()
+        muted = _muted_text(tokens)
         self._summary_label.setStyleSheet(
             host_stylesheet(
                 "color: #808080; font-size: 11px; margin-left: 6px;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=11)}",
+                f"color: {muted}; {_native_text_style(size=11)}",
             )
         )
         header_layout.addWidget(self._summary_label, 1)
@@ -618,10 +637,12 @@ class ToolCallWidget(QFrame):
         self._detail_layout.addWidget(self._args_label)
 
         self._result_header = QLabel("Result:")
+        tokens = ThemeManager.instance().tokens()
+        muted = _muted_text(tokens)
         self._result_header.setStyleSheet(
             host_stylesheet(
                 "color: #808080; font-size: 10px; font-weight: bold;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=10, bold=True)}",
+                f"color: {muted}; {_native_text_style(size=10, bold=True)}",
             )
         )
         self._result_header.setVisible(False)
@@ -749,6 +770,7 @@ class ToolBatchWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("message_tool")
         self.setStyleSheet(_tool_card_css(object_name="message_tool"))
+        ThemeManager.instance().themeChanged.connect(self.update)
         self._tool_name = tool_name
         self._count = 0
         self._expanded = False
@@ -802,10 +824,12 @@ class ToolBatchWidget(QFrame):
         header_layout.addWidget(self._name_label)
 
         self._count_label = QLabel("")
+        tokens = ThemeManager.instance().tokens()
+        muted = _muted_text(tokens)
         self._count_label.setStyleSheet(
             host_stylesheet(
                 "color: #808080; font-size: 11px; margin-left: 6px;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=11)}",
+                f"color: {muted}; {_native_text_style(size=11)}",
             )
         )
         header_layout.addWidget(self._count_label, 1)
@@ -852,10 +876,12 @@ class ToolBatchWidget(QFrame):
         # Add entry in detail area
         summary = _format_tool_summary(self._tool_name, args_text) if args_text else ""
         entry = QLabel(f"#{self._count}: {summary}" if summary else f"#{self._count}")
+        tokens = ThemeManager.instance().tokens()
+        muted = _muted_text(tokens)
         entry.setStyleSheet(
             host_stylesheet(
                 "color: #808080; font-family: monospace; font-size: 10px;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=10, monospace=True)}",
+                f"color: {muted}; {_native_text_style(size=10, monospace=True)}",
             )
         )
         entry.setWordWrap(True)
@@ -942,6 +968,7 @@ class ToolGroupWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("message_tool")
         self.setStyleSheet(_tool_card_css(object_name="message_tool"))
+        ThemeManager.instance().themeChanged.connect(self.update)
         self._expanded = False
         self._count = 0
         self._done = 0
@@ -965,10 +992,12 @@ class ToolGroupWidget(QFrame):
         header_layout.addWidget(self._toggle_btn)
 
         self._label = QLabel("0 tools called")
+        tokens = ThemeManager.instance().tokens()
+        muted = _muted_text(tokens)
         self._label.setStyleSheet(
             host_stylesheet(
                 "color: #808080; font-size: 11px; font-weight: bold;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=11, bold=True)}",
+                f"color: {muted}; {_native_text_style(size=11, bold=True)}",
             )
         )
         header_layout.addWidget(self._label, 1)
@@ -1172,13 +1201,17 @@ class ToolApprovalWidget(QFrame):
         super().__init__(parent)
         self._approved_callback = None
         self.setObjectName("message_question")
+        tokens = ThemeManager.instance().tokens()
+        ThemeManager.instance().themeChanged.connect(self.update)
+        approval_bg = _blend_hex(tokens.warning, tokens.base, 0.85)
         self.setStyleSheet(
             host_stylesheet(
-                "QFrame#message_question { border: 1px solid #dcdcaa; border-radius: 6px; background: #2d2d1e; }",
+                f"QFrame#message_question {{ border: 1px solid {tokens.warning}; border-radius: 6px; background: {approval_bg}; }}",
                 _tool_card_css(
                     parent or self,
-                    accent="#dcdcaa",
-                    background="#2d2d1e",
+                    tokens=tokens,
+                    accent=tokens.warning,
+                    background=approval_bg,
                     object_name="message_question",
                 ),
             )
@@ -1191,8 +1224,8 @@ class ToolApprovalWidget(QFrame):
         self._header = QLabel("Approve execute_python?")
         self._header.setStyleSheet(
             host_stylesheet(
-                "color: #dcdcaa; font-weight: bold; font-size: 11px;",
-                f"color: #dcdcaa; {_native_text_style(size=11, bold=True)}",
+                f"color: {tokens.warning}; font-weight: bold; font-size: 11px;",
+                f"color: {tokens.warning}; {_native_text_style(size=11, bold=True)}",
             )
         )
         layout.addWidget(self._header)
@@ -1204,7 +1237,7 @@ class ToolApprovalWidget(QFrame):
         self._info.setStyleSheet(
             host_stylesheet(
                 "color: #808080; font-size: 10px;",
-                f"color: {_MUTED_TEXT}; {_native_text_style(size=10)}",
+                f"color: {_muted_text(tokens)}; {_native_text_style(size=10)}",
             )
         )
         layout.addWidget(self._info)

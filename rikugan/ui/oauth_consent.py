@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 from .qt_compat import QDialog, QDialogButtonBox, QLabel, QPushButton, QVBoxLayout, QWidget
+from .theme.manager import ThemeManager
+from .styles import maybe_host_stylesheet
 
 _POLICY_URL = "https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use"
 
-_DIALOG_STYLE = (
-    "QDialog { background: #1e1e1e; }"
-    "QLabel { color: #d4d4d4; font-size: 12px; }"
-    "QPushButton { background: #2d2d2d; color: #d4d4d4; border: 1px solid #3c3c3c; "
-    "border-radius: 4px; padding: 8px 16px; font-size: 11px; min-width: 120px; }"
-    "QPushButton:hover { background: #3c3c3c; }"
-)
+
+def _dialog_style() -> str:
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QDialog {{ background: {t.base}; }}"
+        f"QLabel {{ color: {t.text}; font-size: 12px; }}"
+        f"QPushButton {{ background: {t.alt_base}; color: {t.text}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 8px 16px; font-size: 11px; min-width: 120px; }}"
+        f"QPushButton:hover {{ background: {t.mid}; }}"
+    )
+
+
+def _link_color() -> str:
+    return ThemeManager.instance().tokens().success
 
 
 def show_oauth_consent(parent: QWidget | None = None) -> str:
@@ -25,7 +34,7 @@ def show_oauth_consent(parent: QWidget | None = None) -> str:
     """
     dlg = QDialog(parent)
     dlg.setWindowTitle("OAuth Token Detected")
-    dlg.setStyleSheet(_DIALOG_STYLE)
+    dlg.setStyleSheet(maybe_host_stylesheet(_dialog_style()))
     dlg.setMinimumWidth(480)
 
     layout = QVBoxLayout(dlg)
@@ -36,7 +45,7 @@ def show_oauth_consent(parent: QWidget | None = None) -> str:
         "Using this token with third-party tools carries risk. "
         "Please read Anthropic's policy before proceeding:"
         "<br><br>"
-        f'<a href="{_POLICY_URL}" style="color: #4ec9b0;">{_POLICY_URL}</a>'
+        f'<a href="{_POLICY_URL}" style="color: {_link_color()};">{_POLICY_URL}</a>'
         "<br><br>"
         "By clicking <b>Ok</b> below, you acknowledge the risk and allow "
         "Rikugan to use this token. This choice is saved and won't be asked again."
