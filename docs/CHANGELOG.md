@@ -58,6 +58,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   produced unreadable code blocks when IDA's host theme was light. Now
   the formatter is luminance-aware and invalidates its cache on theme
   change, so an IDA Native + Light host gets a light Pygments style.
+- **Theme system: 5 post-merge widget-level bugs (A-E)**: After
+  merging the theme system, interactive testing surfaced 5 bugs at
+  widget-construction seams that the unit tests had not caught.
+  (A) `manager._apply_now` no longer calls
+  `QApplication.setStyleSheet()` (which would bleed a global
+  `QWidget` rule into every IDA/Binja host widget); (B) `panel_core`
+  re-styles correctly when the user switches to DARK/LIGHT; (C)
+  `input_area` and (D) all 11 widget classes in `message_widgets`
+  subscribe to `themeChanged` and re-apply on switch; (E) the IDA
+  palette watcher is no longer started in DARK/LIGHT modes (where
+  it is pure polling overhead). See
+  `docs/theme-system-VERIFICATION.md` §3j for the full table.
 
 ### Security
 
