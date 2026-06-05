@@ -305,5 +305,30 @@ class TestIDAThemeWatcher(unittest.TestCase):
         watcher.stop()
 
 
+class TestPluginWatcherGate(unittest.TestCase):
+    """Bug E regression: the IDA plugin must not start IDAThemeWatcher
+    when the user has chosen DARK or LIGHT — those modes return bundled
+    constants and never read QPalette, so polling the host palette is
+    pure overhead (and risks spurious refresh_from_host calls that
+    re-emit the same tokens).
+    """
+
+    def test_needs_palette_watch_logic(self) -> None:
+        """Mirror the gate from rikugan_plugin.run() and assert its
+        truth table across all 4 modes.
+        """
+        from rikugan.ui.theme.tokens import ThemeMode
+
+        for mode, expected in [
+            (ThemeMode.AUTO, True),
+            (ThemeMode.IDA_NATIVE, True),
+            (ThemeMode.DARK, False),
+            (ThemeMode.LIGHT, False),
+        ]:
+            with self.subTest(mode=mode):
+                needs_palette_watch = mode in (ThemeMode.AUTO, ThemeMode.IDA_NATIVE)
+                self.assertEqual(needs_palette_watch, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

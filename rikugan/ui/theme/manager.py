@@ -326,27 +326,27 @@ class ThemeManager(QObject):
         return QApplication.instance()
 
     def _apply_now(self) -> None:
-        """Compute current tokens, apply QSS, emit themeChanged."""
+        """Compute current tokens and emit ``themeChanged``.
+
+        Per-widget stylesheets are the responsibility of individual
+        widgets (panel_core, message_widgets, etc.) which subscribe to
+        ``themeChanged``. The manager deliberately does NOT call
+        ``QApplication.setStyleSheet()`` because:
+
+        * In a plugin host (IDA, Binja) the QApplication is shared, so a
+          global ``QWidget { ... }`` selector bleeds into every host
+          widget (disassembly view, output window, function list...).
+        * ``setStyleSheet()`` re-styles every widget in the process, so
+          it is also a major startup / runtime cost.
+
+        The previous incarnation of this method did call
+        ``app.setStyleSheet()`` and caused both regressions: IDA's own
+        windows picked up Rikugan's colors, and plugin load became
+        noticeably slower on hosts with many widgets.
+        """
         tokens = self.tokens()
-        # Apply QSS to the QApplication if one exists. Use getattr so
-        # the call degrades gracefully when the QApplication stub used
-        # in tests does not expose a static ``instance`` method.
-        try:
-            instance_fn = getattr(QApplication, "instance", None)
-            app = instance_fn() if instance_fn is not None else None
-            if app is not None:
-                qss = self._build_stylesheet(tokens)
-                app.setStyleSheet(qss)
-        except Exception as e:
-            get_logger().error(f"Failed to apply theme QSS: {e}", exc_info=True)
         self.themeChanged.emit(tokens)
         self._pending_apply = None
-
-    def _build_stylesheet(self, tokens: ThemeTokens) -> str:
-        """Build the QSS string from tokens. (Full template is in this file.)"""
-        from dataclasses import asdict
-
-        return format_template(_QSS_TEMPLATE, asdict(tokens))
 
     def _compute_tokens(self) -> ThemeTokens:
         """Compute tokens for the current mode.

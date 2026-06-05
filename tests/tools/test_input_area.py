@@ -196,6 +196,36 @@ class TestInputAreaApplyTheme(unittest.TestCase):
                 area._apply_theme()
         area.setStyleSheet.assert_not_called()
 
+    def test_apply_theme_runs_in_non_native_mode(self):
+        """Regression: in DARK/LIGHT mode the editor must get the Rikugan QSS.
+
+        Before the fix, ``_apply_theme`` returned early in non-native
+        mode (the ``not use_native_host_theme() or ...`` check was
+        inverted). The input area stayed un-styled in DARK/LIGHT, and
+        the broken global ``app.setStyleSheet()`` masked the problem
+        by cascading a global ``QWidget`` rule to it.
+        """
+        area = _make_input()
+        css = "QPlainTextEdit#input_area { background-color: #1e1e1e; color: #eeeeee; }"
+        with patch("rikugan.ui.input_area.use_native_host_theme", return_value=False):
+            with patch("rikugan.ui.input_area.build_input_area_stylesheet", return_value=css):
+                area._apply_theme()
+        area.setStyleSheet.assert_called_once_with(css)
+
+    def test_apply_theme_clears_stylesheet_in_native_mode(self):
+        """In native mode the editor must defer to host styling.
+
+        ``build_input_area_stylesheet`` returns ``""`` in native mode
+        (host styles win), and ``_apply_theme`` must apply that empty
+        string so any prior Rikugan QSS is cleared.
+        """
+        area = _make_input()
+        area._theme_css = "stale css from a previous non-native run"
+        with patch("rikugan.ui.input_area.use_native_host_theme", return_value=True):
+            with patch("rikugan.ui.input_area.build_input_area_stylesheet", return_value=""):
+                area._apply_theme()
+        area.setStyleSheet.assert_called_once_with("")
+
 
 if __name__ == "__main__":
     unittest.main()

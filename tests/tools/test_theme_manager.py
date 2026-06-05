@@ -147,6 +147,42 @@ class TestThemeManagerSingleton(unittest.TestCase):
         # In DARK mode with no app override, window should be #1e1e1e
         self.assertEqual(tokens.window.lower(), "#1e1e1e")
 
+    def test_apply_now_does_not_set_app_stylesheet(self):
+        """Bug A regression: manager._apply_now must NOT call
+        QApplication.setStyleSheet() — in a plugin host (IDA, Binja) the
+        QApplication is shared, so a global QWidget rule would bleed
+        into every host widget (disassembly, output window, etc.).
+        Widgets subscribe to themeChanged and re-style themselves.
+        """
+        m = ThemeManager.instance()
+        # Track any setStyleSheet calls routed through the seam. The
+        # manager uses ThemeManager._app_source() to read palette; in
+        # production that returns QApplication.instance(). For this
+        # test we inject a fake source with a flag.
+        class _TrackingApp:
+            def __init__(self) -> None:
+                self.setStyleSheet_called_with: list[str] = []
+
+            def setStyleSheet(self, qss: str) -> None:
+                self.setStyleSheet_called_with.append(qss)
+
+            def palette(self):
+                # Return a minimal palette (qt_stubs may not have one).
+                import rikugan.ui.theme.manager as mgr_mod
+                return mgr_mod.QPalette()
+
+        app = _TrackingApp()
+        m._app_source = lambda: app  # type: ignore[assignment]
+        try:
+            m.set_mode(ThemeMode.LIGHT)
+        finally:
+            m._app_source = None  # type: ignore[assignment]
+        self.assertEqual(
+            app.setStyleSheet_called_with,
+            [],
+            "manager must not call setStyleSheet on the host QApplication",
+        )
+
 
 class _FakeQApp:
     """Stand-in for QApplication that returns a fixed palette.
@@ -452,8 +488,18 @@ class TestThemeManagerDebounce(unittest.TestCase):
         # tokens should be DARK (last mode set)
         self.assertEqual(captured[0].window.lower(), "#1e1e1e")
 
-    def test_qss_applied_to_application(self):
-        """After debounce flush, qApp.setStyleSheet should be called with the new tokens."""
+    def test_qss_not_applied_to_application(self):
+        """ThemeManager must NOT call ``QApplication.setStyleSheet()``.
+
+        Rikugan is a plugin loaded into a shared QApplication host (IDA,
+        Binja). Calling ``app.setStyleSheet()`` would cascade a global
+        ``QWidget { ... }`` selector to every host widget (disassembly
+        view, function list, output window, ...) and also re-style all
+        of them on every theme change — visible as "IDA windows turn
+        Rikugan color" and "plugin loads slowly". Per-widget
+        stylesheets are the responsibility of subscribers to
+        ``themeChanged`` (panel_core, message_widgets, ...).
+        """
         from PySide6.QtCore import QCoreApplication  # noqa: I001
         from unittest.mock import MagicMock, patch
 
@@ -471,10 +517,38 @@ class TestThemeManagerDebounce(unittest.TestCase):
             mgr.set_mode(ThemeMode.LIGHT)
             self._wait_for_debounce()
             QCoreApplication.processEvents()
-            # QSS should be applied
-            self.assertEqual(len(captured_qss), 1)
-            # The QSS should reference LIGHT's window color (white)
-            self.assertIn("#ffffff", captured_qss[0].lower())
+            # The manager must not touch the global QApplication
+            # stylesheet — that would bleed into the host UI.
+            self.assertEqual(
+                captured_qss,
+                [],
+                "ThemeManager must not call QApplication.setStyleSheet() — "
+                "it would cascade to every host widget in a shared QApplication.",
+            )
+
+    def test_theme_changed_signal_still_emits(self):
+        """After the global-QSS removal, ``themeChanged`` must still fire.
+
+        Per-widget subscribers (panel_core, message_widgets, ...) rely
+        on this signal to re-apply their own stylesheets, so it must
+        keep working even though we no longer touch the application
+        stylesheet.
+        """
+        from PySide6.QtCore import QCoreApplication
+
+        mgr = self.ThemeManager.instance()
+        mgr.set_mode(ThemeMode.DARK)
+        self._wait_for_debounce()
+        QCoreApplication.processEvents()
+
+        captured: list = []
+        mgr.themeChanged.connect(lambda tokens: captured.append(tokens))
+
+        mgr.set_mode(ThemeMode.LIGHT)
+        self._wait_for_debounce()
+        QCoreApplication.processEvents()
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0].window.lower(), "#ffffff")
 
 
 if __name__ == "__main__":

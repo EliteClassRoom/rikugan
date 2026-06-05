@@ -71,9 +71,22 @@ class RikuganPlugmod(idaapi.plugmod_t):
                 theme_mgr.set_mode(ThemeMode.AUTO)
 
             # Start IDA palette watcher (IDA host only — Binja is not
-            # theme-aware via QPalette). The getattr guard prevents a
-            # second start when run() is invoked more than once.
-            if is_ida() and not getattr(self, "_theme_watcher", None):
+            # theme-aware via QPalette). The watcher is also skipped in
+            # DARK/LIGHT modes: the manager returns the bundled constant
+            # tokens without consulting QPalette, so polling the host
+            # palette every 500 ms is pure overhead (and risks spurious
+            # refresh_from_host calls that re-emit the same tokens).
+            # The getattr guard prevents a second start when run() is
+            # invoked more than once.
+            needs_palette_watch = theme_mgr.mode in (
+                ThemeMode.AUTO,
+                ThemeMode.IDA_NATIVE,
+            )
+            if (
+                is_ida()
+                and needs_palette_watch
+                and not getattr(self, "_theme_watcher", None)
+            ):
                 from rikugan.ui.theme.watcher import IDAThemeWatcher
 
                 self._theme_watcher = IDAThemeWatcher(interval_ms=500)

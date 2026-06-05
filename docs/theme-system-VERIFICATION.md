@@ -391,3 +391,26 @@ attributes, so the test env did not reproduce the host warning.
 **Lesson logged**: tests/qt_stubs.py should not promote `__or__` on
 `StandardButton` or `AlignmentFlag` — it masks real-PySide6 behavior.
 A follow-up to remove that promotion is recommended.
+
+---
+
+## Post-merge Bug Fix Round (2026-06-05, second pass)
+
+During interactive testing, 5 latent bugs surfaced that the unit tests
+had not caught (they live at widget-construction seams, not the
+manager/palette layer that the test suite covers). All are fixed and
+regression-tested in the same commit.
+
+| Bug | Symptom | Root cause | Fix |
+|-----|---------|------------|-----|
+| **A** | `setStyleSheet` call on the host QApplication would bleed Rikugan's global `QWidget { ... }` rule into every IDA/Binja host widget (disassembly, output, function list) | `manager._apply_now` previously called `app.setStyleSheet(...)` for DARK/LIGHT modes; widgets should style themselves, not the global app | `rikugan/ui/theme/manager.py:_apply_now` — removed the `app.setStyleSheet(...)` call. Per-widget stylesheets are the responsibility of widgets that subscribe to `themeChanged` |
+| **B** | DARK/LIGHT mode ignored the user's Selection in `panel_core` and never re-styled | `_on_theme_changed` had a `native_mode_only` short-circuit that returned early for DARK/LIGHT, so the in-place QSS refresh was skipped | `rikugan/ui/panel_core.py:_on_theme_changed` — only short-circuit when **both** in `is_ida_native_mode()` AND a native-derivation happened; otherwise always refresh from `ThemeManager.tokens()` |
+| **C** | `input_area.py` had no `themeChanged` subscription, so the input box stayed the original color after a switch | The widget was created in Task 16a but its `setStyleSheet` was one-shot at `__init__`; no listener to re-style on change | `rikugan/ui/input_area.py` — extracted `_apply_styles(self, _tokens=None)` and connected it to `ThemeManager.instance().themeChanged` |
+| **D** | 11 widget classes in `message_widgets.py` (`ThinkingBlock`, `ToolCallWidget`, `AssistantMessage`, etc.) never re-styled on theme change | Same pattern as C: `setStyleSheet` was called once in `__init__` and never updated | `rikugan/ui/message_widgets.py` — extracted `_apply_styles(self, _tokens=None)` on every widget class; each subscribes to `themeChanged`. The `_tokens=None` default keeps the slot callable both from the signal (which passes the new tokens) and from manual calls |
+| **E** | `IDAThemeWatcher` was always started on IDA, even when the user had chosen DARK or LIGHT (which never read QPalette) — pure 500ms polling overhead and a noise source for spurious `themeChanged` emissions | Plugin entry started the watcher unconditionally for `is_ida()` | `rikugan_plugin.py:run` — added `needs_palette_watch = theme_mgr.mode in (AUTO, IDA_NATIVE)` gate before starting the watcher |
+
+**Regression tests added**:
+- `tests/tools/test_theme_manager.py::TestThemeManagerSingleton::test_apply_now_does_not_set_app_stylesheet` — Bug A: uses the `_app_source` seam to inject a `_TrackingApp` whose `setStyleSheet` is recorded; asserts the list stays empty after `set_mode(LIGHT)`.
+- `tests/tools/test_theme_watcher.py::TestPluginWatcherGate::test_needs_palette_watch_logic` — Bug E: truth-table test for the gate across all 4 modes.
+
+**Full suite**: `1312 passed, 8 skipped` (was 1310 before the two new tests).

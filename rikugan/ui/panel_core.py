@@ -648,8 +648,14 @@ class RikuganPanelCore(QWidget):
         self._tools_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
 
     def _on_theme_changed(self, _tokens) -> None:
-        """Refresh themed widgets when the user switches the active theme."""
-        if not self._use_native_host_theme:
+        """Refresh themed widgets when the user switches the active theme.
+
+        ``use_native_host_theme()`` is read live (not cached) because the
+        user can switch between AUTO/IDA_NATIVE (host styles win) and
+        DARK/LIGHT (Rikugan styles win) at runtime. ``_use_native_host_theme``
+        is set once at construction and would be stale in that case.
+        """
+        if not use_native_host_theme():
             # Re-apply the global QSS template with the new token values.
             self.setStyleSheet(build_theme_stylesheet(self))
             self._apply_action_button_styles()

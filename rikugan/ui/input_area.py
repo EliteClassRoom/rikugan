@@ -124,6 +124,9 @@ class InputArea(QPlainTextEdit):
         self._applying_theme = False
         self._theme_css = ""
         self._apply_theme()
+        # Re-apply on theme change so DARK <-> LIGHT (and AUTO host
+        # palette flips in native mode) actually re-style the editor.
+        ThemeManager.instance().themeChanged.connect(self._apply_theme)
 
     def set_submit_callback(self, callback) -> None:
         """Set the callback for submit (Enter key). Callback signature: (str) -> None."""
@@ -188,8 +191,17 @@ class InputArea(QPlainTextEdit):
             self.setPlaceholderText("Rikugan is thinking...")
 
     def _apply_theme(self) -> None:
-        """Apply host-aware styling to the text editor."""
-        if not use_native_host_theme() or self._applying_theme:
+        """Apply host-aware styling to the text editor.
+
+        In native mode (host styles win) the stylesheet is cleared so
+        the host QPlainTextEdit style is used. In DARK/LIGHT mode the
+        Rikugan QSS from ``build_input_area_stylesheet`` is applied.
+
+        The ``_applying_theme`` guard suppresses re-entry when
+        ``changeEvent`` fires as a side effect of the
+        ``setStyleSheet`` call below.
+        """
+        if self._applying_theme:
             return
         css = build_input_area_stylesheet(self)
         if css == self._theme_css:
