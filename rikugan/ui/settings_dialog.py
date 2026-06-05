@@ -32,6 +32,7 @@ from .qt_compat import (
     QTimer,
     QVBoxLayout,
     QWidget,
+    qt_flags,
 )
 from .styles import maybe_host_stylesheet
 from .theme.manager import ThemeManager
@@ -261,7 +262,7 @@ class _ThemePreviewChip(QWidget):
             p.setPen(QColor(t.text))
             p.drawText(
                 self.rect().adjusted(8, 6, -8, -8),
-                Qt.AlignmentFlag.AlignTopLeft,
+                qt_flags(Qt.AlignmentFlag.AlignTop, Qt.AlignmentFlag.AlignLeft),
                 "Sample text",
             )
             swatch_y = 30
@@ -361,7 +362,9 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(self._tabs)
 
-        self._button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self._button_box = QDialogButtonBox(
+            qt_flags(QDialogButtonBox.StandardButton.Ok, QDialogButtonBox.StandardButton.Cancel)
+        )
         self._button_box.accepted.connect(self._on_accept)
         self._button_box.rejected.connect(self.reject)
         layout.addWidget(self._button_box)
