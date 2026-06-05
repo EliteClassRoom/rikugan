@@ -19,13 +19,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Validate tag matches plugin.json version
+      - name: Validate tag matches PLUGIN_VERSION
         run: |
           TAG=${GITHUB_REF#refs/tags/v}
-          VERSION=$(python -c "import json; print(json.load(open('plugin.json'))['version'])")
-          echo "Tag: $TAG  |  plugin.json: $VERSION"
+          VERSION=$(python -c "from rikugan.constants import PLUGIN_VERSION; print(PLUGIN_VERSION)")
+          echo "Tag: $TAG  |  PLUGIN_VERSION: $VERSION"
           if [ "$TAG" != "$VERSION" ]; then
-            echo "ERROR: tag v$TAG does not match plugin.json version $VERSION"
+            echo "ERROR: tag v$TAG does not match PLUGIN_VERSION $VERSION"
             exit 1
           fi
 

@@ -154,13 +154,13 @@ Format: `type(scope): short description`
 ## Release Process
 
 1. Merge `dev` → `main` via PR
-2. Bump `version` in `plugin.json`
+2. Bump `PLUGIN_VERSION` in `rikugan/constants.py`
 3. Tag and push:
    ```bash
    git tag v0.x.x
    git push origin v0.x.x
    ```
-4. GitHub Actions validates the tag matches `plugin.json` and publishes the GitHub Release
+4. GitHub Actions validates the tag matches `PLUGIN_VERSION` and publishes the GitHub Release
 5. GitHub Release auto-serves the new version from `main`
 
 ---

@@ -365,9 +365,9 @@ CI does **not** run `desloppify review` (the LLM-powered subjective scoring) —
 ### Release Flow
 
 1. Merge `dev` → `main` via PR (CI must pass)
-2. Bump `version` in `plugin.json`
+2. Bump `PLUGIN_VERSION` in `rikugan/constants.py`
 3. Push tag: `git tag v0.x.x && git push origin v0.x.x`
-4. GitHub Actions validates the tag matches `plugin.json`, then creates the GitHub Release
+4. GitHub Actions validates the tag matches `PLUGIN_VERSION`, then creates the GitHub Release
 5. GitHub Release auto-serves the new version from `main`
 
 ### Workflow Files
