@@ -529,7 +529,7 @@ class RikuganPanelCore(QWidget):
             _tools_placeholder = QWidget()
             self._mode_stack.addWidget(_tools_placeholder)
         else:
-            # Binary Ninja: embed directly in the mode stack.
+            # Embed the tools panel directly in the mode stack.
             self._mode_stack.addWidget(self._tools_panel)
         self._tools_tab_index = -1  # kept for IDA compat
 

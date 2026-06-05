@@ -1,8 +1,8 @@
 """Qt compatibility layer for Rikugan.
 
-IDA 9.x 64-bit and Binary Ninja ship PySide6 (Qt6).  IDA 9.1 32-bit on
-Windows still uses Qt5 — its process has Qt5Core.dll loaded.  Importing
-PySide6 in that environment loads Qt6 DLLs alongside Qt5, which triggers a
+IDA 9.x 64-bit ships PySide6 (Qt6).  IDA 9.1 32-bit on Windows still uses
+Qt5 — its process has Qt5Core.dll loaded.  Importing PySide6 in that
+environment loads Qt6 DLLs alongside Qt5, which triggers a
 ``FAST_FAIL_FATAL_APP_EXIT`` crash inside ``QWidgetPrivate::QWidgetPrivate``
 (Qt6 widget constructor detects it is not running in a Qt6 QApplication).
 

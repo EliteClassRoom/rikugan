@@ -70,8 +70,8 @@ class RikuganPlugmod(idaapi.plugmod_t):
                 # Fall back to AUTO if config has an unknown mode
                 theme_mgr.set_mode(ThemeMode.AUTO)
 
-            # Start IDA palette watcher (IDA host only — Binja is not
-            # theme-aware via QPalette). The watcher is also skipped in
+            # Start IDA palette watcher (IDA host only — standalone is
+            # not theme-aware via QPalette). The watcher is also skipped in
             # DARK/LIGHT modes: the manager returns the bundled constant
             # tokens without consulting QPalette, so polling the host
             # palette every 500 ms is pure overhead (and risks spurious

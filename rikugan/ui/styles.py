@@ -157,7 +157,7 @@ def use_native_host_theme() -> bool:
     Maps :class:`ThemeMode` to a yes/no answer:
 
     * ``AUTO`` — True on IDA (use the live QPalette), False elsewhere
-      (Binja falls back to DARK via the manager).
+      (other hosts fall back to DARK via the manager).
     * ``IDA_NATIVE`` — True on IDA, False elsewhere (manager emits a
       warning and falls back to DARK on non-IDA hosts).
     * ``DARK`` / ``LIGHT`` — always False (Rikugan owns the styling).

@@ -348,7 +348,7 @@ class AgentLoop:
         if self.session.idb_path:
             idb_dir = os.path.dirname(self.session.idb_path)
         if not idb_dir:
-            yield TurnEvent.text_done("No IDB/BNDB path set — persistent memory is not available.")
+            yield TurnEvent.text_done("No IDB path set — persistent memory is not available.")
             return
 
         md_path = os.path.join(idb_dir, "RIKUGAN.md")
@@ -484,9 +484,9 @@ class AgentLoop:
 
         # Check IDB path for persistent memory
         if self.session.idb_path:
-            ok.append(f"IDB/BNDB: {self.session.idb_path}")
+            ok.append(f"IDB: {self.session.idb_path}")
         else:
-            issues.append("No IDB/BNDB path — persistent memory disabled")
+            issues.append("No IDB path — persistent memory disabled")
 
         # Format output
         lines = ["**Rikugan Doctor**\n"]
@@ -966,7 +966,7 @@ class AgentLoop:
         else:
             idb_dir = os.path.dirname(self.session.idb_path) if self.session.idb_path else ""
             if not idb_dir:
-                content = "Error: No IDB/BNDB path set; cannot determine where to save memory."
+                content = "Error: No IDB path set; cannot determine where to save memory."
                 is_err = True
             else:
                 md_path = os.path.join(idb_dir, "RIKUGAN.md")
@@ -1237,8 +1237,8 @@ class AgentLoop:
                             "Load a skill's full prompt and reference material into context. "
                             "Call this when the user's request matches a skill's domain "
                             "(e.g., activate 'malware-analysis' for malware tasks, "
-                            "'vuln-audit' for security audits, 'ida-scripting' or "
-                            "'binja-scripting' when you need to write scripts). "
+                            "'vuln-audit' for security audits, 'ida-scripting' when you need "
+                            "to write scripts, or 'smart-patch-ida' for binary patching). "
                             "The skill body will be returned so you can follow its methodology."
                         ),
                         "parameters": {

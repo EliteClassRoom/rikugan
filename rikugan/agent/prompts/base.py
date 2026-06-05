@@ -185,7 +185,7 @@ You do what was asked, you do it well, and you don't keep going when
 nobody asked you to.
 """
 
-# Capability bullet lines shared by both IDA and Binary Ninja prompts.
+# Capability bullet lines shared by the host prompt and the agent prompt.
 SHARED_CAPABILITIES_BULLETS = """\
 - Read disassembly and decompiled pseudocode
 - Navigate to addresses and functions

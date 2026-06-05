@@ -41,7 +41,7 @@ def _unwrap_exception(exc: BaseException) -> str:
 def _safe_errlog():
     """Return a file-like object usable as subprocess stderr.
 
-    IDA/Binary Ninja replace ``sys.stderr`` with custom objects
+    IDA Pro replaces ``sys.stderr`` with custom objects
     (``IDAPythonStdOut``) that lack ``fileno()``.  ``anyio.open_process()``
     passes ``stderr=`` directly to the OS, which requires a real fd.
     Fall back to opening ``/dev/null`` when the host's stderr is not a

@@ -16,11 +16,11 @@ from enum import Enum
 class ThemeMode(str, Enum):
     """User-selectable theme mode.
 
-    AUTO: follow host — IDA→native palette, Binja→Dark.
+    AUTO: follow host — IDA→native palette, standalone→Dark.
     DARK: Rikugan hardcoded dark theme.
     LIGHT: Rikugan VS Code Light+ theme.
-    IDA_NATIVE: always transparent, follow IDA palette (Binja falls back
-        to DARK with a warning).
+    IDA_NATIVE: always transparent, follow IDA palette (non-IDA falls
+        back to DARK with a warning).
     """
 
     AUTO = "auto"

@@ -1,7 +1,7 @@
 """IDAThemeWatcher — polls QApplication.palette() and notifies ThemeManager.
 
 Only meaningful in IDA hosts. Started by PLUGIN_ENTRY for the IDA host.
-No-op on Binja (do not start the watcher there).
+No-op outside IDA (do not start the watcher there).
 
 Behavior:
 - Polls every ``interval_ms`` (default 500) via ``QTimer.singleShot``

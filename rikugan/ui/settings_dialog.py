@@ -402,8 +402,8 @@ class SettingsDialog(QDialog):
 
         note = QLabel(
             "Auto uses IDA's native theme when running in IDA Pro, and "
-            "Rikugan Dark in Binary Ninja. 'IDA Native' updates in real "
-            "time when you switch IDA's theme via View -> Theme."
+            "Rikugan Dark when running standalone. 'IDA Native' updates in "
+            "real time when you switch IDA's theme via View -> Theme."
         )
         note.setWordWrap(True)
         layout.addRow(note)

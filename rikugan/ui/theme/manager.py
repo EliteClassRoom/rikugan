@@ -373,7 +373,7 @@ class ThemeManager(QObject):
         ``themeChanged``. The manager deliberately does NOT call
         ``QApplication.setStyleSheet()`` because:
 
-        * In a plugin host (IDA, Binja) the QApplication is shared, so a
+        * In a plugin host (IDA) the QApplication is shared, so a
           global ``QWidget { ... }`` selector bleeds into every host
           widget (disassembly view, output window, function list...).
         * ``setStyleSheet()`` re-styles every widget in the process, so
@@ -391,10 +391,10 @@ class ThemeManager(QObject):
     def _compute_tokens(self) -> ThemeTokens:
         """Compute tokens for the current mode.
 
-        AUTO: IDA → derive_ida_tokens; Binja/standalone → DARK_TOKENS.
+        AUTO: IDA → derive_ida_tokens; standalone → DARK_TOKENS.
         DARK: DARK_TOKENS.
         LIGHT: LIGHT_TOKENS.
-        IDA_NATIVE: derive_ida_tokens (Binja → DARK_TOKENS + warning log).
+        IDA_NATIVE: derive_ida_tokens (non-IDA → DARK_TOKENS + warning log).
 
         Palette reads go through ``_app_source()`` so tests can inject a
         fake QApplication (or an offline stub) without monkey-patching

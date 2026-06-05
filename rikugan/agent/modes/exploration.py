@@ -335,7 +335,6 @@ def _run_phase4_save(
                     "[SYSTEM] Patches are saved in the analysis database. "
                     "To create a patched binary:\n"
                     "- **IDA Pro**: File → Produce file → Create patched file\n"
-                    "- **Binary Ninja**: File → Save / Save As"
                 ),
             )
         )

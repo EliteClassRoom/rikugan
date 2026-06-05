@@ -4,8 +4,8 @@ Used when ThemeMode is AUTO (in IDA) or IDA_NATIVE. Reads 12 QPalette
 roles and derives 5 semantic tokens (success/warning/error/code_text/code_bg)
 by blending fixed base hues toward the active text luminance.
 
-Binja is NOT theme-aware in the same way — this module is IDA-specific.
-For Binja, the manager falls back to DARK_TOKENS before calling here.
+This module is IDA-specific — non-IDA hosts fall back to DARK_TOKENS in
+the manager before calling here.
 """
 
 from __future__ import annotations

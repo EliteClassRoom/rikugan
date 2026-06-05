@@ -300,7 +300,7 @@ class CollapsibleSection(QFrame):
 
     def _apply_styles(self, _tokens: object = None) -> None:
         # The toggle button has no parent QSS that can theme it
-        # reliably across IDA/Binja host palettes, so we set the
+        # reliably across plugin host palettes, so we set the
         # foreground explicitly. We use a *secondary-tier* color
         # (``_muted_text`` = blend of text and mid) plus bold weight
         # so the ▶/▼ glyph stands out from the adjacent title —

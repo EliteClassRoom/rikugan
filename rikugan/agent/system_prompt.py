@@ -23,7 +23,7 @@ _MAX_MEMORY_LINES = 200
 
 
 def _load_persistent_memory(idb_dir: str = "") -> str | None:
-    """Load RIKUGAN.md from the IDB/BNDB directory (first 200 lines).
+    """Load RIKUGAN.md from the IDB directory (first 200 lines).
 
     The file acts as persistent cross-session memory for the agent.
     """

@@ -1,6 +1,6 @@
 # Rikugan (六眼)
 
-> An agentic AI reverse-engineering assistant that runs natively inside IDA Pro and Binary Ninja.
+> An agentic AI reverse-engineering assistant that runs natively inside IDA Pro.
 
 Rikugan is a plugin that embeds a full agentic LLM loop — with its own tool framework, skills system, context management, and chat UI — directly inside your disassembler. It is not an MCP client or a wrapper; it runs in-process with access to the host's scripting API.
 
@@ -12,9 +12,9 @@ Rikugan is a plugin that embeds a full agentic LLM loop — with its own tool fr
 
 ## Key Facts
 
-- **Hosts**: IDA Pro 9.0+ and Binary Ninja (UI mode). Windows, macOS, Linux.
+- **Hosts**: IDA Pro 9.0+ (UI mode). Windows, macOS, Linux.
 - **LLM Providers**: Anthropic (Claude), OpenAI, Google Gemini, Ollama (local), any OpenAI-compatible endpoint.
-- **Tools**: 50 shared tools + 6 IDA-only microcode tools + 13 Binary Ninja-only IL tools = 69 total.
+- **Tools**: 50 shared tools + 6 IDA-only microcode tools = 56 total.
 - **Skills**: 12 built-in skills including malware analysis, deobfuscation, vuln audit, CTF solving, driver analysis, and binary patching. Custom skills supported via SKILL.md files.
 - **Agentic loop**: Generator-based turn cycle — User Message → LLM Stream → Tool Execution → Yield TurnEvents → Next Turn.
 - **Exploration Mode** (`/modify <goal>`): 4-phase autonomous binary modification: EXPLORE → PLAN → EXECUTE → SAVE, with user approval gates.
@@ -22,7 +22,7 @@ Rikugan is a plugin that embeds a full agentic LLM loop — with its own tool fr
 - **Mutation Undo** (`/undo [N]`): Every rename, comment, type change, or prototype modification is tracked with a reverse operation.
 - **Script Approval**: `execute_python` always shows the full code for user approval before running. Scripts are limited to the disassembler's scripting API.
 - **MCP Client**: Connects external MCP servers via stdio + JSON-RPC 2.0 with Content-Length framing. Heartbeat monitoring detects dead servers.
-- **Persistent Memory**: `RIKUGAN.md` next to the IDB/BNDB persists findings across sessions. First 200 lines injected into system prompt.
+- **Persistent Memory**: `RIKUGAN.md` next to the IDB persists findings across sessions. First 200 lines injected into system prompt.
 - **Multi-Tab Chat**: Multiple independent sessions per file with fork support and auto-save/restore.
 - **Context Management**: Auto-compaction at 80% of configured context window threshold.
 
@@ -35,7 +35,7 @@ Rikugan is a plugin that embeds a full agentic LLM loop — with its own tool fr
 
 ## Built-in Skills
 
-/malware-analysis, /linux-malware, /deobfuscation, /vuln-audit, /driver-analysis, /ctf, /generic-re, /ida-scripting, /binja-scripting, /modify, /smart-patch-ida, /smart-patch-binja
+/malware-analysis, /linux-malware, /deobfuscation, /vuln-audit, /driver-analysis, /ctf, /generic-re, /ida-scripting, /modify, /smart-patch-ida
 
 ## MCP Config Format
 
@@ -58,7 +58,6 @@ Tools from MCP servers appear with the prefix `mcp_<server>_<tool>`.
 
 Clone the repo, then run the platform installer:
 - `./install_ida.sh` (Linux/macOS) or `install_ida.bat` (Windows)
-- `./install_binaryninja.sh` (Linux/macOS) or `install_binaryninja.bat` (Windows)
 
 Installers create plugin links, install Python dependencies, and initialize the Rikugan config directory.
 
