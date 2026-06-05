@@ -15,10 +15,15 @@ project's life, but maintaining it has concrete costs:
    `rikugan/ida/tools/` line-for-line, with host-API calls swapped. Every
    new tool must be implemented twice and tested twice.
 2. **Hidden duplication in shared module**: `rikugan/tools/xrefs.py` and
-   `rikugan/tools/functions.py` are **byte-for-byte duplicates** of
-   `rikugan/ida/tools/xrefs.py` and `functions.py` — they only exist
-   because the BN versions needed access to the shared formatting helpers
-   (`format_callers_callees`, `format_function_summary`).
+   `rikugan/tools/functions.py` are **near-duplicates** of
+   `rikugan/ida/tools/xrefs.py` and `functions.py` (verified via `diff`:
+   identical function bodies, only the relative import paths differ —
+   `from ..core.logging` vs `from ...core.logging` because the files
+   sit in different packages). They only exist because the BN versions
+   needed access to the shared formatting helpers (`format_callers_callees`,
+   `format_function_summary`); the IDA versions are nominally the
+   "owners" of that logic but it was copy-pasted into the shared package
+   to share with BN. After BN removal, the duplication is pure waste.
 3. **Core abstractions carry dead branches**: `rikugan/core/host.py` has
    full Binary Ninja detection logic (`HOST_BINARY_NINJA`, `is_binary_ninja()`,
    `_bn_bv`, BN metadata storage, BN config dir resolution) that exists
@@ -131,23 +136,23 @@ These files have no inbound imports from anything that survives
 the refactor (other than the BN code being deleted alongside them).
 They can be deleted in Phase 1 without coordination.
 
-| Path | Reason | Approx LOC |
-|------|--------|------------|
-| `rikugan/binja/` (entire package) | Full BN host package | ~3,500 |
-| `rikugan_binaryninja.py` | BN plugin entry point | 19 |
-| `install_binaryninja.sh` | BN installer | ~230 |
-| `install_binaryninja.bat` | BN installer | ~190 |
-| `plugin.json` | BN plugin manifest | ~30 |
-| `rikugan/skills/builtins/binja-scripting/` | BN Python API skill | ~600 |
-| `rikugan/skills/builtins/smart-patch-binja/` | BN patching workflow | ~150 |
-| `rikugan/skills/builtins/deobfuscation/references/binja/` | BN deobfuscation refs | ~400 |
-| `tests/tools/test_binja_actions.py` | BN test | ~200 |
-| `tests/tools/test_binja_common.py` | BN test | ~150 |
-| `tests/tools/test_binja_panel.py` | BN test | ~200 |
-| `tests/tools/test_binja_types_tools.py` | BN test | ~300 |
-| `tests/tools/test_rikugan_binaryninja.py` | BN test | ~100 |
-| `tests/core/test_host_matrix.py` | Host matrix test | ~150 |
-| **Total Phase 1** | | **~6,219** |
+| Path | Reason | Verified LOC |
+|------|--------|--------------|
+| `rikugan/binja/` (entire package) | Full BN host package | 4,139 |
+| `rikugan_binaryninja.py` | BN plugin entry point | 18 |
+| `install_binaryninja.sh` | BN installer | 212 |
+| `install_binaryninja.bat` | BN installer | 207 |
+| `plugin.json` | BN plugin manifest | 40 |
+| `rikugan/skills/builtins/binja-scripting/` (SKILL.md + references/) | BN Python API skill | 774 |
+| `rikugan/skills/builtins/smart-patch-binja/` | BN patching workflow | 95 |
+| `rikugan/skills/builtins/deobfuscation/references/binja/` (4 files) | BN deobfuscation refs | 610 |
+| `tests/tools/test_binja_actions.py` | BN test | 249 |
+| `tests/tools/test_binja_common.py` | BN test | 291 |
+| `tests/tools/test_binja_panel.py` | BN test | 106 |
+| `tests/tools/test_binja_types_tools.py` | BN test | 109 |
+| `tests/tools/test_rikugan_binaryninja.py` | BN test | 290 |
+| `tests/core/test_host_matrix.py` | Host matrix test | 252 |
+| **Total Phase 1** | | **7,392** |
 
 ### 2.1b Coordinated Deletions (require import update first)
 
@@ -155,12 +160,12 @@ These files cannot be deleted in Phase 1 because the IDA tools
 currently import from them. They are deleted in **Phase 2 or Phase 3**
 after the import edges are rewired.
 
-| Path | Deleted in | Reason | Approx LOC |
-|------|------------|--------|------------|
-| `rikugan/agent/prompts/binja.py` | Phase 2 | After `system_prompt.py` drops the import | ~150 |
+| Path | Deleted in | Reason | Verified LOC |
+|------|------------|--------|--------------|
+| `rikugan/agent/prompts/binja.py` | Phase 2 | After `system_prompt.py` drops the import | 53 |
 | `rikugan/tools/xrefs.py` | Phase 3 | After `ida/tools/xrefs.py` switches to `rikugan.tools.formatting` | 140 |
 | `rikugan/tools/functions.py` | Phase 3 | After `ida/tools/functions.py` switches to `rikugan.tools.formatting` | 129 |
-| **Total Phase 2+3 deletions** | | | **~419** |
+| **Total Phase 2+3 deletions** | | | **322** |
 
 ### 2.2 Core Abstraction Modifications
 
@@ -239,9 +244,10 @@ After BN removal, the duplicates are dead weight. We:
    `format_function_summary`.
 4. Delete `rikugan/tools/xrefs.py` and `rikugan/tools/functions.py`.
 5. Update `rikugan/tools/__init__.py` docstring to no longer say
-   "IDA tool implementations live in their respective packages"
-   (replace with a description of the new shared framework including
-   `formatting.py`).
+   "IDA tool implementations live in their respective packages" or
+   "rikugan.binja.tools (Binary Ninja)" — replace with a description
+   of the new shared framework that includes `formatting.py` and
+   notes that IDA tool implementations live in `rikugan.ida.tools/`.
 
 ### 2.4 Skill Content Updates (Phase 4)
 
@@ -287,6 +293,11 @@ plugin. The rewrite removes:
 - `DEVELOPMENT.md`: BN install/test instructions
 - `llms.txt`: BN mentions
 - `.github/workflows/ci.yml`: BN test job if present
+- `pyproject.toml`:
+  - Remove `"rikugan/binja/**" = ["F401", "E741"]` per-file-ignores
+    (no longer needed; folder is gone)
+  - Remove `"rikugan/tools/functions.py" = ["RUF001"]` per-file-ignores
+    (file is gone after Phase 3)
 
 ## Section 3: Implementation Order (7 Phases)
 
@@ -382,14 +393,14 @@ Run the full local CI script:
 | Phase | Risk | LOC delta | Commits |
 |-------|------|-----------|---------|
 | 0: Research | none | 0 | 0 |
-| 1: Pure deletes | low | -6,219 | 1 |
-| 2: Strip BN core | medium | -450 (incl. `prompts/binja.py`) | 1 |
-| 3: Dedup tools | low | -129 (helpers extracted, files deleted) | 1 |
-| 4: Skills content | low | -100 | 1 |
-| 5: Test updates | low | -200 | 1 |
+| 1: Pure deletes | low | -7,392 | 1 |
+| 2: Strip BN core | medium | -350 (incl. `prompts/binja.py` = 53, plus core mods ~300) | 1 |
+| 3: Dedup tools | low | -219 (= -269 deleted + ~50 new `formatting.py`) | 1 |
+| 4: Skills content | low | -100 (in-place rewrites in remaining skills) | 1 |
+| 5: Test updates | low | -200 (removing test code in `tests/core/test_host.py` etc.) | 1 |
 | 6: Docs rewrite | none | 0 (rewrite) | 1 |
 | 7: Final verify | none | 0 | 0-1 |
-| **Total** | | **~-7,100 LOC** | **7-8 commits** |
+| **Total** | | **~-8,260 LOC** | **7-8 commits** |
 
 ## Section 4: Data Flow & Integration Points
 
