@@ -149,7 +149,7 @@ class TestThemeManagerSingleton(unittest.TestCase):
 
     def test_apply_now_does_not_set_app_stylesheet(self):
         """Bug A regression: manager._apply_now must NOT call
-        QApplication.setStyleSheet() — in a plugin host (IDA, Binja) the
+        QApplication.setStyleSheet() — in a plugin host (IDA, Ghidra) the
         QApplication is shared, so a global QWidget rule would bleed
         into every host widget (disassembly, output window, etc.).
         Widgets subscribe to themeChanged and re-style themselves.
@@ -492,7 +492,7 @@ class TestThemeManagerDebounce(unittest.TestCase):
         """ThemeManager must NOT call ``QApplication.setStyleSheet()``.
 
         Rikugan is a plugin loaded into a shared QApplication host (IDA,
-        Binja). Calling ``app.setStyleSheet()`` would cascade a global
+        Ghidra). Calling ``app.setStyleSheet()`` would cascade a global
         ``QWidget { ... }`` selector to every host widget (disassembly
         view, function list, output window, ...) and also re-style all
         of them on every theme change — visible as "IDA windows turn

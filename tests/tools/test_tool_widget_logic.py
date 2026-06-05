@@ -65,7 +65,7 @@ class TestToolColor(unittest.TestCase):
         self.assertEqual(color, _DEFAULT_TOOL_COLOR)
 
     def test_mcp_prefixed_tool(self):
-        color = _tool_color("mcp__bn__decompile_function")
+        color = _tool_color("mcp__myserver__decompile_function")
         self.assertEqual(color, "#4ec9b0")  # still teal after stripping prefix
 
 
@@ -96,7 +96,7 @@ class TestFormatToolGroupLabel(unittest.TestCase):
         self.assertEqual(result, "2 tools called")
 
     def test_mcp_prefixed_known(self):
-        result = _format_tool_group_label(["mcp__bn__decompile_function"])
+        result = _format_tool_group_label(["mcp__myserver__decompile_function"])
         self.assertEqual(result, "Decompiled 1 function")
 
 
@@ -154,7 +154,7 @@ class TestFormatToolSummary(unittest.TestCase):
 
     def test_mcp_prefixed_tool(self):
         args = json.dumps({"address": "0x400"})
-        result = _format_tool_summary("mcp__bn__decompile_function", args)
+        result = _format_tool_summary("mcp__myserver__decompile_function", args)
         self.assertEqual(result, "0x400")
 
     def test_phase_transition(self):
