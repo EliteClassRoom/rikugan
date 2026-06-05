@@ -378,6 +378,10 @@ class BulkRenamerWidget(QWidget):
         self._entries: list[FunctionEntry] = []
         self._addr_to_entry: dict[int, int] = {}  # address -> index in _entries
         self._addr_to_row: dict[int, int] = {}  # address -> current table row when unsorted/load order row
+        # Inverse maps. _row_to_entry is rebuilt on every load (see
+        # ``_populate_rows``) so the theme-change renderer can walk
+        # visual row -> FunctionEntry in O(1) without a linear scan.
+        self._row_to_entry: dict[int, int] = {}
         self._paused = False
 
         # Apply themed styles now that every child widget exists.
@@ -388,8 +392,17 @@ class BulkRenamerWidget(QWidget):
         """Refresh themed styles when the user changes the theme."""
         self._apply_styles()
         # Re-render status cells so colors track the new theme.
+        # Walk the table by visual row and look up the address in
+        # UserRole — this is sort-safe (load-order ``_row_to_entry``
+        # would be stale after a column sort).
         for row in range(self._table.rowCount()):
-            entry_idx = self._row_to_entry.get(row)
+            addr_item = self._table.item(row, _COL_ADDR)
+            if addr_item is None:
+                continue
+            address = addr_item.data(Qt.ItemDataRole.UserRole)
+            if address is None:
+                continue
+            entry_idx = self._addr_to_entry.get(address)
             if entry_idx is None:
                 continue
             self._set_status(row, self._entries[entry_idx].status)
@@ -464,6 +477,7 @@ class BulkRenamerWidget(QWidget):
         self._entries.clear()
         self._addr_to_entry.clear()
         self._addr_to_row.clear()
+        self._row_to_entry.clear()
 
         self._table.setRowCount(len(functions))
 
@@ -514,8 +528,16 @@ class BulkRenamerWidget(QWidget):
                 instruction_count=func.get("instruction_count", 0),
             )
             self._entries.append(entry)
-            self._addr_to_entry[entry.address] = row
+            entry_idx = len(self._entries) - 1
+            self._addr_to_entry[entry.address] = entry_idx
             self._addr_to_row[entry.address] = row
+            # _row_to_entry is the inverse of _addr_to_row, keyed by the
+            # current visual row. Sorting invalidates the visual row
+            # key, so we always go through _find_row_for_address() when
+            # addressing a row, and this map is only used by paths that
+            # walk rows in their load order (theme re-render, header
+            # checkbox toggle).
+            self._row_to_entry[row] = entry_idx
 
             ic = entry.instruction_count
 

@@ -67,9 +67,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-styles correctly when the user switches to DARK/LIGHT; (C)
   `input_area` and (D) all 11 widget classes in `message_widgets`
   subscribe to `themeChanged` and re-apply on switch; (E) the IDA
-  palette watcher is no longer started in DARK/LIGHT modes (where
-  it is pure polling overhead). See
-  `docs/theme-system-VERIFICATION.md` §3j for the full table.
+  palette watcher is a no-op in DARK/LIGHT modes (constant tokens
+  win), so the 500 ms poll does not produce spurious `themeChanged`
+  signals. See `docs/theme-system-VERIFICATION.md` §3j for the full
+  table.
+- **Light-mode readability**: Replaced the 50/50 `text`/`mid` tab-label
+  blend (which scored ~3.5:1 against `alt_base`, below WCAG AA) with a
+  35/65 blend (`_tab_label()`) in `panel_core.py` and
+  `tools_panel.py`. Inner chat-tab text in light mode now uses the
+  same helper instead of `tokens.light` (which resolves to white on
+  light mode — invisible against `#f3f3f3`).
+- **`_pick_contrasting_text` now uses WCAG contrast ratios**: The
+  foreground helper for colored backgrounds (e.g. the "ask" button
+  fill in light mode) used to pick candidates by background luminance
+  alone, which mis-classified mid-luminance bgs and could produce
+  white-on-light-blue text. Now it computes the actual contrast ratio
+  for each candidate and takes the max.
 
 ### Security
 

@@ -255,6 +255,11 @@ class ThemeManager(QObject):
         # Compute initial tokens immediately so the first themeChanged
         # listener can render correctly (Task 14 tests this).
         self._tokens_cache = self._compute_tokens()
+        # AUTO-mode derivation hint log is shown exactly once so users
+        # can confirm in the IDA Output window that the manager is
+        # actually pulling from the host palette (and not just falling
+        # through to DARK_TOKENS). Reset by ``reset()`` for tests.
+        self._log_auto_derive_once_flag: bool = False
 
     @classmethod
     def instance(cls) -> ThemeManager:
@@ -304,13 +309,48 @@ class ThemeManager(QObject):
         debounce — the watcher tick is already rate-limited at 500ms
         intervals, so additional coalescing is unnecessary and would
         only delay the user's switch by 50ms.
+
+        For DARK and LIGHT modes, the bundled constant tokens are the
+        source of truth (the user explicitly picked that look). The
+        host palette is irrelevant, so the call is a no-op — this both
+        saves work and avoids spuriously emitting ``themeChanged``
+        whenever IDA repaints its own widgets.
         """
+        if self._mode in (ThemeMode.DARK, ThemeMode.LIGHT):
+            return
         self._tokens_cache = None
         # Bypass debounce — watcher tick is already rate-limited.
         if self._pending_apply is not None:
             self._pending_apply.stop()
             self._pending_apply = None
         self._apply_now()
+
+    def _log_auto_derive_once(self, tokens: ThemeTokens) -> None:
+        """One-shot INFO log confirming AUTO-mode derivation.
+
+        Helps users diagnose the common "AUTO looks identical to DARK"
+        complaint: IDA's default palette is dark, so the manager is
+        doing the right thing — it just looks like DARK until the user
+        picks a non-default theme via View → Change theme or
+        ``idaalt``. Without this log, users assume the manager is
+        silently falling through to DARK_TOKENS.
+        """
+        if self._log_auto_derive_once_flag:
+            return
+        self._log_auto_derive_once_flag = True
+        try:
+            from ...core.logging import log_info
+
+            log_info(
+                f"ThemeManager: AUTO mode deriving from host palette — "
+                f"window={tokens.window}, text={tokens.text}, "
+                f"base={tokens.base}. If AUTO looks identical to DARK, "
+                f"your IDA theme is also dark; try View → Change theme."
+            )
+        except Exception:
+            # Logging is best-effort; never let a log call break the
+            # theme apply path.
+            pass
 
     def _app_source(self) -> Any:
         """Return the object to read QPalette from. Patchable for tests.
@@ -382,7 +422,16 @@ class ThemeManager(QObject):
 
                     app = self._app_source()
                     if app is not None:
-                        return derive_ida_tokens(app)
+                        tokens = derive_ida_tokens(app)
+                        # One-time hint log so users can confirm in the
+                        # IDA Output window that AUTO is actually
+                        # deriving from the host palette and not just
+                        # returning DARK_TOKENS. Common confusion:
+                        # IDA's default palette is dark, so AUTO will
+                        # look identical to DARK until the user picks a
+                        # non-default theme via View → Change theme.
+                        self._log_auto_derive_once(tokens)
+                        return tokens
                 except Exception:
                     pass
             return DARK_TOKENS

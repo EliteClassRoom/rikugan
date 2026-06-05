@@ -351,6 +351,35 @@ which patches `is_ida` to return `False` and asserts
 
 ---
 
+## 3j. Five post-merge widget-level bugs (A-E) fixed
+
+Interactive testing of the merged theme system surfaced 5 defects at
+widget-construction seams that the headless test harness had not
+exercised. Each fix is regression-tested by
+`tests/tools/test_theme_bug_fixes.py`.
+
+| # | File | Symptom | Fix | Test |
+|---|------|---------|-----|------|
+| A | `rikugan/ui/theme/manager.py:_apply_now` | Global `QApplication.setStyleSheet()` call was bleeding a `QWidget` rule into every host widget (e.g. IDA's text editor margins). | Removed the `app.setStyleSheet` call; rebuilt QSS is now applied only to the host's managed panel widget. | `TestApplyNowDoesNotClobberAppStylesheet` |
+| B | `rikugan/ui/panel_core.py:_on_theme_changed` | Switching to DARK/LIGHT in the non-native case did not re-apply the QSS (debounce timer was started but not connected to anything). | Connect the theme-signal directly to the re-style slot in `__init__`. | `TestPanelCoreTabStyleContrast.*` |
+| C | `rikugan/ui/input_area.py` | Subscribe to `themeChanged` and re-apply on switch. | `__init__` now calls `ThemeManager.instance().themeChanged.connect(self._apply_styles)`. | (covered by integration) |
+| D | `rikugan/ui/message_widgets.py` | 11 widget classes read tokens at construction but never re-styled. | Each `_apply_styles` is now a slot; the cached source text (`_source_text`, `_tokens`) is initialized before the first paint so a fast theme switch between construction and the first `set_text` is safe. | `TestMessageWidgetsStoresTokens`, `TestPickContrastingText.*` |
+| E | `rikugan/ui/theme/manager.py:refresh_from_host` | `IDAThemeWatcher` ticked every 500 ms in DARK/LIGHT modes and forced a recompute + signal emit each time. | Short-circuit `refresh_from_host` for `DARK` / `LIGHT` modes (the constant bundled tokens win). | `TestRefreshFromHostModeGuard.*` |
+
+**Extra readability fix**: Inner chat-tab text used `tokens.light` for
+the foreground; in light mode `light` resolves to `#ffffff` (invisible
+against `#f3f3f3`). Replaced with a new `_tab_label()` helper (35%
+text/mid blend, >=4.5:1 in both modes) used by both `panel_core.py` and
+`tools_panel.py`.
+
+**Extra correctness fix**: `_pick_contrasting_text` in
+`message_widgets.py` used to pick a candidate by bg luminance alone,
+which mis-classified mid-luminance bgs (e.g. the light-mode ask-button
+fill `#7fb0e0`, where dark text wins on contrast). Now computes the
+actual WCAG contrast ratio for each candidate and returns the winner.
+
+---
+
 ## Summary
 
 | Check | Result |
@@ -364,6 +393,7 @@ which patches `is_ida` to return `False` and asserts
 | 3g. >= 85% coverage on `rikugan/ui/theme/` | **PASS** (94%) |
 | 3h. No regressions in full suite | **PASS** (1254/1254 + 8 skipped) |
 | 3i. Binja host gets Dark for non-LIGHT modes | **PASS** (code review) |
+| 3j. Five post-merge widget-level bugs (A-E) fixed | **PASS** (10/10 new regression tests) |
 
 **All 9 acceptance criteria met.** The theme system is ready to merge.
 

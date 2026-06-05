@@ -22,6 +22,19 @@ def _muted():
     return _blend_hex(t.text, t.mid, 0.5)
 
 
+def _tab_label():
+    """High-contrast unselected tab label color (~4.5:1 against ``alt_base``).
+
+    A 50/50 blend of ``text`` and ``mid`` (the global ``_muted``) yields
+    ~3.5:1 in light mode and falls under WCAG AA. We shift the blend
+    toward ``text`` (0.35) so unselected tabs stay readable in both
+    light and dark modes.
+    """
+    from .theme.manager import ThemeManager, _blend_hex
+    t = ThemeManager.instance().tokens()
+    return _blend_hex(t.text, t.mid, 0.35)
+
+
 def _hover_bg():
     from .theme.manager import ThemeManager, _blend_hex
     t = ThemeManager.instance().tokens()
@@ -48,7 +61,7 @@ def _panel_style() -> str:
     }}
     QTabBar::tab {{
         background: {t.alt_base};
-        color: {_muted()};
+        color: {_tab_label()};
         border: 1px solid {t.mid};
         border-bottom: none;
         padding: 5px 14px;
@@ -123,8 +136,19 @@ class ToolsPanel(QWidget):
     def _apply_styles(self) -> None:
         self.setStyleSheet(maybe_host_stylesheet(_panel_style()))
         self._title.setStyleSheet(maybe_host_stylesheet(_header_style()))
-        self._renamer_placeholder.setStyleSheet(maybe_host_stylesheet(_placeholder_style()))
-        self._agents_placeholder.setStyleSheet(maybe_host_stylesheet(_placeholder_style()))
+        # The placeholder QLabels are owned by QTabWidget and removed
+        # (via deleteLater) when the real Renamer/Agents widget replaces
+        # them. The PySide6 wrapper for a deleted C++ object raises
+        # ``RuntimeError: Internal C++ object already deleted`` on the
+        # next method call, so guard both reads.
+        if self._renamer_placeholder is not None:
+            self._renamer_placeholder.setStyleSheet(
+                maybe_host_stylesheet(_placeholder_style())
+            )
+        if self._agents_placeholder is not None:
+            self._agents_placeholder.setStyleSheet(
+                maybe_host_stylesheet(_placeholder_style())
+            )
 
     def _replace_tab(self, index: int, widget: QWidget, label: str) -> None:
         """Replace the widget at the given tab index."""
@@ -132,6 +156,15 @@ class ToolsPanel(QWidget):
         self._tabs.removeTab(index)
         self._tabs.insertTab(index, widget, label)
         if old is not None:
+            # Drop our reference to the placeholder (if this is the
+            # first replace) so ``_apply_styles`` doesn't try to
+            # setStyleSheet on a deleted C++ object the next time the
+            # theme fires. deleteLater schedules the C++ delete; the
+            # Python wrapper will be GC'd once we drop the ref.
+            if index == 0:
+                self._renamer_placeholder = None
+            elif index == 1:
+                self._agents_placeholder = None
             old.deleteLater()
 
     def set_renamer_widget(self, widget: QWidget) -> None:

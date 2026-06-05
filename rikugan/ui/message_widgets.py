@@ -72,6 +72,47 @@ def _subtle_text(t) -> str:
     return t.light
 
 
+def _hex_luminance(hex_str: str) -> float:
+    """Return the relative luminance of a ``#rrggbb`` string (0..1)."""
+    s = hex_str.lstrip("#")
+    if len(s) < 6:
+        return 0.5
+    r = int(s[0:2], 16) / 255.0
+    g = int(s[2:4], 16) / 255.0
+    b = int(s[4:6], 16) / 255.0
+    # Per WCAG, square the channel first to approximate sRGB→linear.
+    def _lin(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+
+def _pick_contrasting_text(bg_hex: str, dark_candidate: str, light_candidate: str) -> str:
+    """Return whichever candidate has higher contrast against ``bg_hex``.
+
+    Used by widgets that paint a colored foreground over a
+    brand-colored background. ``highlight_text`` works for dark themes
+    but collapses to invisible on light themes (because both the bg
+    and the fg are near-white), so we pick the higher-contrast
+    candidate by computing the actual WCAG contrast ratio for each
+    side and taking the max.
+
+    Returning the dark candidate when it wins means light-mode users
+    see dark text on a light-blue button (readable), while dark-mode
+    users still get the light ``highlight_text`` they expect.
+    """
+    bg_l = _hex_luminance(bg_hex)
+    dark_l = _hex_luminance(dark_candidate)
+    light_l = _hex_luminance(light_candidate)
+
+    def _ratio(a: float, b: float) -> float:
+        hi, lo = max(a, b), min(a, b)
+        return (hi + 0.05) / (lo + 0.05)
+
+    dark_contrast = _ratio(bg_l, dark_l)
+    light_contrast = _ratio(bg_l, light_l)
+    return dark_candidate if dark_contrast >= light_contrast else light_candidate
+
+
 def _user_bubble_bg(t) -> str:
     # Darker user bubble: blend highlight toward base.
     return _blend_hex(t.highlight, t.base, 0.4)
@@ -389,14 +430,31 @@ class _ThinkingBlock(QFrame):
         self._content.hide()
         layout.addWidget(self._content)
 
+        # Initialize state that ``_apply_styles`` and the re-render
+        # helper read BEFORE the first paint, so the signal connection
+        # below can fire safely even if the theme changes between
+        # construction and the first ``set_thinking`` call.
+        self._expanded = False
+        # Source text cache — ``md_to_html`` produces HTML with inline
+        # color/border styles baked from the current theme tokens.
+        # Re-rendering on theme change is the only way to update those
+        # colors, so we keep the text and re-call ``md_to_html`` from
+        # ``_apply_styles`` when the theme fires.
+        self._source_text: str = ""
+        self._in_progress: bool = False
+        self._tokens = None  # set by _apply_styles on each call
+
         self._apply_styles()
         ThemeManager.instance().themeChanged.connect(self._apply_styles)
 
-        self._expanded = False
         self.hide()
 
     def _apply_styles(self, _tokens: object = None) -> None:
         tokens = ThemeManager.instance().tokens()
+        # Stash for any sub-widget that needs to re-paint without
+        # re-querying the manager (and so tests can assert the
+        # theme-subscribe contract from the previous bug report).
+        self._tokens = tokens
         self.setStyleSheet(
             _tool_frame_style(
                 tokens=tokens,
@@ -413,10 +471,16 @@ class _ThinkingBlock(QFrame):
         )
         self._content.setStyleSheet(
             host_stylesheet(
-                "color: #606078; font-size: 12px;",
-                f"color: #606078; {_native_text_style(size=12, italic=True)}",
+                f"color: {_muted_text(tokens)}; font-size: 12px;",
+                f"color: {_muted_text(tokens)}; {_native_text_style(size=12, italic=True)}",
             )
         )
+        # The cached HTML embeds inline color/border styles from the
+        # *previous* theme. Re-render with the new tokens so code blocks,
+        # backticks, tables, and tool calls inside the thinking content
+        # all match the active theme.
+        if self._source_text:
+            self._content.setText(md_to_html(self._source_text, self))
 
     def _on_toggle(self) -> None:
         self._expanded = not self._expanded
@@ -424,6 +488,8 @@ class _ThinkingBlock(QFrame):
         self._toggle.setText("\u25bc" if self._expanded else "\u25b6")
 
     def set_thinking(self, text: str, in_progress: bool = False) -> None:
+        self._source_text = text
+        self._in_progress = in_progress
         self._content.setText(md_to_html(text, self))
         label = "Thinking\u2026" if in_progress else "Thinking"
         self._header_label.setText(label)
@@ -502,6 +568,13 @@ class AssistantMessageWidget(QFrame):
                 ),
             )
         )
+        # The HTML rendered by ``_render`` bakes inline color/border
+        # styles from the *previous* theme. Re-render with the new
+        # tokens so code blocks, backticks, tables, and tool calls all
+        # match the active theme. Skipped when no text has streamed in
+        # yet (avoids a wasted render on plugin startup).
+        if self._full_text:
+            self._render()
 
     def _render(self) -> None:
         thinking, visible = _split_thinking(self._full_text)
@@ -761,7 +834,16 @@ class UserQuestionWidget(QFrame):
             btn_bg = _blend_hex(tokens.highlight, tokens.base, 0.55)
             btn_bg_hover = _blend_hex(tokens.highlight, tokens.base, 0.40)
             btn_bg_pressed = _blend_hex(tokens.highlight, tokens.base, 0.70)
-            btn_fg = _blend_hex(tokens.highlight_text, tokens.highlight, 0.35)
+            # Foreground must contrast with the button background, not
+            # with the highlight itself. In dark mode ``highlight_text``
+            # is white-ish and reads well on the bluish bg; in light
+            # mode it is also white-ish, which collapses to invisible
+            # on a light-blue bg. Pick the higher-contrast side: if
+            # ``base`` is darker than the bg, prefer ``text``; else
+            # prefer ``highlight_text``.
+            btn_fg = _pick_contrasting_text(
+                btn_bg, tokens.text, tokens.highlight_text
+            )
             btn_border = _blend_hex(tokens.highlight, tokens.mid, 0.5)
             disabled_bg = _blend_hex(tokens.base, tokens.alt_base, 0.5)
             button_css = (

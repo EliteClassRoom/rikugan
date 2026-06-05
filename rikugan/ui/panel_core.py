@@ -61,6 +61,18 @@ def _muted():
     return _blend_hex(t.text, t.mid, 0.5)
 
 
+def _tab_label():
+    """Higher-contrast tab label color (>=4.5:1 against ``alt_base``).
+
+    A 50/50 text/mid blend (``_muted``) yields ~3.5:1 in light mode and
+    falls under WCAG AA. We shift the blend toward ``text`` (0.35) so
+    unselected tabs stay readable in both light and dark modes.
+    """
+    from .theme.manager import _blend_hex
+    t = ThemeManager.instance().tokens()
+    return _blend_hex(t.text, t.mid, 0.35)
+
+
 def _small_btn_style() -> str:
     t = ThemeManager.instance().tokens()
     return (
@@ -411,7 +423,7 @@ class RikuganPanelCore(QWidget):
         t = ThemeManager.instance().tokens()
         return (
             f"QTabBar {{ background: {t.alt_base}; border: none; border-bottom: 1px solid {t.mid}; }}"
-            f"QTabBar::tab {{ background: {t.alt_base}; color: {_muted()}; padding: 4px 16px; "
+            f"QTabBar::tab {{ background: {t.alt_base}; color: {_tab_label()}; padding: 4px 16px; "
             f"border: none; border-bottom: 2px solid transparent; font-size: 11px; }}"
             f"QTabBar::tab:selected {{ color: {t.text}; border-bottom: 2px solid {t.success}; }}"
             f"QTabBar::tab:hover:!selected {{ color: {t.text}; }}"
@@ -439,7 +451,7 @@ class RikuganPanelCore(QWidget):
         return (
             f"QTabWidget::pane {{ border: none; }}"
             f"QTabBar {{ background: {t.base}; border: none; }}"
-            f"QTabBar::tab {{ background: {t.alt_base}; color: {t.light}; padding: 2px 8px; "
+            f"QTabBar::tab {{ background: {t.alt_base}; color: {_tab_label()}; padding: 2px 8px; "
             f"border: none; border-right: 1px solid {t.mid}; "
             f"font-size: 11px; max-width: 140px; }}"
             f"QTabBar::tab:selected {{ background: {t.base}; color: {t.highlight_text}; }}"

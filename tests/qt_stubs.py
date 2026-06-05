@@ -599,7 +599,12 @@ def ensure_pyside6_stubs() -> None:
                 pass
 
             def setStyleSheet(self, qss: str) -> None:
-                return None
+                # Track so tests can assert that _apply_now does not
+                # clobber the host's stylesheet.
+                _qapp_singleton._stylesheet = qss
+
+            def styleSheet(self) -> str:
+                return getattr(_qapp_singleton, "_stylesheet", "")
 
             def processEvents(self) -> None:
                 return None
