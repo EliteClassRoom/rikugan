@@ -2,12 +2,11 @@
 
 **Date**: 2026-06-04
 **Status**: Approved
-**Scope**: IDA Pro only; Binary Ninja changes skipped
+**Scope**: IDA Pro only
 
 ## What We Skip
 
 - Chat sidebar (ChatThreadList/ChatThreadRow) — large UI, separate effort
-- Binary Ninja tools, installer, CI annotations
 - Fuzzy tool name lookup removal (we need it for GLM/MCP)
 - `_capabilities.get(req, True)` change (unsafe default)
 - Cancel button style changes (cosmetic)

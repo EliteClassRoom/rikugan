@@ -153,7 +153,7 @@ recursively and a 2-color `QPalette.Window / WindowText` signature. The
 ~500 ms in the worst case and typically within one tick.
 
 `rikugan/ida/rikugan_plugin.py` (Task 15) starts the watcher on
-`PLUGIN_ENTRY`; the Binja bootstrap intentionally does not.
+`PLUGIN_ENTRY`; the non-IDA bootstrap intentionally does not.
 
 **Verdict**: **PASS**.
 
@@ -282,7 +282,7 @@ files (network-touching tests, etc.).
 
 ---
 
-## 3i. Binja host gets Dark regardless of mode
+## 3i. non-IDA host gets Dark regardless of mode
 
 **Code review of `rikugan/ui/theme/manager.py:_compute_tokens`** (lines 351-405):
 
@@ -301,7 +301,7 @@ if self._mode == ThemeMode.IDA_NATIVE:  # line 389
         return DARK_TOKENS                # non-IDA -> Dark + warning
 ```
 
-**Behavior on Binja (non-IDA host)**:
+**Behavior on non-IDA host (historical BN verification)**:
 
 | Mode | Result |
 |------|--------|
@@ -311,11 +311,11 @@ if self._mode == ThemeMode.IDA_NATIVE:  # line 389
 | `IDA_NATIVE` | `DARK_TOKENS` + warning log |
 
 The intent of criterion 3i is "the three non-LIGHT modes give Dark on
-Binja." That is true for `DARK`, `AUTO`, and `IDA_NATIVE`. The `LIGHT`
+non-IDA hosts." That is true for `DARK`, `AUTO`, and `IDA_NATIVE`. The `LIGHT`
 mode is a user choice that the manager must honor regardless of host;
-otherwise users on Binja would have no way to opt into the Light theme.
+otherwise users on non-IDA hosts would have no way to opt into the Light theme.
 
-**Code review of `rikugan/binja/bootstrap.py:271-293`**:
+**Code review of removed non-IDA bootstrap**:
 
 ```python
 def register_plugin() -> None:
@@ -392,7 +392,7 @@ actual WCAG contrast ratio for each candidate and returns the winner.
 | 3f. All theme tests pass | **PASS** (85/85) |
 | 3g. >= 85% coverage on `rikugan/ui/theme/` | **PASS** (94%) |
 | 3h. No regressions in full suite | **PASS** (1254/1254 + 8 skipped) |
-| 3i. Binja host gets Dark for non-LIGHT modes | **PASS** (code review) |
+| 3i. non-IDA host gets Dark for non-LIGHT modes | **PASS** (code review) |
 | 3j. Five post-merge widget-level bugs (A-E) fixed | **PASS** (10/10 new regression tests) |
 
 **All 9 acceptance criteria met.** The theme system is ready to merge.
@@ -433,7 +433,7 @@ regression-tested in the same commit.
 
 | Bug | Symptom | Root cause | Fix |
 |-----|---------|------------|-----|
-| **A** | `setStyleSheet` call on the host QApplication would bleed Rikugan's global `QWidget { ... }` rule into every IDA/Binja host widget (disassembly, output, function list) | `manager._apply_now` previously called `app.setStyleSheet(...)` for DARK/LIGHT modes; widgets should style themselves, not the global app | `rikugan/ui/theme/manager.py:_apply_now` — removed the `app.setStyleSheet(...)` call. Per-widget stylesheets are the responsibility of widgets that subscribe to `themeChanged` |
+| **A** | `setStyleSheet` call on the host QApplication would bleed Rikugan's global `QWidget { ... }` rule into every IDA host widget (disassembly, output, function list) | `manager._apply_now` previously called `app.setStyleSheet(...)` for DARK/LIGHT modes; widgets should style themselves, not the global app | `rikugan/ui/theme/manager.py:_apply_now` — removed the `app.setStyleSheet(...)` call. Per-widget stylesheets are the responsibility of widgets that subscribe to `themeChanged` |
 | **B** | DARK/LIGHT mode ignored the user's Selection in `panel_core` and never re-styled | `_on_theme_changed` had a `native_mode_only` short-circuit that returned early for DARK/LIGHT, so the in-place QSS refresh was skipped | `rikugan/ui/panel_core.py:_on_theme_changed` — only short-circuit when **both** in `is_ida_native_mode()` AND a native-derivation happened; otherwise always refresh from `ThemeManager.tokens()` |
 | **C** | `input_area.py` had no `themeChanged` subscription, so the input box stayed the original color after a switch | The widget was created in Task 16a but its `setStyleSheet` was one-shot at `__init__`; no listener to re-style on change | `rikugan/ui/input_area.py` — extracted `_apply_styles(self, _tokens=None)` and connected it to `ThemeManager.instance().themeChanged` |
 | **D** | 11 widget classes in `message_widgets.py` (`ThinkingBlock`, `ToolCallWidget`, `AssistantMessage`, etc.) never re-styled on theme change | Same pattern as C: `setStyleSheet` was called once in `__init__` and never updated | `rikugan/ui/message_widgets.py` — extracted `_apply_styles(self, _tokens=None)` on every widget class; each subscribes to `themeChanged`. The `_tokens=None` default keeps the slot callable both from the signal (which passes the new tokens) and from manual calls |
