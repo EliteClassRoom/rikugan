@@ -301,15 +301,19 @@ class CollapsibleSection(QFrame):
     def _apply_styles(self, _tokens: object = None) -> None:
         # The toggle button has no parent QSS that can theme it
         # reliably across IDA/Binja host palettes, so we set the
-        # foreground explicitly. ``t.text`` contrasts well against
-        # both dark and light backgrounds.
+        # foreground explicitly. We use a *secondary-tier* color
+        # (``_muted_text`` = blend of text and mid) plus bold weight
+        # so the ▶/▼ glyph stands out from the adjacent title —
+        # otherwise the toggle and title share the same color and
+        # the affordance visually merges into the title text.
         tokens = ThemeManager.instance().tokens()
+        toggle_color = _muted_text(tokens)
         self._toggle_btn.setStyleSheet(
             host_stylesheet(
-                f"QToolButton {{ color: {tokens.text}; background: transparent; "
-                f"border: none; padding: 0; }}",
-                f"QToolButton {{ color: {tokens.text}; background: transparent; "
-                f"border: none; padding: 0; {_native_text_style(size=10)}; }}",
+                f"QToolButton {{ color: {toggle_color}; background: transparent; "
+                f"border: none; padding: 0; font-weight: bold; }}",
+                f"QToolButton {{ color: {toggle_color}; background: transparent; "
+                f"border: none; padding: 0; font-weight: bold; {_native_text_style(size=10)}; }}",
             )
         )
         self._title_label.setStyleSheet(
@@ -487,6 +491,17 @@ class _ThinkingBlock(QFrame):
         # re-querying the manager (and so tests can assert the
         # theme-subscribe contract from the previous bug report).
         self._tokens = tokens
+        # The toggle ▶/▼ must be visually distinct from the italic
+        # "Thinking" header — use a secondary-tier color and bold
+        # weight so the glyph reads as an affordance, not a letter.
+        self._toggle.setStyleSheet(
+            host_stylesheet(
+                f"QToolButton {{ color: {_muted_text(tokens)}; background: transparent; "
+                f"border: none; padding: 0; font-weight: bold; }}",
+                f"QToolButton {{ color: {_muted_text(tokens)}; background: transparent; "
+                f"border: none; padding: 0; font-weight: bold; }}",
+            )
+        )
         self.setStyleSheet(
             _tool_frame_style(
                 tokens=tokens,

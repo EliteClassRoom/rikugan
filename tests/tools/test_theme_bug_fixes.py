@@ -293,10 +293,16 @@ class TestPickContrastingText(unittest.TestCase):
         self.assertIn(chosen, (t.text, t.highlight_text))
 
     def test_collapsible_section_toggle_btn_has_explicit_color(self) -> None:
-        """Bug F: the ``▶/▼`` QToolButton on CollapsibleSection had no
-        explicit QSS, so the host palette (which can paint white in
-        light mode on some IDA themes) made the glyph invisible.
-        The fix gives it an explicit QSS bound to ``t.text``.
+        """Bug F (visibility + distinguishability): the ``▶/▼``
+        QToolButton on CollapsibleSection had no explicit QSS, so the
+        host palette (white in light mode on some IDA themes) made
+        the glyph invisible. The fix gives it an explicit QSS bound
+        to a theme token, but the toggle must also be visually
+        distinct from the title label (Bug F2) — otherwise the
+        affordance glyph reads as a continuation of the title text
+        rather than a separate UI element. The toggle now uses a
+        secondary-tier color (``_muted_text``) and bold weight; the
+        title uses primary ``tokens.text`` regular weight.
         """
         from rikugan.ui.theme import tokens
         from rikugan.ui.theme.manager import ThemeManager
@@ -306,15 +312,22 @@ class TestPickContrastingText(unittest.TestCase):
         mgr = ThemeManager.instance()
         mgr.set_mode(tokens.ThemeMode.LIGHT)
         # Capture the QSS the widget sets so we can assert the rule.
-        captured: list[str] = []
+        captured: list[tuple[str, str]] = []
         from PySide6.QtWidgets import QToolButton as _RealQToolButton
-        _orig_set = _RealQToolButton.setStyleSheet
+        from PySide6.QtWidgets import QLabel as _RealQLabel
+        _orig_btn_set = _RealQToolButton.setStyleSheet
+        _orig_lbl_set = _RealQLabel.setStyleSheet
 
-        def _spy_set(self, css: str) -> None:  # type: ignore[no-redef]
-            captured.append(css)
-            _orig_set(self, css)
+        def _spy_btn(self, css: str) -> None:  # type: ignore[no-redef]
+            captured.append(("btn", css))
+            _orig_btn_set(self, css)
 
-        _RealQToolButton.setStyleSheet = _spy_set  # type: ignore[assignment]
+        def _spy_lbl(self, css: str) -> None:  # type: ignore[no-redef]
+            captured.append(("lbl", css))
+            _orig_lbl_set(self, css)
+
+        _RealQToolButton.setStyleSheet = _spy_btn  # type: ignore[assignment]
+        _RealQLabel.setStyleSheet = _spy_lbl  # type: ignore[assignment]
         try:
             w = CollapsibleSection("hello")
             try:
@@ -322,19 +335,104 @@ class TestPickContrastingText(unittest.TestCase):
             finally:
                 w.setParent(None)
         finally:
-            _RealQToolButton.setStyleSheet = _orig_set  # type: ignore[assignment]
+            _RealQToolButton.setStyleSheet = _orig_btn_set  # type: ignore[assignment]
+            _RealQLabel.setStyleSheet = _orig_lbl_set  # type: ignore[assignment]
 
         # Find the stylesheet set on the toggle button (last QSS
-        # containing "QToolButton").
-        toggle_css = [c for c in captured if "QToolButton" in c]
+        # captured on a QToolButton).
+        toggle_css = [css for kind, css in captured if kind == "btn"]
+        title_css = [css for kind, css in captured if kind == "lbl"]
         self.assertTrue(
             toggle_css,
             "CollapsibleSection._apply_styles must call setStyleSheet "
             "on the QToolButton so the toggle glyph has a guaranteed color.",
         )
-        # The rule must reference the theme's text color (not the
-        # highlight_text, which would be white in light mode).
-        self.assertIn(mgr.tokens().text, toggle_css[-1])
+        rule = toggle_css[-1]
+        # Contract 1 (Bug F2): the toggle must NOT use ``tokens.text``
+        # — that would make it visually merge with the title label.
+        self.assertNotIn(
+            mgr.tokens().text,
+            rule,
+            f"toggle must use a secondary-tier color (not tokens.text "
+            f"= {mgr.tokens().text}); otherwise the glyph visually "
+            f"merges with the title. Rule was: {rule!r}",
+        )
+        # Contract 2: the rule must include at least one #RRGGBB
+        # color literal so the host palette can't override it.
+        import re
+        hex_colors = re.findall(r"#[0-9a-fA-F]{6}", rule)
+        self.assertTrue(
+            hex_colors,
+            f"toggle QSS must include at least one #RRGGBB color; got: {rule!r}",
+        )
+        # Contract 3: the title must use ``tokens.text`` so the two
+        # elements occupy distinct color tiers.
+        self.assertTrue(
+            title_css,
+            "CollapsibleSection._apply_styles must also setStyleSheet "
+            "on the QLabel title.",
+        )
+        self.assertIn(mgr.tokens().text, title_css[-1])
+
+    def test_tool_group_widget_toggle_btn_uses_muted_color(self) -> None:
+        """Bug F (ToolGroupWidget): the expand/collapse toggle on
+        ``ToolGroupWidget`` (rikugan/ui/tool_widgets.py) is a
+        QToolButton with no explicit QSS, so on light host themes
+        the glyph is painted white (invisible on the light card
+        background). The fix wires ``_apply_styles`` so the toggle
+        gets an explicit QSS rule using a secondary-tier color
+        (so it also stands out from the title's primary tier).
+        """
+        from rikugan.ui.theme import tokens
+        from rikugan.ui.theme.manager import ThemeManager
+        from rikugan.ui.tool_widgets import ToolGroupWidget
+
+        _reset_singleton()
+        mgr = ThemeManager.instance()
+        mgr.set_mode(tokens.ThemeMode.LIGHT)
+        # Spy on QToolButton.setStyleSheet so we can assert the rule
+        # the widget sets on the toggle.
+        captured: list[str] = []
+        from PySide6.QtWidgets import QToolButton as _RealQToolButton
+        _orig_set = _RealQToolButton.setStyleSheet
+
+        def _spy(self, css: str) -> None:  # type: ignore[no-redef]
+            captured.append(css)
+            _orig_set(self, css)
+
+        _RealQToolButton.setStyleSheet = _spy  # type: ignore[assignment]
+        try:
+            w = ToolGroupWidget("Tool Group")
+            try:
+                w._apply_styles()
+            finally:
+                w.setParent(None)
+        finally:
+            _RealQToolButton.setStyleSheet = _orig_set  # type: ignore[assignment]
+
+        toggle_css = [c for c in captured if "QToolButton" in c]
+        self.assertTrue(
+            toggle_css,
+            "ToolGroupWidget._apply_styles must call setStyleSheet "
+            "on the QToolButton so the toggle glyph has a guaranteed color.",
+        )
+        rule = toggle_css[-1]
+        # Bug F2: the toggle must NOT use ``tokens.text`` — that
+        # would make it visually merge with the title. It must use
+        # a muted (secondary) tier.
+        self.assertNotIn(
+            mgr.tokens().text,
+            rule,
+            f"toggle must use a secondary-tier color, not tokens.text "
+            f"= {mgr.tokens().text}; rule was: {rule!r}",
+        )
+        # The rule must include at least one #RRGGBB color so the
+        # host palette can't override it.
+        import re
+        self.assertTrue(
+            re.search(r"#[0-9a-fA-F]{6}", rule),
+            f"toggle QSS must include a #RRGGBB color; got: {rule!r}",
+        )
 
 
 if __name__ == "__main__":

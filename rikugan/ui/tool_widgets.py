@@ -56,6 +56,25 @@ def _muted_text(t) -> str:
     return _blend_hex(t.text, t.mid, 0.5)
 
 
+def _toggle_btn_css(tokens) -> str:
+    """QSS for collapsible-section ▶/▼ buttons.
+
+    The toggle must be visually distinct from the adjacent title text
+    so the affordance doesn't blend with body text. We use a
+    *secondary* color tier (``_muted_text`` = blend of text and mid)
+    plus bold weight — the title uses primary ``tokens.text`` regular
+    weight, so the glyph stands out as a different element rather
+    than a continuation of the title.
+    """
+    color = _muted_text(tokens)
+    return host_stylesheet(
+        f"QToolButton {{ color: {color}; background: transparent; "
+        f"border: none; padding: 0; font-weight: bold; }}",
+        f"QToolButton {{ color: {color}; background: transparent; "
+        f"border: none; padding: 0; font-weight: bold; }}",
+    )
+
+
 def _tool_bg(t) -> str:
     return t.alt_base
 
@@ -538,6 +557,7 @@ class ToolCallWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("message_tool")
         ThemeManager.instance().themeChanged.connect(self.update)
+        ThemeManager.instance().themeChanged.connect(self._apply_styles)
         self.setStyleSheet(_tool_card_css(object_name="message_tool"))
         self._tool_name = tool_name
         self._tool_call_id = tool_call_id
@@ -555,6 +575,15 @@ class ToolCallWidget(QFrame):
         _SharedSpinnerTimer.get().register(self)
         layout.addWidget(self._build_preview())
         layout.addWidget(self._build_detail_section())
+        # Apply the toggle button QSS once the button is built.
+        self._apply_styles()
+
+    def _apply_styles(self, _tokens: object = None) -> None:
+        """Re-apply per-widget QSS that can't be inherited from the
+        QFrame stylesheet (e.g. the toggle button needs an explicit
+        ``QToolButton`` selector with a secondary-tier color so the
+        ▶/▼ glyph contrasts with the title text)."""
+        self._toggle_btn.setStyleSheet(_toggle_btn_css(ThemeManager.instance().tokens()))
 
     def _build_header(self, tool_name: str) -> QHBoxLayout:
         """Build the compact header row: toggle bullet name summary status."""
@@ -771,6 +800,7 @@ class ToolBatchWidget(QFrame):
         self.setObjectName("message_tool")
         self.setStyleSheet(_tool_card_css(object_name="message_tool"))
         ThemeManager.instance().themeChanged.connect(self.update)
+        ThemeManager.instance().themeChanged.connect(self._apply_styles)
         self._tool_name = tool_name
         self._count = 0
         self._expanded = False
@@ -787,6 +817,15 @@ class ToolBatchWidget(QFrame):
         layout.addLayout(self._build_header(tool_name))
         layout.addWidget(self._build_preview())
         layout.addWidget(self._build_detail_section())
+        # Apply the toggle button QSS once the button is built.
+        self._apply_styles()
+
+    def _apply_styles(self, _tokens: object = None) -> None:
+        """Re-apply per-widget QSS that can't be inherited from the
+        QFrame stylesheet (e.g. the toggle button needs an explicit
+        ``QToolButton`` selector with a secondary-tier color so the
+        ▶/▼ glyph contrasts with the title text)."""
+        self._toggle_btn.setStyleSheet(_toggle_btn_css(ThemeManager.instance().tokens()))
 
     def _build_header(self, tool_name: str) -> QHBoxLayout:
         """Build the compact header row: toggle bullet name count status."""
@@ -969,6 +1008,7 @@ class ToolGroupWidget(QFrame):
         self.setObjectName("message_tool")
         self.setStyleSheet(_tool_card_css(object_name="message_tool"))
         ThemeManager.instance().themeChanged.connect(self.update)
+        ThemeManager.instance().themeChanged.connect(self._apply_styles)
         self._expanded = False
         self._count = 0
         self._done = 0
@@ -1020,6 +1060,15 @@ class ToolGroupWidget(QFrame):
         self._body_layout.setSpacing(2)
         self._body.setVisible(False)
         layout.addWidget(self._body)
+        # Apply the toggle button QSS once the button is built.
+        self._apply_styles()
+
+    def _apply_styles(self, _tokens: object = None) -> None:
+        """Re-apply per-widget QSS that can't be inherited from the
+        QFrame stylesheet (e.g. the toggle button needs an explicit
+        ``QToolButton`` selector with a secondary-tier color so the
+        ▶/▼ glyph contrasts with the title text)."""
+        self._toggle_btn.setStyleSheet(_toggle_btn_css(ThemeManager.instance().tokens()))
 
     def add_widget(self, widget: QWidget, tool_name: str = "") -> None:
         """Add a tool widget into this group."""
