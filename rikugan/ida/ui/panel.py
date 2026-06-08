@@ -359,6 +359,38 @@ class RikuganPanel(idaapi.PluginForm):
         QPushButton#cancel_button {{
             color: {error_color};
         }}
+        /* History navigation strip (paginated restore) — object-name-scoped
+           so the host's generic QPushButton/QLabel rules above do not leak
+           into Rikugan's nav widgets.  These selectors must be kept
+           identical in shape to the scoped ones in LIGHT_THEME / DARK_THEME
+           (rikugan/ui/styles.py) so the same widget object names resolve
+           cleanly in every host theme. */
+        QFrame#history_nav {{
+            background-color: {surface};
+            border: 1px solid {border};
+            border-radius: 4px;
+        }}
+        QLabel#history_nav_label {{
+            color: {text_secondary};
+        }}
+        QPushButton#history_nav_btn {{
+            background-color: {surface_variant};
+            color: {text_color};
+            border: 1px solid {border};
+            border-radius: 3px;
+            padding: 2px 10px;
+        }}
+        QPushButton#history_nav_btn:hover {{
+            background-color: {btn_hover};
+        }}
+        QPushButton#history_nav_btn:pressed {{
+            background-color: {border};
+        }}
+        QPushButton#history_nav_btn:disabled {{
+            color: {text_secondary};
+            background-color: {surface};
+            border-color: {border};
+        }}
         """
         self._core.setStyleSheet(minimal_style)
 

@@ -815,9 +815,13 @@ class RikuganPanelCore(QWidget):
             self.setStyleSheet(DARK_THEME)
         elif theme == "light":
             self.setStyleSheet(LIGHT_THEME)
-        # 'ida' means "inherit host's Qt theme" — the IDA wrapper applies a
-        # minimal targeted stylesheet on top, but we still need inline
-        # widgets to use the right helper palette (effective_theme).
+        else:
+            # 'ida' (or any non-dark/light value) means "inherit the host's
+            # Qt theme".  Clear any previously applied LIGHT_THEME /
+            # DARK_THEME so a stale Rikugan palette does not bleed through.
+            # The IDA wrapper may then install a minimal targeted
+            # stylesheet on top.
+            self.setStyleSheet("")
 
     def set_theme(self, theme: str, effective_theme: str | None = None) -> None:
         """Set the UI theme.
@@ -844,8 +848,12 @@ class RikuganPanelCore(QWidget):
             set_markdown_theme_colors(True)
             clear_code_block_theme()
         else:
-            # 'ida': inherit host Qt theme, no custom stylesheet,
-            # disable explicit colors in markdown so text inherits from host.
+            # 'ida' (or any non-dark/light value): inherit host Qt theme.
+            # Clear any previously applied LIGHT_THEME / DARK_THEME so a
+            # stale Rikugan palette does not bleed through.  The IDA
+            # wrapper installs a minimal targeted stylesheet on top.
+            self.setStyleSheet("")
+            # Disable explicit colors in markdown so text inherits from host.
             set_markdown_theme_colors(False)
         # Re-apply the inline-styled widget palette so any widgets created
         # earlier (during _build_ui) get restyled, and so future widgets
@@ -895,6 +903,14 @@ class RikuganPanelCore(QWidget):
         if tab_bar is not None and hasattr(tab_bar, "refresh_inline_styles"):
             try:
                 tab_bar.refresh_inline_styles()
+            except RuntimeError:
+                pass
+        # Re-apply chat-view inline styles (history nav strip) on every
+        # open tab so the strip matches the active palette after a
+        # theme switch.
+        for chat_view in getattr(self, "_chat_views", {}).values():
+            try:
+                chat_view.refresh_inline_styles()
             except RuntimeError:
                 pass
         for splitter in (

@@ -41,6 +41,27 @@ def is_dark_theme() -> bool:
     return _effective_theme == "dark"
 
 
+def get_current_theme() -> str:
+    """Return the user-configured theme name (``"light"``/``"dark"``/``"ida"``).
+
+    ``"ida"`` means "inherit the host's Qt theme".  Use :func:`is_host_theme`
+    for a boolean check.
+    """
+    return _current_theme
+
+
+def is_host_theme() -> bool:
+    """True when the configured theme is ``"ida"`` (inherit the host palette).
+
+    In host-theme mode, Rikugan does not apply its own LIGHT_THEME / DARK_THEME
+    global stylesheet.  Inline-styled widgets that have a per-widget
+    stylesheet (e.g. the paginated history nav strip) should clear that
+    inline stylesheet so the host's Qt stylesheet — or the host-aware
+    minimal stylesheet added by the IDA panel wrapper — can take over.
+    """
+    return _current_theme == "ida"
+
+
 # =============================================================================
 # LIGHT THEME - Monokai Pro Light (Filter Sun) inspired
 # =============================================================================
@@ -598,6 +619,41 @@ QLabel#orchestra_header {
 QFrame#delegation_dialog {
     background: #1e1e1e;
 }
+
+/* History navigation strip (paginated restore) — object-name-scoped
+   so generic QPushButton/QLabel styles above do not affect it. */
+QFrame#history_nav {
+    background: #e8e0d8;
+    border: 1px solid #d2c9c4;
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+QLabel#history_nav_label {
+    color: #72696d;
+    font-size: inherit;
+    padding: 0 6px;
+}
+
+QPushButton#history_nav_btn {
+    background: #f0e8e0;
+    color: #2c232e;
+    border: 1px solid #d2c9c4;
+    border-radius: 3px;
+    padding: 2px 10px;
+    font-size: inherit;
+}
+QPushButton#history_nav_btn:hover {
+    background: #e8e0d8;
+}
+QPushButton#history_nav_btn:pressed {
+    background: #d2c9c4;
+}
+QPushButton#history_nav_btn:disabled {
+    color: #92898a;
+    background: #e8e0d8;
+    border-color: #d2c9c4;
+}
 """
 
 # Dark Theme - VS Code Dark+ inspired
@@ -1153,6 +1209,41 @@ QLabel#orchestra_header {
 
 QFrame#delegation_dialog {
     background: #1e1e1e;
+}
+
+/* History navigation strip (paginated restore) — object-name-scoped
+   so generic QPushButton/QLabel styles above do not affect it. */
+QFrame#history_nav {
+    background: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+QLabel#history_nav_label {
+    color: #808080;
+    font-size: inherit;
+    padding: 0 6px;
+}
+
+QPushButton#history_nav_btn {
+    background: #2d2d2d;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    border-radius: 3px;
+    padding: 2px 10px;
+    font-size: inherit;
+}
+QPushButton#history_nav_btn:hover {
+    background: #3c3c3c;
+}
+QPushButton#history_nav_btn:pressed {
+    background: #1e1e1e;
+}
+QPushButton#history_nav_btn:disabled {
+    color: #555;
+    background: #252526;
+    border-color: #3c3c3c;
 }
 """
 
@@ -2127,6 +2218,44 @@ TOOL_APPROVAL_DISABLED_BTN_STYLE = {
     ),
 }
 
+# History navigation strip styles (used by paginated restore in chat_view)
+HISTORY_NAV_FRAME_STYLE = {
+    "dark": (
+        "QFrame#history_nav { background: #252526; border: 1px solid #3c3c3c; "
+        "border-radius: 4px; padding: 2px 4px; }"
+    ),
+    "light": (
+        "QFrame#history_nav { background: #e8e0d8; border: 1px solid #d2c9c4; "
+        "border-radius: 4px; padding: 2px 4px; }"
+    ),
+}
+
+HISTORY_NAV_BTN_STYLE = {
+    "dark": (
+        "QPushButton#history_nav_btn { background: #2d2d2d; color: #d4d4d4; "
+        "border: 1px solid #3c3c3c; border-radius: 3px; padding: 2px 10px; "
+        "font-size: inherit; }"
+        "QPushButton#history_nav_btn:hover { background: #3c3c3c; }"
+        "QPushButton#history_nav_btn:pressed { background: #1e1e1e; }"
+        "QPushButton#history_nav_btn:disabled { color: #555; "
+        "background: #252526; border-color: #3c3c3c; }"
+    ),
+    "light": (
+        "QPushButton#history_nav_btn { background: #f0e8e0; color: #2c232e; "
+        "border: 1px solid #d2c9c4; border-radius: 3px; padding: 2px 10px; "
+        "font-size: inherit; }"
+        "QPushButton#history_nav_btn:hover { background: #e8e0d8; }"
+        "QPushButton#history_nav_btn:pressed { background: #d2c9c4; }"
+        "QPushButton#history_nav_btn:disabled { color: #92898a; "
+        "background: #e8e0d8; border-color: #d2c9c4; }"
+    ),
+}
+
+HISTORY_NAV_LABEL_STYLE = {
+    "dark": "color: #808080; font-size: inherit; padding: 0 6px;",
+    "light": "color: #72696d; font-size: inherit; padding: 0 6px;",
+}
+
 # Settings dialog styles
 SETTINGS_BTN_STYLE = {
     "dark": (
@@ -2383,6 +2512,18 @@ def get_tool_approval_disabled_btn_style() -> str:
 
 def get_settings_btn_style() -> str:
     return _theme_get("SETTINGS_BTN_STYLE")
+
+
+def get_history_nav_frame_style() -> str:
+    return _theme_get("HISTORY_NAV_FRAME_STYLE")
+
+
+def get_history_nav_button_style() -> str:
+    return _theme_get("HISTORY_NAV_BTN_STYLE")
+
+
+def get_history_nav_label_style() -> str:
+    return _theme_get("HISTORY_NAV_LABEL_STYLE")
 
 
 def get_tool_colors() -> dict[str, str]:
