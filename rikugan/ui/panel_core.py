@@ -41,6 +41,7 @@ from .qt_compat import (
 from .styles import (
     DARK_THEME,
     LIGHT_THEME,
+    get_add_tab_btn_style,
     get_cancel_btn_style,
     get_message_dialog_style,
     get_mode_bar_style,
@@ -175,12 +176,17 @@ class _AddButtonTabBar(QTabBar):
         self._add_btn.setText("+")
         self._add_btn.setAutoRaise(True)
         self._add_btn.setFixedSize(20, 20)
-        self._add_btn.setStyleSheet(
-            "QToolButton { color: #d4d4d4; font-size: inherit; font-weight: bold; "
-            "border: none; background: transparent; }"
-            "QToolButton:hover { background: #3c3c3c; border-radius: 3px; }"
-        )
+        self.refresh_inline_styles()
         self._add_btn.clicked.connect(self.add_tab_requested)
+
+    def refresh_inline_styles(self) -> None:
+        """Re-apply the theme-aware add-button style.
+
+        Called from ``RikuganPanelCore._refresh_inline_styles()`` whenever
+        the theme changes.  Without this, the ``+`` button would keep the
+        hard-coded dark palette when the user switches to the light theme.
+        """
+        self._add_btn.setStyleSheet(get_add_tab_btn_style())
 
     def _show_context_menu(self, pos):
         index = self.tabAt(pos)
@@ -883,6 +889,12 @@ class RikuganPanelCore(QWidget):
         if tab_widget is not None:
             try:
                 tab_widget.setStyleSheet(get_tab_widget_style())
+            except RuntimeError:
+                pass
+        tab_bar = getattr(self, "_tab_bar", None)
+        if tab_bar is not None and hasattr(tab_bar, "refresh_inline_styles"):
+            try:
+                tab_bar.refresh_inline_styles()
             except RuntimeError:
                 pass
         for splitter in (

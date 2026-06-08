@@ -547,7 +547,7 @@ class AnthropicProvider(LLMProvider):
                         # Capture final output_tokens from message_delta usage
                         usage_delta = getattr(event, "usage", None)
                         if usage_delta is not None:
-                            output_tokens = getattr(usage_delta, "output_tokens", 0) or 0
+                            output_tokens = coerce_token_count(getattr(usage_delta, "output_tokens", 0))
                             if output_tokens > 0:
                                 yield StreamChunk(
                                     usage=TokenUsage(

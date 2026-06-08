@@ -193,6 +193,38 @@ class OpenAIProvider(LLMProvider):
             msg = str(e)
             if "context" in msg.lower() or "token" in msg.lower():
                 raise ContextLengthError(msg, provider="openai") from e
+            raise ProviderError(str(e), provider="openai") from e
+        # Transient network / server errors — RETRYABLE.
+        # APITimeoutError is checked first because the real OpenAI SDK
+        # defines ``APITimeoutError`` as a *subclass* of
+        # ``APIConnectionError``; checking the connection branch first
+        # would mask timeout-specific classification and message.
+        if isinstance(e, openai.APITimeoutError):
+            raise ProviderError(
+                f"Request timed out: {e}",
+                provider="openai",
+                retryable=True,
+            ) from e
+        if isinstance(e, openai.APIConnectionError):
+            raise ProviderError(
+                f"Connection error: {e}",
+                provider="openai",
+                retryable=True,
+            ) from e
+        if isinstance(e, openai.APIStatusError):
+            status = getattr(e, "status_code", 0)
+            if status >= 500:
+                raise ProviderError(
+                    f"Server error ({status}): {e}",
+                    provider="openai",
+                    status_code=status,
+                    retryable=True,
+                ) from e
+            raise ProviderError(
+                f"API error ({status}): {e}",
+                provider="openai",
+                status_code=status,
+            ) from e
         raise ProviderError(str(e), provider="openai") from e
 
     def _build_request_kwargs(
@@ -228,10 +260,37 @@ class OpenAIProvider(LLMProvider):
         client: Any,
         kwargs: dict[str, Any],
     ) -> Generator[StreamChunk, None, None]:
-        """Yield StreamChunks from the OpenAI streaming API."""
+        """Yield StreamChunks from the OpenAI streaming API.
+
+        Usage semantics
+        ---------------
+        OpenAI Chat Completions streams usage as a *cumulative* snapshot
+        (each chunk's ``usage.prompt_tokens`` is the full context size
+        so far, not a delta).  Yielding one usage ``StreamChunk`` per
+        chunk would cause the agent loop accumulator to sum them and
+        overcount by N times the number of chunks with usage.
+
+        The previous implementation yielded one usage chunk per chunk
+        (including the content-bearing chunks some OpenAI-compatible
+        endpoints emit).  This implementation:
+
+        * Tracks the most recently observed cumulative usage in
+          ``last_usage_seen`` while content chunks stream past.
+        * Yields a single usage ``StreamChunk`` only when we see the
+          official final usage-only message (``choices == []`` and
+          ``usage`` populated).  The loop exits immediately afterwards
+          — there is no further content to stream.
+        * If the stream ends without a final usage-only message
+          (older endpoints, or 3rd-party proxies that include usage on
+          a normal chunk), we yield ``last_usage_seen`` exactly once
+          after the stream finishes so the agent loop still records
+          the cumulative totals.
+        """
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
 
+        last_usage_seen: TokenUsage | None = None
+        yielded_final_usage = False
         try:
             stream = client.chat.completions.create(**kwargs)
             current_tool_calls: dict[int, dict] = {}
@@ -242,22 +301,31 @@ class OpenAIProvider(LLMProvider):
                 # The official OpenAI final usage-only chunk has
                 # ``choices == []`` and a populated ``usage`` field. Some
                 # OpenAI-compatible endpoints also surface usage on a
-                # normal chunk. Read usage FIRST, then skip when there is
-                # genuinely no content to emit.
+                # normal chunk — capture it but DO NOT yield it as a
+                # delta (it is cumulative, so yielding it would
+                # overcount when the agent loop accumulates deltas).
                 usage_obj = getattr(chunk, "usage", None)
                 if usage_obj is not None:
                     pt = coerce_token_count(getattr(usage_obj, "prompt_tokens", 0))
                     ct = coerce_token_count(getattr(usage_obj, "completion_tokens", 0))
                     tt = coerce_token_count(getattr(usage_obj, "total_tokens", 0))
-                    yield StreamChunk(
-                        usage=TokenUsage(
-                            prompt_tokens=pt,
-                            completion_tokens=ct,
-                            total_tokens=tt,
-                        )
+                    last_usage_seen = TokenUsage(
+                        prompt_tokens=pt,
+                        completion_tokens=ct,
+                        total_tokens=tt,
                     )
 
                 if not chunk.choices:
+                    # Official final usage-only chunk — yield exactly one
+                    # usage StreamChunk and remember we did so.  Skip
+                    # content emission; this chunk carries no content.
+                    # Guard against duplicates: some OpenAI-compatible
+                    # proxies emit the final usage-only chunk more than
+                    # once, and the agent loop accumulator would sum
+                    # them and overcount.
+                    if not yielded_final_usage and last_usage_seen is not None:
+                        yield StreamChunk(usage=last_usage_seen)
+                        yielded_final_usage = True
                     continue
                 delta = chunk.choices[0].delta
 
@@ -313,3 +381,13 @@ class OpenAIProvider(LLMProvider):
 
         except Exception as e:
             self._handle_api_error(e)
+            return
+
+        # If the stream ended without an official final usage-only
+        # chunk (older endpoints, proxies that attach usage to content
+        # chunks), surface the most recently observed cumulative usage
+        # exactly once.  This keeps Anthropic's delta-style and
+        # OpenAI's cumulative-style semantics both producing a single
+        # usage update for the agent loop accumulator.
+        if not yielded_final_usage and last_usage_seen is not None:
+            yield StreamChunk(usage=last_usage_seen)

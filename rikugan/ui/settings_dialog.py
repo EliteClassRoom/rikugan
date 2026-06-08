@@ -78,49 +78,37 @@ class _ModelFetcher:
             except queue.Empty:
                 break
 
-    def fetch(self, provider_name: str, api_key: str, api_base: str, ensure_ready: bool = True) -> None:
+    def fetch(self, provider_name: str, api_key: str, api_base: str) -> None:
         """Fetch models for the given provider configuration.
 
-        If ``ensure_ready`` is False, the provider is created lazily on the
-        background thread (which avoids pre-importing heavy C-extension
-        SDKs on the UI thread).  Use this for the automatic on-open
-        refresh; pass True only when the user explicitly clicks Refresh
-        and we know we have time to import the SDK.
+        Always pre-initialises the provider on the MAIN thread
+        (``ensure_ready``), because Python 3.14 crashes when heavy
+        C-extension SDK packages (httpx, h2, ssl, ...) are first
+        imported from a background thread.  The provider object is then
+        reused inside the worker thread to call ``list_models()``.
+
+        The previous revision supported an ``ensure_ready=False`` flag
+        for "background-thread SDK import" — that path was unsafe and
+        has been removed.  All model fetches go through this safe
+        path; provider/key-change handlers no longer auto-fetch live
+        models (see ``_on_provider_changed`` / ``_on_key_edited``) and
+        only the explicit Refresh button calls ``fetch`` at all.
         """
-        if ensure_ready:
-            # Create the provider and pre-import its SDK on the MAIN thread.
-            # Python 3.14 crashes when heavy C-extension packages are first
-            # imported from a background thread.
-            try:
-                provider = self._registry.new_instance(
-                    provider_name,
-                    api_key=api_key,
-                    api_base=api_base,
-                )
-                provider.ensure_ready()
-            except Exception as e:
-                if self._alive:
-                    self._queue.put(("error", provider_name, str(e)))
-                return
+        try:
+            provider = self._registry.new_instance(
+                provider_name,
+                api_key=api_key,
+                api_base=api_base,
+            )
+            provider.ensure_ready()
+        except Exception as e:
+            if self._alive:
+                self._queue.put(("error", provider_name, str(e)))
+            return
 
         def _run():
             try:
-                if ensure_ready:
-                    # Reuse the provider object created on the main thread
-                    # by re-instantiating it on the worker thread (the
-                    # heavy SDK modules are now imported so this is cheap).
-                    p = self._registry.new_instance(
-                        provider_name,
-                        api_key=api_key,
-                        api_base=api_base,
-                    )
-                else:
-                    p = self._registry.new_instance(
-                        provider_name,
-                        api_key=api_key,
-                        api_base=api_base,
-                    )
-                models = p.list_models()
+                models = provider.list_models()
                 if self._alive:
                     self._queue.put(("models", provider_name, models))
             except Exception as e:
@@ -618,8 +606,9 @@ class SettingsDialog(QDialog):
         We do NOT auto-fetch live models on first open — instead we
         populate the model combo with the provider's built-in / cached
         model list so the dialog is immediately usable.  Live network
-        fetches are triggered only when the user clicks Refresh, switches
-        provider, or edits the API key.
+        fetches are triggered ONLY by the explicit Refresh button;
+        switching provider or editing the API key no longer triggers
+        a live fetch (see ``_on_provider_changed`` / ``_on_key_edited``).
         """
         if self._closed:
             return
@@ -631,26 +620,94 @@ class SettingsDialog(QDialog):
             log_error(f"SettingsDialog deferred init error: {e}")
 
     def _populate_builtin_models(self) -> None:
-        """Populate the model combo with the built-in list for the current provider.
+        """Populate the model combo with the built-in / current model list.
 
-        No network call, no SDK import, no ensure_ready.  Safe to run on
-        first paint of the dialog.
+        This is called from the deferred-init timer (after the dialog
+        is painted), from ``_on_provider_changed``, and from
+        ``_on_key_edited``.  It does NOT trigger a network call and
+        does NOT pre-import provider SDKs.
+
+        For providers with a safe static ``_builtin_models()`` list
+        (anthropic / openai / gemini / minimax) we use that list.  For
+        providers whose ``_builtin_models`` is inherited from
+        OpenAIProvider (ollama / openai_compat / custom connections),
+        the static list contains OpenAI-only entries like "gpt-4o"
+        that have nothing to do with the user's actual model.  In that
+        case we only show the preserved manual model — or nothing
+        at all, leaving the user's typed text in the editable combo.
+
+        The "preserved manual model" is the first non-empty value of:
+        ``_model_restore_hint`` (captured by the key-edit / provider-
+        switch handlers before this method runs), the saved
+        ``config.provider.model``, or whatever the user has typed into
+        the editable combo.  Preserving the typed text on every refresh
+        prevents the key-edit handler from clobbering a freshly typed
+        model for a brand-new provider with no saved model.
         """
+        provider_name = self._provider_combo.currentText()
+        current_model = (self._config.provider.model or "").strip()
+        restore_model = (self._model_restore_hint or "").strip()
+        typed_model = self._model_combo.currentText().strip()
+        manual_model = restore_model or current_model or typed_model
+        models: list = []
         try:
-            provider = self._registry.new_instance(
-                self._provider_combo.currentText(),
-                api_key=self._api_key_edit.text().strip(),
-                api_base=self._api_base_edit.text().strip(),
-            )
-            models = provider._builtin_models()
+            if self._is_local_compat_provider(provider_name):
+                # Don't fall back to OpenAI's static list — that would
+                # silently replace the user's Ollama / custom model
+                # with "gpt-4o".  Show only the preserved manual model.
+                if manual_model:
+                    models = [
+                        ModelInfo(
+                            id=manual_model,
+                            name=manual_model,
+                            provider=provider_name,
+                        )
+                    ]
+            else:
+                provider = self._registry.new_instance(
+                    provider_name,
+                    api_key=self._api_key_edit.text().strip(),
+                    api_base=self._api_base_edit.text().strip(),
+                )
+                models = provider._builtin_models()
         except Exception as e:
             log_debug(f"Could not load built-in models: {e}")
             models = []
         if models:
-            self._on_models_ready(models)
+            # During the first-paint built-in pass, never replace the
+            # typed combo text with an unrelated first model.  Pass
+            # ``preserve_unmatched=True`` so the user keeps their
+            # current entry even if it isn't in the populated list.
+            # ``_on_models_ready`` clears ``_model_restore_hint`` on
+            # its way out, so we do not need to clear it here.
+            self._on_models_ready(models, preserve_unmatched=True)
         else:
+            # No static built-ins (e.g. a fresh OpenAI-compatible /
+            # custom connection with no saved model).  Preserve the
+            # manual model — falling back to ``""`` would silently
+            # discard whatever the user typed before pressing the API
+            # key.  ``_set_manual_model_text`` also forces
+            # ``currentIndex`` to ``-1`` so the previously-selected
+            # item's ``itemData`` cannot leak into the save path.
+            self._set_manual_model_text(manual_model)
             self._model_status.setText("Click Refresh to fetch live models.")
             self._model_status.setStyleSheet(get_hint_status_style())
+            # The hint has been (or would have been) consumed by this
+            # pass; clear it so it cannot influence a later live fetch.
+            self._model_restore_hint = ""
+
+    def _is_local_compat_provider(self, provider_name: str) -> bool:
+        """True for ollama, openai_compat, and user-added custom connections.
+
+        These providers' static ``_builtin_models()`` lists come from
+        the OpenAI base class and have nothing to do with the user's
+        actual model — using them in the initial pop would silently
+        overwrite the configured model.
+        """
+        if provider_name in ("ollama", "openai_compat"):
+            return True
+        # Custom connections registered via the registry.
+        return self._registry._is_compat_name(provider_name) and provider_name != "openai_compat"
 
     # --- Cleanup ---
 
@@ -704,7 +761,7 @@ class SettingsDialog(QDialog):
         # Update UI fields from the (possibly restored) config
         self._api_key_edit.setText(self._config.provider.api_key)
         self._api_base_edit.setText(self._config.provider.api_base)
-        self._model_combo.setCurrentText(self._config.provider.model)
+        self._set_manual_model_text(self._config.provider.model)
         self._temp_spin.setValue(self._config.provider.temperature)
         self._max_tokens_spin.setValue(self._config.provider.max_tokens)
         self._context_spin.setValue(self._config.provider.context_window)
@@ -728,12 +785,26 @@ class SettingsDialog(QDialog):
             self._api_key_edit.setPlaceholderText("API key")
 
         self._update_auth_status()
-        self._fetch_models()
+        # Refreshing the local built-in list is cheap and safe; do
+        # NOT kick off a live network fetch here.  Live fetches are
+        # triggered only by the explicit Refresh button.
+        self._populate_builtin_models()
+        self._model_status.setText("Click Refresh to fetch live models.")
+        self._model_status.setStyleSheet(get_hint_status_style())
 
     def _on_key_edited(self) -> None:
+        # Capture the user's currently-selected / typed model BEFORE we
+        # refresh the built-in list, so the refresh can preserve a
+        # manually typed model for fresh providers with no saved model.
         self._model_restore_hint = self._get_selected_model_id()
         self._update_auth_status()
-        self._fetch_models()
+        # Edit finished on the API key — refresh the local built-in
+        # model list.  This is a local-only refresh; it does NOT trigger
+        # a live network fetch.  Live fetches are only triggered by the
+        # explicit Refresh button.
+        self._populate_builtin_models()
+        self._model_status.setText("Click Refresh to fetch live models.")
+        self._model_status.setStyleSheet(get_hint_status_style())
 
     def _on_oauth_toggled(self, checked: bool) -> None:
         """Handle the OAuth checkbox toggle."""
@@ -789,14 +860,13 @@ class SettingsDialog(QDialog):
     def _fetch_models(self, explicit: bool = False) -> None:
         """Refresh the model list for the current provider.
 
-        ``explicit=True`` is used when the user clicks the Refresh button —
-        we can afford to run the heavy provider ``ensure_ready()`` on the
-        UI thread and import the SDK synchronously.
+        ``explicit=True`` is used when the user clicks the Refresh button.
+        This is now the ONLY live-fetch trigger — provider / key change
+        handlers no longer auto-fetch.
 
-        ``explicit=False`` is the default — used for automatic refreshes
-        after provider / API-key changes and for the on-open fetch. The
-        SDK is imported lazily on the background thread to avoid blocking
-        the UI / first paint.
+        The fetcher always runs ``ensure_ready`` on the main thread
+        before launching the worker, so SDK imports never happen on a
+        background thread (Python 3.14 + C-extension UAF).
         """
         provider = self._provider_combo.currentText()
         key = self._api_key_edit.text().strip()
@@ -806,16 +876,17 @@ class SettingsDialog(QDialog):
         if not key and self._resolved_token:
             key = self._resolved_token
 
-        self._model_status.setText("Fetching..." if explicit else "Refreshing in background...")
+        self._model_status.setText("Fetching..." if explicit else "Refreshing...")
         self._fetch_btn.setEnabled(False)
-        self._fetcher.fetch(provider, key, base, ensure_ready=explicit)
+        self._fetcher.fetch(provider, key, base)
 
-    def _on_models_ready(self, models: list) -> None:
+    def _on_models_ready(self, models: list, preserve_unmatched: bool = False) -> None:
         self._fetch_btn.setEnabled(True)
         self._fetched_models = models
 
         preferred_id = (self._model_restore_hint or "").strip()
         current_id = preferred_id or self._get_selected_model_id()
+        previous_text = self._model_combo.currentText().strip()
         self._model_combo.clear()
         for m in models:
             label = f"{m.name}  ({m.id})" if m.name != m.id else m.id
@@ -828,11 +899,30 @@ class SettingsDialog(QDialog):
                 self._model_combo.setCurrentIndex(i)
                 matched = True
                 break
-        if not matched and models:
-            # If the previous model ID doesn't match any fetched model
-            # (e.g. stale error text, wrong provider), select the first one
-            # instead of keeping garbage text in the editable combo.
+        if not matched and models and not preserve_unmatched:
+            # Live fetch result — the fetched list is authoritative,
+            # so fall back to the first item if the current model is
+            # not in the list (e.g. provider rotated model lineup).
             self._model_combo.setCurrentIndex(0)
+        elif not matched and preserve_unmatched:
+            # Initial / built-in population — keep the user's typed
+            # model as editable text so we never silently overwrite
+            # "llama3.1" with "gpt-4o" just because the combo is
+            # populated from an unrelated static list.
+            #
+            # We also insert/select a *custom* combo item whose
+            # ``itemData`` equals the preserved model id.  An editable
+            # ``QComboBox`` can otherwise keep ``currentIndex() == 0``
+            # while visually displaying the typed text, and
+            # ``_get_selected_model_id()`` prefers ``itemData(idx)``
+            # whenever the index is valid — that mismatch used to cause
+            # the dialog to display "llama3.1" but save "gpt-4o".
+            preserved_id = (current_id or previous_text or "").strip()
+            if preserved_id:
+                self._model_combo.addItem(preserved_id, preserved_id)
+                self._model_combo.setCurrentIndex(self._model_combo.count() - 1)
+            else:
+                self._model_combo.setCurrentText("")
         self._model_restore_hint = ""
 
         if models:
@@ -870,6 +960,31 @@ class SettingsDialog(QDialog):
         if data:
             return data
         return self._model_combo.currentText().strip()
+
+    def _set_manual_model_text(self, model_id: str) -> None:
+        """Set the editable model combo text without leaving stale
+        ``itemData`` from a previous provider selected.
+
+        An editable ``QComboBox`` can keep ``currentIndex()`` pointing at
+        a stale item whose ``itemData`` belongs to a different provider,
+        even while the line edit visually shows the intended value.
+        Because ``_get_selected_model_id()`` prefers ``itemData(idx)``
+        whenever the index is valid, pressing OK in that state would save
+        the previous provider's model instead of the intended one.  By
+        forcing ``currentIndex`` to ``-1`` first, the accessor falls back
+        to the visible text and the stale itemData can never reach the
+        save path.
+        """
+        # Blocking signals during the multi-step combo mutation prevents
+        # the ordering-changed/currentTextChanged feedback loop from
+        # re-selecting an item while we are trying to clear the index.
+        blocker = self._model_combo.blockSignals(True)
+        try:
+            self._model_combo.setCurrentIndex(-1)
+            self._model_combo.setEditText(model_id)
+            self._model_combo.setCurrentText(model_id)
+        finally:
+            self._model_combo.blockSignals(blocker)
 
     # --- Custom provider management ---
 
@@ -1036,9 +1151,23 @@ class SettingsDialog(QDialog):
         self._config.encrypt_api_keys = wants_encrypt
         self.encryption_password = password  # consumed by caller's save()
 
-        # Apply new tab settings
-        self._skills_tab.apply_to_config(self._config)
-        self._mcp_tab.apply_to_config(self._config)
-        self._profiles_tab.apply_to_config(self._config)
+        # Apply new tab settings — but only for tabs that were
+        # actually loaded. The Skills / MCP / Profiles tabs are
+        # lazy-constructed on first tab switch (to keep first paint
+        # fast). If the user opens Settings and immediately presses OK
+        # without visiting those tabs, they remain ``None`` and we
+        # MUST NOT force-load them just to save — that would defeat
+        # the lazy-load latency work and block the UI thread on
+        # SkillsService / MCP config scanning.
+        for tab in (
+            getattr(self, "_skills_tab", None),
+            getattr(self, "_mcp_tab", None),
+            getattr(self, "_profiles_tab", None),
+        ):
+            if tab is not None:
+                try:
+                    tab.apply_to_config(self._config)
+                except Exception as e:
+                    log_error(f"Settings apply_to_config failed for {type(tab).__name__}: {e}")
 
         self.accept()
