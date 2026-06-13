@@ -48,6 +48,7 @@ from .modes.normal import run_normal_loop
 from .modes.orchestra import run_orchestra_mode
 from .modes.plan import run_plan_mode
 from .modes.research import run_research_mode
+from .modes.a2a import run_a2a_mode
 from .mutation import MutationRecord, build_reverse_record, capture_pre_state
 from .plan_mode import parse_plan as _parse_plan_impl
 from .subagent import SubagentRunner
@@ -133,6 +134,7 @@ class _ParsedCommand:
     explore_only: bool = False
     use_research_mode: bool = False
     use_orchestra_mode: bool = False
+    use_a2a_mode: bool = False  # /a2a <agent> <message...> direct delegation
     direct_command: str = ""
     direct_arg: str = ""  # remainder after the direct command token
 
@@ -178,6 +180,14 @@ def _parse_user_command(user_message: str) -> _ParsedCommand:
         return _ParsedCommand(message=stripped, direct_command="/doctor")
     if lower == "/orchestra" or lower.startswith("/orchestra "):
         return _ParsedCommand(message=stripped[10:].strip() if len(stripped) > 10 else "", use_orchestra_mode=True)
+    # /a2a <agent> <message...>  — delegate to external agent directly
+    # without LLM mediation. The first whitespace-separated token is
+    # the agent name; the rest is the task. Empty body is treated as
+    # a missing-arg error (we still flag use_a2a_mode so the run()
+    # dispatcher can surface a friendly message).
+    if lower == "/a2a" or lower.startswith("/a2a "):
+        body = stripped[5:].strip() if len(stripped) > 5 else ""
+        return _ParsedCommand(message=body, use_a2a_mode=True)
     return _ParsedCommand(message=stripped)
 
 
@@ -2007,6 +2017,20 @@ class AgentLoop:
                 yield from run_orchestra_mode(
                     self,
                     user_message,
+                    system_prompt,
+                    tools_schema,
+                )
+                return
+
+            if cmd.use_a2a_mode:
+                # /a2a bypasses the LLM turn cycle entirely — the
+                # dispatcher streams events straight to the chat.
+                # No session metadata is set because this is a
+                # one-shot action, not a stateful mode like
+                # orchestra / exploration / plan.
+                yield from run_a2a_mode(
+                    self,
+                    cmd.message,
                     system_prompt,
                     tools_schema,
                 )
