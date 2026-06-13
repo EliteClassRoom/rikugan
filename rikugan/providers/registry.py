@@ -1,12 +1,8 @@
 """Provider registry: factory for creating provider instances.
 
-Provider classes are loaded lazily via import strings — only the actively
-requested provider's module is imported on first use, avoiding the cost of
-importing all provider SDKs (anthropic, openai, gemini, ollama) at panel boot.
-
-``list_providers()`` does NOT resolve any provider classes — it returns
-names from import-spec strings.  ``new_instance()`` resolves exactly the
-requested provider class and caches it.
+Lazy import via spec strings: only the actively requested provider's
+adapter module is imported on first use, avoiding the cost of importing
+all provider SDKs (anthropic, openai, gemini, ollama, ...) at panel boot.
 """
 
 from __future__ import annotations
@@ -18,8 +14,7 @@ from typing import Any, Union
 from ..core.errors import ProviderError
 from .base import LLMProvider
 
-# Provider import strings — module_path:ClassName
-# Provider SDK modules are only imported when the provider is first requested.
+# module_path:ClassName — SDK modules are imported on first request.
 _BUILTIN_PROVIDER_SPECS: dict[str, str] = {
     "anthropic": "rikugan.providers.anthropic_provider:AnthropicProvider",
     "openai": "rikugan.providers.openai_provider:OpenAIProvider",
@@ -30,50 +25,34 @@ _BUILTIN_PROVIDER_SPECS: dict[str, str] = {
     "codex": "rikugan.providers.codex_provider:CodexProvider",
 }
 
-# A provider entry is either an import spec string ("module:ClassName")
-# or an already-resolved class instance (for in-process register()).
+# Entry is either an import spec string ("module:ClassName") or an
+# already-resolved class (from register()).
 ProviderEntry = Union[str, type[LLMProvider]]
 
 
 class ProviderRegistry:
-    """Factory for creating and managing LLM providers.
-
-    Provider entries are stored as import-spec strings until a specific
-    provider is requested.  This avoids importing every provider SDK module
-    at startup — only the actively used provider's adapter module is imported.
-
-    Custom OpenAI-compatible provider names are tracked per-instance (not
-    at module level) so that multiple registries coexist without polluting
-    each other.  Names registered via ``register()`` (in-process classes)
-    are distinguished from config-based custom providers and are preserved
-    across ``register_custom_providers()`` calls.
-    """
+    """Factory for LLM providers with instance-level config state."""
 
     def __init__(self) -> None:
-        # Map provider name → import spec string or resolved class.
-        # Initialized from built-in spec strings without resolving any classes.
+        # Provider name -> import spec or resolved class. Initialized from
+        # built-ins without resolving any classes.
         self._providers: dict[str, ProviderEntry] = dict(_BUILTIN_PROVIDER_SPECS)
         self._instances: dict[str, LLMProvider] = {}
-        # Keep replaced providers alive for the process lifetime.  In IDA Pro,
-        # dropping the last reference to SDK/http clients while Qt/Shiboken is
-        # dispatching a signal can run C-level cleanup at an unsafe time.
+        # Replaced providers are kept alive for process lifetime: dropping
+        # the last ref to SDK/http clients while Qt/Shiboken is dispatching
+        # can run C cleanup at an unsafe time.
         self._retired_instances: list[LLMProvider] = []
-
-        # Instance-local tracking.
-        # _openai_compat_names: custom provider names that resolve to the
-        #   openai_compat adapter (registered via register_custom_providers).
-        # _registered_names: names registered via register() (in-process class)
-        #   — these are NOT removed by register_custom_providers() cleanup.
+        # Per-instance tracking. _registered_names survives
+        # register_custom_providers() cleanup (in-process classes are not
+        # config-managed); _openai_compat_names tracks which custom names
+        # route to the openai_compat adapter.
         self._openai_compat_names: set[str] = set()
         self._registered_names: set[str] = set()
 
-    def _resolve_entry(self, name: str) -> type[LLMProvider]:
-        """Resolve a named entry to its provider class.
+    # -- Resolution ----------------------------------------------------------
 
-        If the entry is still an import spec string, the module is imported
-        now and the resolved class is cached in place.  If the entry is
-        already a resolved class (from ``register()``), it is returned directly.
-        """
+    def _resolve_entry(self, name: str) -> type[LLMProvider]:
+        """Resolve an entry to its provider class, importing its module if needed."""
         entry = self._providers.get(name)
         if entry is None:
             raise ProviderError(
@@ -81,21 +60,27 @@ class ProviderRegistry:
             )
         if isinstance(entry, str):
             mod_path, cls_name = entry.rsplit(":", 1)
-            mod = importlib.import_module(mod_path)
-            cls = getattr(mod, cls_name)
-            self._providers[name] = cls
+            cls = getattr(importlib.import_module(mod_path), cls_name)
+            self._providers[name] = cls  # cache resolved class
             return cls
         return entry
 
     def _is_compat_name(self, name: str) -> bool:
-        """Return True if *name* is a custom OpenAI-compatible provider.
+        """True if name is the built-in compat adapter or a custom compat name."""
+        return name == "openai_compat" or name in self._openai_compat_names
 
-        Uses the instance-local set — does NOT import or resolve any
-        provider classes.
-        """
-        if name == "openai_compat":
-            return True
-        return name in self._openai_compat_names
+    def _normalized_api_base(self, name: str, api_base: str) -> str:
+        """Effective API base for cache comparison. Empty string means unset."""
+        if api_base:
+            return api_base
+        if name == "minimax":
+            return getattr(self._resolve_entry("minimax"), "DEFAULT_API_BASE", "")
+        if name == "ollama":
+            from .ollama_provider import DEFAULT_OLLAMA_URL
+            return os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL)
+        return ""
+
+    # -- Public registration API ---------------------------------------------
 
     def register(self, name: str, provider_cls: type[LLMProvider]) -> None:
         """Register an in-process provider class (bypasses import strings)."""
@@ -104,11 +89,7 @@ class ProviderRegistry:
         self._openai_compat_names.discard(name)
 
     def unregister(self, name: str) -> None:
-        """Remove a provider entry by name.
-
-        Only removes entries that are not built-in.  Built-in providers
-        and the active cached instance are not affected.
-        """
+        """Remove a provider entry by name. Built-in entries are preserved."""
         if name in _BUILTIN_PROVIDER_SPECS:
             return
         self._providers.pop(name, None)
@@ -116,64 +97,40 @@ class ProviderRegistry:
         self._registered_names.discard(name)
 
     def register_custom_providers(self, names: list[str]) -> None:
-        """Register custom provider names as OpenAI-compatible endpoints.
+        """Set the active list of custom OpenAI-compatible provider names.
 
-        Does NOT import the OpenAI-compatible adapter module — the entry
-        is stored as the same import spec string used for "openai_compat"
-        and will be resolved on first use.
-
-        Names that were previously registered via config but are absent
-        from *names* are removed.  Providers registered via ``register()``
-        (in-process classes) and built-in entries are never removed.
+        Names previously in config but absent from ``names`` are removed
+        (and their live instances retired). Built-ins and register()-set
+        names are preserved.
         """
         compat_spec = _BUILTIN_PROVIDER_SPECS["openai_compat"]
         new_set = set(names)
 
-        # Remove custom providers no longer in the latest config.
-        # Skip built-in entries and entries registered via register()
-        # (in-process classes) — they are not config-managed.
         for existing_name in list(self._providers.keys()):
             if existing_name in _BUILTIN_PROVIDER_SPECS:
                 continue
             if existing_name in self._registered_names:
                 continue
-            if existing_name not in new_set:
-                self._providers.pop(existing_name, None)
-                self._openai_compat_names.discard(existing_name)
-                # Also retire any live instance so it doesn't hang around
-                retired = self._instances.pop(existing_name, None)
-                if retired is not None:
-                    self._retired_instances.append(retired)
-
-        # Add or re-add current config entries.
-        for name in names:
-            if name in _BUILTIN_PROVIDER_SPECS:
+            if existing_name in new_set:
                 continue
-            if name in self._registered_names:
+            self._providers.pop(existing_name, None)
+            self._openai_compat_names.discard(existing_name)
+            retired = self._instances.pop(existing_name, None)
+            if retired is not None:
+                self._retired_instances.append(retired)
+
+        for name in names:
+            if name in _BUILTIN_PROVIDER_SPECS or name in self._registered_names:
                 continue
             if name not in self._providers:
                 self._providers[name] = compat_spec
             self._openai_compat_names.add(name)
 
     def list_providers(self) -> list[str]:
-        """Return all known provider names without importing any adapter modules."""
+        """All known provider names. Does NOT import any adapter module."""
         return list(self._providers.keys())
 
-    def create(
-        self,
-        name: str,
-        api_key: str = "",
-        api_base: str = "",
-        model: str = "",
-        **kwargs: Any,
-    ) -> LLMProvider:
-        """Create and cache a new provider instance."""
-        instance = self.new_instance(name, api_key=api_key, api_base=api_base, model=model, **kwargs)
-        old = self._instances.get(name)
-        if old is not None:
-            self._retired_instances.append(old)
-        self._instances[name] = instance
-        return instance
+    # -- Instance creation ---------------------------------------------------
 
     def new_instance(
         self,
@@ -185,32 +142,29 @@ class ProviderRegistry:
     ) -> LLMProvider:
         """Create an uncached provider instance for temporary probes.
 
-        Settings/auth/model-refresh code must use this instead of ``create()``
-        so it cannot replace the live chat provider cached in ``_instances``.
-
-        Only the requested provider's adapter module is imported.  For custom
-        OpenAI-compatible names, the ``openai_compat`` adapter is resolved
-        on-demand (not eagerly).
+        Settings/auth/model-refresh code should use this instead of
+        ``create()`` so the live chat provider cache is not disturbed.
         """
         cls = self._resolve_entry(name)
-
         if self._is_compat_name(name) and name != "openai_compat":
             kwargs.setdefault("provider_name", name)
-
         return cls(api_key=api_key, api_base=api_base, model=model, **kwargs)
 
-    def _normalized_api_base(self, name: str, api_base: str) -> str:
-        """Return the provider's effective API base for cache comparison."""
-        if api_base:
-            return api_base
-        if name == "minimax":
-            cls = self._resolve_entry("minimax")
-            return getattr(cls, "DEFAULT_API_BASE", "")
-        if name == "ollama":
-            from .ollama_provider import DEFAULT_OLLAMA_URL
-
-            return os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL)
-        return ""
+    def create(
+        self,
+        name: str,
+        api_key: str = "",
+        api_base: str = "",
+        model: str = "",
+        **kwargs: Any,
+    ) -> LLMProvider:
+        """Create and cache a new provider instance, retiring the old one."""
+        instance = self.new_instance(name, api_key=api_key, api_base=api_base, model=model, **kwargs)
+        old = self._instances.get(name)
+        if old is not None:
+            self._retired_instances.append(old)
+        self._instances[name] = instance
+        return instance
 
     def get_or_create(
         self,
@@ -220,65 +174,48 @@ class ProviderRegistry:
         model: str = "",
         **kwargs: Any,
     ) -> LLMProvider:
-        """Get existing instance or create new one.
+        """Return cached instance, recreating only on credential change.
 
-        Recreates the cached instance only if api_key or api_base changed.
-        Model-only switches update the existing provider because SDK clients do
-        not bind to a model; the model is included per request.  Replaced
-        providers are retained instead of explicitly closed or dropped so SDK
-        cleanup cannot run during Qt signal dispatch.
+        Model-only switches mutate the existing instance (SDK clients do
+        not bind to a model; it is sent per request).
         """
         cached = self._instances.get(name)
         if cached is not None:
-            normalized_new = self._normalized_api_base(name, api_base)
-            normalized_old = self._normalized_api_base(name, cached.api_base)
-            if normalized_new == normalized_old and api_key == cached.api_key:
+            if (
+                api_key == cached.api_key
+                and self._normalized_api_base(name, api_base)
+                == self._normalized_api_base(name, cached.api_base)
+            ):
                 if model and cached.model != model:
                     cached.model = model
                 return cached
-            # Key or base changed — replace
             self._retired_instances.append(cached)
-
-        instance = self.new_instance(name, api_key=api_key, api_base=api_base, model=model, **kwargs)
-        self._instances[name] = instance
-        return instance
+        return self.create(name, api_key=api_key, api_base=api_base, model=model, **kwargs)
 
     def get_instance(self, name: str) -> LLMProvider | None:
-        """Return a cached provider instance by name, or None.
-
-        Does NOT create a new instance and does NOT import provider
-        modules.  External integrations and tests use this to access
-        pre-existing instances without side effects.
-        """
+        """Return a cached provider instance, or None. Does not import modules."""
         return self._instances.get(name)
+
+    # -- Lifecycle -----------------------------------------------------------
 
     def reset(self) -> None:
         """Remove all non-built-in providers and cached instances.
 
-        Useful after a full config reload to clear stale entries while
-        keeping built-in specs.
+        Useful after a full config reload. Retired instances keep their
+        C state until process exit to avoid unsafe Qt-during-cleanup races.
         """
         self._providers = dict(_BUILTIN_PROVIDER_SPECS)
         self._openai_compat_names.clear()
         self._registered_names.clear()
-        # Retire all instances to avoid unsafe cleanup
         self._retired_instances.extend(self._instances.values())
         self._instances.clear()
 
     def retire_instances(self) -> None:
-        """Retire all currently-cached provider instances and clear the cache.
+        """Retire all cached instances without touching provider specs.
 
-        This is the safe public alternative to mutating ``_instances``
-        directly from outside code (e.g. ``SessionControllerBase.update_settings``).
-        It moves the existing instances onto the ``_retired_instances``
-        list so the next ``get_or_create`` / ``new_instance`` builds a
-        fresh instance with the updated credentials, without disrupting
-        the provider-spec registry.
-
-        Unlike :meth:`reset`, this method does not touch the provider
-        specs — it only retires cached *instances*.  Use it when only
-        the credentials have changed and the set of provider *types* is
-        unchanged.
+        Use this when credentials change but the set of provider *types*
+        is the same; the next get_or_create / new_instance builds fresh
+        instances without disrupting the provider-spec registry.
         """
         if not self._instances:
             return
