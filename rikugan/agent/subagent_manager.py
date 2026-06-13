@@ -282,6 +282,17 @@ class SubagentManager:
         except queue.Empty:
             return None
 
+    def wait_event(self, timeout: float) -> TurnEvent | None:
+        """Blocking poll for the next subagent event with timeout.
+
+        Returns None on timeout. Use this in a polling loop guarded by
+        running_count() > 0 so you don't spin when no events arrive.
+        """
+        try:
+            return self._event_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
     def running_count(self) -> int:
         """Number of subagents currently running."""
         return sum(1 for a in self._agents.values() if a.status == SubagentStatus.RUNNING)

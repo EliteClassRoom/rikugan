@@ -486,20 +486,34 @@ class OrchestraMainAgent:
                     result = f"Error: Unknown orchestration tool: {tool_name}"
                     yield TurnEvent.tool_result_event(tc["id"], tool_name, result, True)
 
-            pending_events = True
-            while pending_events and self._subagent_manager.running_count() > 0:
+            # Drain all subagent events until no agents are running and the
+            # queue is empty. Use a short timeout on the blocking get so we
+            # don't deadlock if the last event was already drained by another
+            # consumer; the running_count() check is the real loop guard.
+            while self._subagent_manager.running_count() > 0:
                 self._check_cancelled()
+                event = self._subagent_manager.wait_event(timeout=0.1)
+                if event is None:
+                    continue
+                yield event
+                if event.type == TurnEventType.SUBAGENT_COMPLETED:
+                    for entry in self._subtask_history:
+                        if entry.get("agent_id") == event.metadata.get("agent_id"):
+                            entry["status"] = "completed"
+                            entry["result"] = event.text
+                            break
+            # Final drain: any events queued after the last agent finished.
+            while True:
                 event = self._subagent_manager.poll_event()
-                if event:
-                    yield event
-                    if event.type == TurnEventType.SUBAGENT_COMPLETED:
-                        for entry in self._subtask_history:
-                            if entry.get("agent_id") == event.metadata.get("agent_id"):
-                                entry["status"] = "completed"
-                                entry["result"] = event.text
-                                break
-                else:
-                    pending_events = False
+                if event is None:
+                    break
+                yield event
+                if event.type == TurnEventType.SUBAGENT_COMPLETED:
+                    for entry in self._subtask_history:
+                        if entry.get("agent_id") == event.metadata.get("agent_id"):
+                            entry["status"] = "completed"
+                            entry["result"] = event.text
+                            break
 
         except Exception as e:
             log_error(f"Orchestra error: {e}")
