@@ -63,6 +63,21 @@ The agent really ***lives*** and ***breathes*** reversing.
 
 **Skills & MCP** — 12 built-in skills, custom skill support, and MCP server integration. Reuse skills and MCP servers from Claude Code and Codex.
 
+| Skill | Purpose |
+|-------|---------|
+| `/ctf` | Capture-the-flag reverse engineering — find the flag efficiently |
+| `/deobfuscation` | Remove control flow flattening, opaque predicates, MBA expressions, junk code |
+| `/driver-analysis` | Windows kernel driver analysis — DriverEntry, dispatch table, IOCTL handlers |
+| `/generic-re` | General-purpose binary analysis — understand functionality, architecture, and behavior |
+| `/ida-docs` | Search and browse official IDA Pro documentation — IDAPython, C++ SDK, Domain API |
+| `/ida-pro-mcp` | IDAPython scripting reference — disassembly, decompilation, types, xrefs |
+| `/ida-scripting` | Write and execute IDAPython scripts — full API reference included |
+| `/linux-malware` | Linux ELF malware analysis — packing, persistence, C2, rootkits, MITRE ATT&CK |
+| `/malware-analysis` | Windows PE malware analysis — kill chain, IOC extraction, MITRE ATT&CK |
+| `/modify` | Modify binary behavior using natural language — explore, plan, patch, save |
+| `/smart-patch-ida` | Patch binary code in IDA Pro using natural language — read, assemble, write, verify |
+| `/vuln-audit` | Binary vulnerability audit — taint analysis, buffer overflows, format strings |
+
 ### Profiles
 
 Profiles let you customize the agent to fit your analysis needs. They give you granular control over which data the LLM can read, restrict which tools it can use, and let you define custom rules to filter data.
