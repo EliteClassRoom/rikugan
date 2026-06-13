@@ -232,9 +232,73 @@ ALL_PSEUDO_TOOL_SCHEMAS: tuple[dict, ...] = (
 )
 
 
+#: Pseudo-tool: delegate a task to an external agent (Claude Code,
+#: Codex CLI, or an A2A-compatible HTTP endpoint).
+#:
+#: The agent_name must match an entry from
+#: ``A2ADispatcher.discover()``. The ``context`` field is optional;
+#: the dispatcher prepends it to the task so the external agent has
+#: binary context if ``include_context`` is set.
+DELEGATE_EXTERNAL_TASK_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "delegate_external_task",
+        "description": (
+            "Delegate a sub-task to an external agent (Claude Code "
+            "CLI, Codex CLI, or an A2A-compatible HTTP endpoint). "
+            "Use this when the user's request is better suited to a "
+            "separate agent session — e.g. a long code-generation "
+            "task that benefits from a fresh context window, or a "
+            "research task that another agent can run in parallel. "
+            "The external agent's response is returned as the tool "
+            "result and forwarded back to the user. "
+            "Set ``include_context`` to true to send the current "
+            "binary's metadata along with the task."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "type": "string",
+                    "description": (
+                        "Name of the external agent to delegate to. "
+                        "Must be in the discovered agent list "
+                        "(use the A2A panel or /a2a slash command to "
+                        "list available agents). Common values: "
+                        "'claude', 'codex'."
+                    ),
+                },
+                "task": {
+                    "type": "string",
+                    "description": (
+                        "The task description to send to the external "
+                        "agent. Be specific — the external agent has "
+                        "no Rikugan tool access, so include any "
+                        "binary details (addresses, decompiled "
+                        "snippets, function names) inline."
+                    ),
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "If true, prepend the current binary's "
+                        "metadata (name, arch, entry point) and the "
+                        "current cursor's function context to the "
+                        "task before sending."
+                    ),
+                },
+            },
+            "required": ["agent", "task"],
+        },
+    },
+}
+
+
 __all__ = [
     "ALL_PSEUDO_TOOL_SCHEMAS",
     "ASK_USER_SCHEMA",
+    "DELEGATE_EXTERNAL_TASK_SCHEMA",
     "EXPLORATION_REPORT_SCHEMA",
     "PHASE_TRANSITION_SCHEMA",
     "RESEARCH_NOTE_SCHEMA",

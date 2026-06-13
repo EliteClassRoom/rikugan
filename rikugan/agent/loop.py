@@ -412,6 +412,63 @@ _ASK_USER_SCHEMA = {
         },
     },
 }
+# Inline duplicate of DELEGATE_EXTERNAL_TASK_SCHEMA in pseudo_tool_schemas.py
+# (kept here because the agent loop appends it to every run's tool list).
+# When the C.4 extraction lands, replace this constant with an import.
+_DELEGATE_EXTERNAL_TASK_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "delegate_external_task",
+        "description": (
+            "Delegate a sub-task to an external agent (Claude Code "
+            "CLI, Codex CLI, or an A2A-compatible HTTP endpoint). "
+            "Use this when the user's request is better suited to a "
+            "separate agent session — e.g. a long code-generation "
+            "task that benefits from a fresh context window, or a "
+            "research task that another agent can run in parallel. "
+            "The external agent's response is returned as the tool "
+            "result and forwarded back to the user. "
+            "Set ``include_context`` to true to send the current "
+            "binary's metadata along with the task."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "type": "string",
+                    "description": (
+                        "Name of the external agent to delegate to. "
+                        "Must be in the discovered agent list "
+                        "(use the A2A panel or /a2a slash command to "
+                        "list available agents). Common values: "
+                        "'claude', 'codex'."
+                    ),
+                },
+                "task": {
+                    "type": "string",
+                    "description": (
+                        "The task description to send to the external "
+                        "agent. Be specific — the external agent has "
+                        "no Rikugan tool access, so include any "
+                        "binary details (addresses, decompiled "
+                        "snippets, function names) inline."
+                    ),
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "If true, prepend the current binary's "
+                        "metadata (name, arch, entry point) and the "
+                        "current cursor's function context to the "
+                        "task before sending."
+                    ),
+                },
+            },
+            "required": ["agent", "task"],
+        },
+    },
+}
 
 
 class AgentLoop:
@@ -1453,6 +1510,99 @@ class AgentLoop:
         yield TurnEvent.tool_result_event(tc.id, tc.name, content, False)
         return tr
 
+    def _handle_delegate_external_task_tool(
+        self, tc: ToolCall
+    ) -> Generator[TurnEvent, None, ToolResult]:
+        """Handle the delegate_external_task pseudo-tool.
+
+        Streams ``A2ADispatcher`` events through the same TurnEvent
+        stream that regular tool calls use, so the UI's existing
+        text/message rendering applies. The aggregated result is
+        returned as the tool result for the LLM to consume on its
+        next turn.
+        """
+        from ...agent.a2a import A2ADispatcher
+        from ...core.sanitize import sanitize_tool_result
+
+        agent_name = tc.arguments.get("agent", "")
+        task = tc.arguments.get("task", "")
+        include_context = bool(tc.arguments.get("include_context", False))
+
+        if not agent_name or not task:
+            content = "Error: both 'agent' and 'task' are required."
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return ToolResult(
+                tool_call_id=tc.id, name=tc.name, content=content, is_error=True
+            )
+
+        # Lazily build a context prefix if requested. We read the
+        # binary info + cursor position via the existing tool
+        # surface; the dispatcher doesn't know about tool_registry.
+        context_prefix = ""
+        if include_context:
+            try:
+                from ...core.host import is_ida
+                if is_ida():
+                    bin_info = self.tools.execute("get_binary_info", {})
+                    ctx_lines = [
+                        f"# Binary context",
+                        f"\n{bin_info}",
+                    ]
+                    try:
+                        cur = self.tools.execute("get_current_function", {})
+                        if cur:
+                            ctx_lines.append(f"\n# Current function\n\n{cur}")
+                    except Exception:
+                        pass
+                    context_prefix = "\n\n".join(ctx_lines)
+            except Exception:
+                # Context lookup is best-effort — fall back to bare task.
+                pass
+
+        # Use the agent loop's existing cancel event so a user cancel
+        # propagates cleanly into subprocesses and HTTP retry loops.
+        dispatcher = A2ADispatcher(
+            auto_discover=getattr(self.config, "a2a_auto_discover", True),
+            a2a_agents=getattr(self.config, "a2a_agents", None),
+        )
+
+        collected_text = ""
+        is_error = False
+        try:
+            for event in dispatcher.run_task(
+                agent_name,
+                task,
+                cancel_event=self._cancelled,
+                include_context=context_prefix,
+            ):
+                # Forward the dispatcher's TEXT_DELTA/error events to
+                # the UI but don't double-emit tool_result_event.
+                if event.type == TurnEventType.TEXT_DELTA:
+                    collected_text += event.text or ""
+                    yield event
+                elif event.type == TurnEventType.ERROR:
+                    is_error = True
+                    collected_text = event.error or "External agent error"
+                    yield event
+                # Other event types (TURN_START, etc.) are not
+                # relevant in a sub-tool context — silently drop.
+        except Exception as e:
+            is_error = True
+            collected_text = f"Delegation error: {e}"
+            yield TurnEvent.error_event(collected_text)
+
+        # Sanitize the result before returning to the LLM. Untrusted
+        # agent output flows into our conversation history, so it
+        # gets the same prompt-injection defense as a tool result.
+        sanitized = sanitize_tool_result(collected_text, tc.name)
+        yield TurnEvent.tool_result_event(tc.id, tc.name, sanitized, is_error)
+        return ToolResult(
+            tool_call_id=tc.id,
+            name=tc.name,
+            content=sanitized,
+            is_error=is_error,
+        )
+
     def _verify_mutation(self, tool_name: str, args: dict[str, Any], result: str) -> _MutationVerification:
         """Verify that a mutating tool actually succeeded.
 
@@ -1697,6 +1847,8 @@ class AgentLoop:
                 tr = yield from self._handle_activate_skill_tool(tc)
             elif tc.name == "ask_user":
                 tr = yield from self._handle_ask_user_tool(tc)
+            elif tc.name == "delegate_external_task":
+                tr = yield from self._handle_delegate_external_task_tool(tc)
             else:
                 tr = yield from self._execute_single_tool(tc)
             tool_results.append(tr)
