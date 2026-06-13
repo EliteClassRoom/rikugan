@@ -16,6 +16,29 @@ _SUBPROCESS_AGENTS = {
 }
 
 
+def _validate_task(task: str) -> None:
+    """Reject tasks that look like a CLI flag.
+
+    A legitimate user task should never begin with ``-``. Tasks that do
+    are almost certainly a prompt-injection attempt: the LLM was
+    manipulated into crafting argv that flips CLI flags such as
+    ``--settings '{"sandbox":false}'`` or ``--add-dir /etc``.
+
+    Defense layers (in order):
+      1. This explicit reject — fails fast with a clear error.
+      2. ``--`` end-of-options separator inserted by ``_build_command``
+         below, so even if validation is bypassed, the subprocess layer
+         passes the task as a positional argument rather than a flag.
+    """
+    if not task:
+        raise ValueError("SubprocessBridge task is empty")
+    if task.startswith("-"):
+        raise ValueError(
+            f"SubprocessBridge task starts with '-', refusing to pass to subprocess "
+            f"as a CLI flag: {task[:80]!r}"
+        )
+
+
 @dataclass
 class SubprocessBridge:
     """Bridge to CLI-based agents via subprocess.
@@ -53,8 +76,12 @@ class SubprocessBridge:
         Yields events as the subprocess produces output, then yields a
         final event with the aggregated result string.
 
-        For Claude CLI: uses `claude --print --output-format json`
-        For Codex CLI: uses `codex --quiet --format json`
+        For Claude CLI: uses ``claude --print --output-format json -- <task>``
+        For Codex CLI: uses ``codex --quiet --format json -- <task>``
+
+        The ``--`` end-of-options separator prevents the LLM-supplied
+        ``task`` from being interpreted as a CLI flag, even if validation
+        in ``_build_command`` is bypassed.
         """
         cmd = self._build_command(agent, task)
         if cmd is None:
@@ -109,10 +136,14 @@ class SubprocessBridge:
 
     def _build_command(self, agent: ExternalAgentConfig, task: str) -> list[str] | None:
         name = agent.name.lower()
+        # Validate first: refuse tasks that look like CLI flags.
+        _validate_task(task)
+        # Then insert '--' so the task is always a positional argument
+        # even if it contains spaces or quote-like characters.
         if name == "claude":
-            return ["claude", "--print", "--output-format", "json", task]
+            return ["claude", "--print", "--output-format", "json", "--", task]
         if name == "codex":
-            return ["codex", "--quiet", "--format", "json", task]
+            return ["codex", "--quiet", "--format", "json", "--", task]
         return None
 
     @staticmethod
