@@ -27,6 +27,7 @@ _BUILTIN_PROVIDER_SPECS: dict[str, str] = {
     "gemini": "rikugan.providers.gemini_provider:GeminiProvider",
     "ollama": "rikugan.providers.ollama_provider:OllamaProvider",
     "minimax": "rikugan.providers.minimax_provider:MiniMaxProvider",
+    "codex": "rikugan.providers.codex_provider:CodexProvider",
 }
 
 # A provider entry is either an import spec string ("module:ClassName")

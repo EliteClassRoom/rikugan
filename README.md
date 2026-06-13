@@ -90,6 +90,7 @@ Profiles let you customize the agent to fit your analysis needs. They give you g
 |----------|-------|
 | **Claude Opus 4.6** | Best overall. Recommend Claude Pro/Max plan with OAuth over API. |
 | **Claude Sonnet 4.6** | Strong at lower cost. Both Anthropic models use prompt caching. |
+| **Codex (GPT-5.x)** | OpenAI's Codex backend via ChatGPT OAuth device flow. Use the in-plugin "Setup Codex" button to authenticate. |
 | **MiniMax M2.5 / Highspeed** | On par with Opus in local tests. Generous limits, low cost. |
 | **Gemini 2.5 / 3 / 3.1 Pro** | Solid results. Hallucinates more than Anthropic/MiniMax. |
 | **Kimi 2.5** | Strong coding, but lacks rigor for complex RE tasks. |

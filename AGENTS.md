@@ -69,6 +69,7 @@ rikugan/
 │   ├── gemini_provider.py    # Google Gemini
 │   ├── ollama_provider.py    # Ollama (local)
 │   ├── minimax_provider.py   # MiniMax (subclasses OpenAICompatProvider)
+│   ├── codex_provider.py     # Codex (OpenAI Responses API + ChatGPT OAuth device flow)
 │   └── openai_compat.py      # OpenAI-compatible endpoints
 │
 ├── cli/                       # CLI launchers (run outside IDA)
