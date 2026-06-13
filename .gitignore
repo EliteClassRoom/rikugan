@@ -33,3 +33,18 @@ UNCOMMITTED_REVIEW_FOLLOWUP_PLAN.md
 UNCOMMITTED_COMMIT_READINESS_PLAN.md
 
 UNCOMMITTED_COMMIT_READINESS_REVIEW_PLAN.md
+
+# Test, lint, type-check artifacts
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Binary archives (build artifacts / backups)
+*.rar
+*.7z
