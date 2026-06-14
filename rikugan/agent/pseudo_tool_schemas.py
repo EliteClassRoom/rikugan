@@ -2,15 +2,20 @@
 
 These schemas are passed to LLM providers to describe pseudo-tool calls
 (``exploration_report``, ``phase_transition``, ``save_memory``,
-``spawn_subagent``, ``research_note``, ``ask_user``) that the agent
-loop handles internally rather than forwarding to the user-supplied
-tool registry.
+``spawn_subagent``, ``research_note``, ``ask_user``,
+``delegate_external_task``) that the agent loop handles internally
+rather than forwarding to the user-supplied tool registry.
 
 All schemas are module-level constants because they do not depend on
 runtime state — they are pure data describing the contract between the
 LLM and the agent loop.  Putting them in their own module keeps
 ``loop.py`` focused on control flow and makes it trivial for new agent
 modes to reuse the exact same tool surface.
+
+This is the single source of truth for pseudo-tool descriptions: the
+``function.description`` strings here are part of the LLM prompt, so
+changing them changes model behaviour.  ``loop.py`` imports these
+constants rather than redefining them inline.
 """
 
 # Pseudo-tool: structured finding during binary exploration.
@@ -59,7 +64,16 @@ EXPLORATION_REPORT_SCHEMA: dict = {
                 },
                 "relevance": {
                     "type": "string",
-                    "description": "Why this finding is relevant to the user's goal.",
+                    "description": "How relevant to the user's goal.",
+                    "enum": ["low", "medium", "high"],
+                },
+                "original_hex": {
+                    "type": "string",
+                    "description": "Original bytes as hex string (for patch_result category). E.g. '74 05'.",
+                },
+                "new_hex": {
+                    "type": "string",
+                    "description": "New patched bytes as hex string (for patch_result category). E.g. '75 05'.",
                 },
             },
             "required": ["category", "summary"],
@@ -73,27 +87,23 @@ PHASE_TRANSITION_SCHEMA: dict = {
     "function": {
         "name": "phase_transition",
         "description": (
-            "Declare a phase transition during exploration. "
-            "Use this to signal movement from one exploration phase to "
-            "another (e.g. initial → analysis, analysis → synthesis)."
+            "Request to move to the next exploration phase. "
+            "Call with to_phase='plan' when you have identified "
+            "all locations that need to change and have formed "
+            "concrete hypotheses. Requires at least 1 relevant "
+            "function and 1 hypothesis logged via exploration_report."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "to_phase": {
                     "type": "string",
-                    "description": "The phase you are moving to.",
-                    "enum": [
-                        "initial",
-                        "analysis",
-                        "synthesis",
-                        "review",
-                        "complete",
-                    ],
+                    "description": "Target phase to transition to.",
+                    "enum": ["plan"],
                 },
                 "reason": {
                     "type": "string",
-                    "description": "Why this transition makes sense now.",
+                    "description": "Why you're ready to transition.",
                 },
             },
             "required": ["to_phase", "reason"],
@@ -107,24 +117,32 @@ SAVE_MEMORY_SCHEMA: dict = {
     "function": {
         "name": "save_memory",
         "description": (
-            "Persist a fact to long-term memory. Use this for any "
-            "discovery worth remembering across sessions — function "
-            "purposes, key constants, project conventions, etc."
+            "Save a fact to persistent memory (RIKUGAN.md). "
+            "Use this to remember important findings across sessions: "
+            "function purposes, naming conventions, architecture notes, "
+            "or analysis results that would be useful in future sessions."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "fact": {
                     "type": "string",
-                    "description": "The fact to remember.",
+                    "description": "The fact or finding to remember.",
                 },
                 "category": {
                     "type": "string",
-                    "description": "Category for organising memories.",
-                    "default": "general",
+                    "description": "Category of the memory.",
+                    "enum": [
+                        "function_purpose",
+                        "architecture",
+                        "naming_convention",
+                        "prior_analysis",
+                        "data_structure",
+                        "general",
+                    ],
                 },
             },
-            "required": ["fact"],
+            "required": ["fact", "category"],
         },
     },
 }
@@ -135,20 +153,23 @@ SPAWN_SUBAGENT_SCHEMA: dict = {
     "function": {
         "name": "spawn_subagent",
         "description": (
-            "Spawn a subagent to handle a sub-task in parallel. "
-            "Returns the subagent's final answer when it completes."
+            "Spawn an isolated subagent to handle a complex subtask. "
+            "The subagent has its own context window and can use all "
+            "available tools. It returns a concise summary of its "
+            "findings. Use this to delegate research-heavy tasks "
+            "(e.g. 'analyze all functions referencing the score string') "
+            "without filling your own context with raw tool output."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "Clear description of the sub-task.",
+                    "description": "The task for the subagent to perform.",
                 },
-                "agent_type": {
-                    "type": "string",
-                    "description": "Type of subagent to spawn.",
-                    "default": "general",
+                "max_turns": {
+                    "type": "integer",
+                    "description": "Maximum turns for the subagent (default: 20).",
                 },
             },
             "required": ["task"],
@@ -162,28 +183,42 @@ RESEARCH_NOTE_SCHEMA: dict = {
     "function": {
         "name": "research_note",
         "description": (
-            "Save a structured research note. Use this to capture "
-            "findings, hypotheses, and observations as you investigate "
-            "the target binary."
+            "Write an Obsidian-compatible markdown research note to the notes/ folder. "
+            "Use this to document findings during research mode. Notes should include "
+            "[[wiki-links]] to cross-reference other notes, mermaid diagrams for call "
+            "flows, and tables for function/address listings. Write notes progressively "
+            "as you discover things — don't wait until the end."
         ),
         "parameters": {
             "type": "object",
             "properties": {
+                "genre": {
+                    "type": "string",
+                    "description": (
+                        "Folder category for the note: networking, crypto, "
+                        "initialization, data-structures, persistence, "
+                        "anti-analysis, command-and-control, general, etc."
+                    ),
+                },
                 "title": {
                     "type": "string",
-                    "description": "Short title for the note.",
+                    "description": "Note title (becomes the filename slug).",
                 },
                 "content": {
                     "type": "string",
-                    "description": "Note content (markdown supported).",
+                    "description": (
+                        "Full markdown body with Obsidian conventions: "
+                        "[[wiki-links]], #tags, mermaid diagrams, tables. "
+                        "Include addresses, decompiled snippets, and evidence."
+                    ),
                 },
-                "tags": {
+                "related_notes": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional tags for filtering notes.",
+                    "description": "Titles of other notes to cross-link via [[wiki-links]].",
                 },
             },
-            "required": ["title", "content"],
+            "required": ["genre", "title", "content"],
         },
     },
 }
@@ -194,24 +229,21 @@ ASK_USER_SCHEMA: dict = {
     "function": {
         "name": "ask_user",
         "description": (
-            "Ask the user a clarifying question. The user's response "
-            "is returned as the tool result so you can continue with "
-            "the requested information."
+            "Ask the user a question and wait for their answer. "
+            "Use this when you need clarification, confirmation, "
+            "or a choice from the user before proceeding."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "question": {
                     "type": "string",
-                    "description": "The question to ask.",
+                    "description": "The question to ask the user.",
                 },
                 "options": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": (
-                        "Optional multiple-choice options. Omit for a "
-                        "free-form question."
-                    ),
+                    "description": "Optional list of choices for the user.",
                 },
             },
             "required": ["question"],
@@ -219,26 +251,13 @@ ASK_USER_SCHEMA: dict = {
     },
 }
 
-
-#: Aggregate list of all pseudo-tool schemas in the order they should be
-#: presented to the LLM.
-ALL_PSEUDO_TOOL_SCHEMAS: tuple[dict, ...] = (
-    EXPLORATION_REPORT_SCHEMA,
-    PHASE_TRANSITION_SCHEMA,
-    SAVE_MEMORY_SCHEMA,
-    SPAWN_SUBAGENT_SCHEMA,
-    RESEARCH_NOTE_SCHEMA,
-    ASK_USER_SCHEMA,
-)
-
-
-#: Pseudo-tool: delegate a task to an external agent (Claude Code,
-#: Codex CLI, or an A2A-compatible HTTP endpoint).
-#:
-#: The agent_name must match an entry from
-#: ``A2ADispatcher.discover()``. The ``context`` field is optional;
-#: the dispatcher prepends it to the task so the external agent has
-#: binary context if ``include_context`` is set.
+# Pseudo-tool: delegate a task to an external agent (Claude Code,
+# Codex CLI, or an A2A-compatible HTTP endpoint).
+#
+# The agent_name must match an entry from
+# ``A2ADispatcher.discover()``. The ``context`` field is optional;
+# the dispatcher prepends it to the task so the external agent has
+# binary context if ``include_context`` is set.
 DELEGATE_EXTERNAL_TASK_SCHEMA: dict = {
     "type": "function",
     "function": {
@@ -293,6 +312,20 @@ DELEGATE_EXTERNAL_TASK_SCHEMA: dict = {
         },
     },
 }
+
+
+#: Aggregate list of all pseudo-tool schemas in the order they should be
+#: presented to the LLM.  Note: ``DELEGATE_EXTERNAL_TASK_SCHEMA`` is not
+#: included here because the agent loop appends it to every run's tool
+#: list unconditionally (see ``loop.py``).
+ALL_PSEUDO_TOOL_SCHEMAS: tuple[dict, ...] = (
+    EXPLORATION_REPORT_SCHEMA,
+    PHASE_TRANSITION_SCHEMA,
+    SAVE_MEMORY_SCHEMA,
+    SPAWN_SUBAGENT_SCHEMA,
+    RESEARCH_NOTE_SCHEMA,
+    ASK_USER_SCHEMA,
+)
 
 
 __all__ = [

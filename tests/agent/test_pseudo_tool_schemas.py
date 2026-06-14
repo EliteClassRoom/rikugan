@@ -69,16 +69,18 @@ def test_phase_transition_requires_to_phase_and_reason() -> None:
     assert _required_fields(PHASE_TRANSITION_SCHEMA) == ["to_phase", "reason"]
 
 
-def test_save_memory_requires_fact_only() -> None:
-    assert _required_fields(SAVE_MEMORY_SCHEMA) == ["fact"]
+def test_save_memory_requires_fact_and_category() -> None:
+    """MAIN requires an explicit category so memories are classified on write."""
+    assert _required_fields(SAVE_MEMORY_SCHEMA) == ["fact", "category"]
 
 
 def test_spawn_subagent_requires_task_only() -> None:
     assert _required_fields(SPAWN_SUBAGENT_SCHEMA) == ["task"]
 
 
-def test_research_note_requires_title_and_content() -> None:
-    assert _required_fields(RESEARCH_NOTE_SCHEMA) == ["title", "content"]
+def test_research_note_requires_genre_title_and_content() -> None:
+    """MAIN requires a genre so notes are filed into the right notebook folder."""
+    assert _required_fields(RESEARCH_NOTE_SCHEMA) == ["genre", "title", "content"]
 
 
 def test_ask_user_requires_question_only() -> None:
@@ -91,14 +93,23 @@ def test_tool_names_are_unique_across_aggregate() -> None:
     assert len(names) == len(set(names)), f"Duplicate tool names: {names}"
 
 
-def test_save_memory_category_default_is_general() -> None:
+def test_save_memory_category_is_enum() -> None:
+    """MAIN classifies memories with a fixed category enum (no default; required)."""
     category_prop = SAVE_MEMORY_SCHEMA["function"]["parameters"]["properties"]["category"]
-    assert category_prop["default"] == "general"
+    assert category_prop["type"] == "string"
+    assert "enum" in category_prop
+    assert "general" in category_prop["enum"]
+    # category is required, so it has no default
+    assert "default" not in category_prop
 
 
-def test_spawn_subagent_agent_type_default_is_general() -> None:
-    agent_type_prop = SPAWN_SUBAGENT_SCHEMA["function"]["parameters"]["properties"]["agent_type"]
-    assert agent_type_prop["default"] == "general"
+def test_spawn_subagent_has_optional_max_turns() -> None:
+    """MAIN exposes max_turns (optional) instead of an agent_type selector."""
+    props = SPAWN_SUBAGENT_SCHEMA["function"]["parameters"]["properties"]
+    assert "max_turns" in props
+    assert props["max_turns"]["type"] == "integer"
+    assert "agent_type" not in props
+    assert "max_turns" not in SPAWN_SUBAGENT_SCHEMA["function"]["parameters"].get("required", [])
 
 
 def test_delegate_external_task_requires_agent_and_task() -> None:

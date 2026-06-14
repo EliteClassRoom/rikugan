@@ -43,14 +43,22 @@ from .exploration_mode import (
     PatchRecord,
 )
 from .minify import minify_messages, minify_text
+from .modes.a2a import run_a2a_mode
 from .modes.exploration import run_exploration_mode
 from .modes.normal import run_normal_loop
 from .modes.orchestra import run_orchestra_mode
 from .modes.plan import run_plan_mode
 from .modes.research import run_research_mode
-from .modes.a2a import run_a2a_mode
 from .mutation import MutationRecord, build_reverse_record, capture_pre_state
 from .plan_mode import parse_plan as _parse_plan_impl
+from .pseudo_tool_schemas import (
+    ASK_USER_SCHEMA,
+    EXPLORATION_REPORT_SCHEMA,
+    PHASE_TRANSITION_SCHEMA,
+    RESEARCH_NOTE_SCHEMA,
+    SAVE_MEMORY_SCHEMA,
+    SPAWN_SUBAGENT_SCHEMA,
+)
 from .subagent import SubagentRunner
 from .system_prompt import build_system_prompt
 from .turn import TurnEvent, TurnEventType
@@ -200,285 +208,6 @@ def append_to_memory_file(md_path: str, content: str) -> None:
         f.write(content)
 
 
-# Static pseudo-tool schemas — don't depend on runtime state
-_EXPLORATION_REPORT_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "exploration_report",
-        "description": (
-            "Log a structured finding during binary exploration. "
-            "Call this whenever you discover something relevant to "
-            "the user's goal: a function's purpose, a key constant, "
-            "a data structure, or a hypothesis about what to change."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "category": {
-                    "type": "string",
-                    "description": "Type of finding.",
-                    "enum": [
-                        "function_purpose",
-                        "data_structure",
-                        "constant",
-                        "hypothesis",
-                        "string_ref",
-                        "import_usage",
-                        "patch_result",
-                        "general",
-                    ],
-                },
-                "address": {
-                    "type": "integer",
-                    "description": "Address related to this finding (hex or decimal).",
-                },
-                "function_name": {
-                    "type": "string",
-                    "description": "Name of the function (for function_purpose findings).",
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "Brief summary of the finding.",
-                },
-                "evidence": {
-                    "type": "string",
-                    "description": "Supporting evidence (e.g. decompiled code snippet).",
-                },
-                "relevance": {
-                    "type": "string",
-                    "description": "How relevant to the user's goal.",
-                    "enum": ["low", "medium", "high"],
-                },
-                "original_hex": {
-                    "type": "string",
-                    "description": "Original bytes as hex string (for patch_result category). E.g. '74 05'.",
-                },
-                "new_hex": {
-                    "type": "string",
-                    "description": "New patched bytes as hex string (for patch_result category). E.g. '75 05'.",
-                },
-            },
-            "required": ["category", "summary"],
-        },
-    },
-}
-_PHASE_TRANSITION_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "phase_transition",
-        "description": (
-            "Request to move to the next exploration phase. "
-            "Call with to_phase='plan' when you have identified "
-            "all locations that need to change and have formed "
-            "concrete hypotheses. Requires at least 1 relevant "
-            "function and 1 hypothesis logged via exploration_report."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "to_phase": {
-                    "type": "string",
-                    "description": "Target phase to transition to.",
-                    "enum": ["plan"],
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why you're ready to transition.",
-                },
-            },
-            "required": ["to_phase", "reason"],
-        },
-    },
-}
-_SAVE_MEMORY_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "save_memory",
-        "description": (
-            "Save a fact to persistent memory (RIKUGAN.md). "
-            "Use this to remember important findings across sessions: "
-            "function purposes, naming conventions, architecture notes, "
-            "or analysis results that would be useful in future sessions."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "fact": {
-                    "type": "string",
-                    "description": "The fact or finding to remember.",
-                },
-                "category": {
-                    "type": "string",
-                    "description": "Category of the memory.",
-                    "enum": [
-                        "function_purpose",
-                        "architecture",
-                        "naming_convention",
-                        "prior_analysis",
-                        "data_structure",
-                        "general",
-                    ],
-                },
-            },
-            "required": ["fact", "category"],
-        },
-    },
-}
-_SPAWN_SUBAGENT_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "spawn_subagent",
-        "description": (
-            "Spawn an isolated subagent to handle a complex subtask. "
-            "The subagent has its own context window and can use all "
-            "available tools. It returns a concise summary of its "
-            "findings. Use this to delegate research-heavy tasks "
-            "(e.g. 'analyze all functions referencing the score string') "
-            "without filling your own context with raw tool output."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": "The task for the subagent to perform.",
-                },
-                "max_turns": {
-                    "type": "integer",
-                    "description": "Maximum turns for the subagent (default: 20).",
-                },
-            },
-            "required": ["task"],
-        },
-    },
-}
-_RESEARCH_NOTE_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "research_note",
-        "description": (
-            "Write an Obsidian-compatible markdown research note to the notes/ folder. "
-            "Use this to document findings during research mode. Notes should include "
-            "[[wiki-links]] to cross-reference other notes, mermaid diagrams for call "
-            "flows, and tables for function/address listings. Write notes progressively "
-            "as you discover things — don't wait until the end."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "genre": {
-                    "type": "string",
-                    "description": (
-                        "Folder category for the note: networking, crypto, "
-                        "initialization, data-structures, persistence, "
-                        "anti-analysis, command-and-control, general, etc."
-                    ),
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Note title (becomes the filename slug).",
-                },
-                "content": {
-                    "type": "string",
-                    "description": (
-                        "Full markdown body with Obsidian conventions: "
-                        "[[wiki-links]], #tags, mermaid diagrams, tables. "
-                        "Include addresses, decompiled snippets, and evidence."
-                    ),
-                },
-                "related_notes": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Titles of other notes to cross-link via [[wiki-links]].",
-                },
-            },
-            "required": ["genre", "title", "content"],
-        },
-    },
-}
-_ASK_USER_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "ask_user",
-        "description": (
-            "Ask the user a question and wait for their answer. "
-            "Use this when you need clarification, confirmation, "
-            "or a choice from the user before proceeding."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "question": {
-                    "type": "string",
-                    "description": "The question to ask the user.",
-                },
-                "options": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional list of choices for the user.",
-                },
-            },
-            "required": ["question"],
-        },
-    },
-}
-# Inline duplicate of DELEGATE_EXTERNAL_TASK_SCHEMA in pseudo_tool_schemas.py
-# (kept here because the agent loop appends it to every run's tool list).
-# When the C.4 extraction lands, replace this constant with an import.
-_DELEGATE_EXTERNAL_TASK_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "delegate_external_task",
-        "description": (
-            "Delegate a sub-task to an external agent (Claude Code "
-            "CLI, Codex CLI, or an A2A-compatible HTTP endpoint). "
-            "Use this when the user's request is better suited to a "
-            "separate agent session — e.g. a long code-generation "
-            "task that benefits from a fresh context window, or a "
-            "research task that another agent can run in parallel. "
-            "The external agent's response is returned as the tool "
-            "result and forwarded back to the user. "
-            "Set ``include_context`` to true to send the current "
-            "binary's metadata along with the task."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "agent": {
-                    "type": "string",
-                    "description": (
-                        "Name of the external agent to delegate to. "
-                        "Must be in the discovered agent list "
-                        "(use the A2A panel or /a2a slash command to "
-                        "list available agents). Common values: "
-                        "'claude', 'codex'."
-                    ),
-                },
-                "task": {
-                    "type": "string",
-                    "description": (
-                        "The task description to send to the external "
-                        "agent. Be specific — the external agent has "
-                        "no Rikugan tool access, so include any "
-                        "binary details (addresses, decompiled "
-                        "snippets, function names) inline."
-                    ),
-                },
-                "include_context": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": (
-                        "If true, prepend the current binary's "
-                        "metadata (name, arch, entry point) and the "
-                        "current cursor's function context to the "
-                        "task before sending."
-                    ),
-                },
-            },
-            "required": ["agent", "task"],
-        },
-    },
-}
 
 
 class AgentLoop:
@@ -1555,7 +1284,7 @@ class AgentLoop:
                 if is_ida():
                     bin_info = self.tools.execute("get_binary_info", {})
                     ctx_lines = [
-                        f"# Binary context",
+                        "# Binary context",
                         f"\n{bin_info}",
                     ]
                     try:
@@ -1920,19 +1649,19 @@ class AgentLoop:
             )
 
         if use_exploration_mode:
-            tools_schema.append(_EXPLORATION_REPORT_SCHEMA)
-            tools_schema.append(_PHASE_TRANSITION_SCHEMA)
+            tools_schema.append(EXPLORATION_REPORT_SCHEMA)
+            tools_schema.append(PHASE_TRANSITION_SCHEMA)
 
         if use_research_mode:
-            tools_schema.append(_RESEARCH_NOTE_SCHEMA)
-            tools_schema.append(_EXPLORATION_REPORT_SCHEMA)
-            tools_schema.append(_SPAWN_SUBAGENT_SCHEMA)
+            tools_schema.append(RESEARCH_NOTE_SCHEMA)
+            tools_schema.append(EXPLORATION_REPORT_SCHEMA)
+            tools_schema.append(SPAWN_SUBAGENT_SCHEMA)
 
         if self.session.idb_path:
-            tools_schema.append(_SAVE_MEMORY_SCHEMA)
+            tools_schema.append(SAVE_MEMORY_SCHEMA)
 
-        tools_schema.append(_SPAWN_SUBAGENT_SCHEMA)
-        tools_schema.append(_ASK_USER_SCHEMA)
+        tools_schema.append(SPAWN_SUBAGENT_SCHEMA)
+        tools_schema.append(ASK_USER_SCHEMA)
 
         # Deduplicate — Anthropic rejects requests with duplicate tool names
         seen: set = set()
