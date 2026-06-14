@@ -7,6 +7,7 @@ import re as _re
 import time as _time
 from typing import ClassVar
 
+from ..core.logging import get_logger
 from .markdown import md_to_html
 from .qt_compat import (
     QFrame,
@@ -25,6 +26,8 @@ from .qt_compat import (
 from .styles import host_stylesheet
 from .theme.manager import ThemeManager, _blend_hex
 from .theme.tokens import _hex_luminance
+
+logger = get_logger()
 
 _THINKING_PHRASES = [
     "analyzing binary structure...",
@@ -950,7 +953,10 @@ class UserQuestionWidget(QFrame):
         try:
             self.option_selected.emit(option)
         except Exception:
-            pass
+            # Most common cause is a Shiboken RuntimeError when the
+            # connected slot's C++ receiver was already deleted (Qt
+            # tearing down). We log for visibility but never crash the UI.
+            logger.exception("option_selected signal emit failed")
         if self._option_selected_callback is not None:
             self._option_selected_callback(option)
 

@@ -21,11 +21,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
-from ..core.logging import log_info, log_warning
+from ..core.logging import get_logger, log_info, log_warning
 from .protocol import (
     make_error_json,
     make_json_response,
 )
+
+logger = get_logger()
 
 if TYPE_CHECKING:
     from ..ida.headless_controller import HeadlessSessionController
@@ -36,6 +38,10 @@ if TYPE_CHECKING:
 
 _EVENT_RING_SIZE = 4096
 _MAX_REQUEST_BODY = 1_048_576  # 1 MiB — conservative for local-only use
+# Upper bound on the number of queued events drained on shutdown.
+# Guards against an unbounded drain if the runner keeps producing events
+# (e.g. a stuck generator) — the ring buffer caps retained history anyway.
+_DRAIN_MAX_ITERATIONS = 200
 
 
 class RunState:
@@ -107,7 +113,7 @@ class ShutdownCallback:
         try:
             self._httpd_shutdown()
         except Exception:
-            pass
+            logger.exception("EventBroker.stop: httpd shutdown failed")
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +215,7 @@ class EventBroker:
         drained: list[tuple[str, str]] = []
         runner = self._controller.get_runner()
         if runner is not None:
-            for _ in range(200):
+            for _ in range(_DRAIN_MAX_ITERATIONS):
                 event = runner.get_event(timeout=0.02)
                 if event is None:
                     break
@@ -576,6 +582,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         try:
             runner.agent_loop.submit_user_answer(body["answer"])
         except Exception:
+            logger.exception("submit_user_answer RPC failed")
             self._send(*make_error_json("Failed to submit answer", status=500))
             return
 
@@ -651,6 +658,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         try:
             runner.agent_loop.submit_tool_approval(decision)
         except Exception:
+            logger.exception("submit_tool_approval RPC failed")
             self._send(
                 *make_error_json("Failed to submit tool approval", status=500)
             )
@@ -727,6 +735,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         try:
             runner.agent_loop.submit_approval(decision)
         except Exception:
+            logger.exception("submit_approval RPC failed")
             self._send(*make_error_json("Failed to submit approval", status=500))
             return
 
@@ -873,7 +882,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             try:
                 self._controller.cancel()
             except Exception:
-                pass
+                logger.exception("Shutdown: cancelling active run failed")
 
         # Send response while the HTTP socket is still available.
         self._send(*make_json_response({"status": "shutting_down"}))

@@ -52,6 +52,10 @@ from .tool_widgets import _SharedSpinnerTimer
 from .tools_panel import ToolsPanel
 
 _TOOL_RESULT_TRUNCATE_CHARS = 2000
+# Fixed width for header action buttons (Send, Cancel, New, Export,
+# Settings, Mutations, Tools). Square-ish so icon + short label fit
+# without the row growing when one button gets a longer label.
+_ACTION_BUTTON_WIDTH = 64
 
 
 def _tab_label():
@@ -652,36 +656,36 @@ class RikuganPanelCore(QWidget):
 
         self._send_btn = QPushButton("Send")
         self._send_btn.setObjectName("send_button")
-        self._send_btn.setFixedWidth(64)
+        self._send_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._send_btn.clicked.connect(self._on_send_clicked)
         btn_layout.addWidget(self._send_btn)
         self._cancel_btn = QPushButton("Stop")
         self._cancel_btn.setObjectName("cancel_button")
-        self._cancel_btn.setFixedWidth(64)
+        self._cancel_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._on_cancel)
         btn_layout.addWidget(self._cancel_btn)
         self._new_btn = QPushButton("New")
-        self._new_btn.setFixedWidth(64)
+        self._new_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._new_btn.clicked.connect(self._on_new_tab)
         btn_layout.addWidget(self._new_btn)
         self._export_btn = QPushButton("Export")
-        self._export_btn.setFixedWidth(64)
+        self._export_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._export_btn.clicked.connect(self._on_export_current)
         btn_layout.addWidget(self._export_btn)
         self._settings_btn = QPushButton("Settings")
-        self._settings_btn.setFixedWidth(64)
+        self._settings_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._settings_btn.clicked.connect(self._on_settings)
         btn_layout.addWidget(self._settings_btn)
         self._mutations_btn = QPushButton("Mutations")
-        self._mutations_btn.setFixedWidth(64)
+        self._mutations_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._mutations_btn.setCheckable(True)
         self._mutations_btn.clicked.connect(self._on_toggle_mutation_log)
         self._mutations_btn.setVisible(False)  # shown when first mutation is recorded
         btn_layout.addWidget(self._mutations_btn)
 
         self._tools_btn = QPushButton("Tools")
-        self._tools_btn.setFixedWidth(64)
+        self._tools_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._tools_btn.setCheckable(True)
         self._tools_btn.clicked.connect(self._on_toggle_tools)
         btn_layout.addWidget(self._tools_btn)

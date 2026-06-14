@@ -682,7 +682,12 @@ class SettingsDialog(QDialog):
         """
         try:
             tokens = ThemeManager.instance().tokens()
-        except Exception:
+        except Exception as e:
+            # ThemeManager failing (transient IPC, corrupt cache) should
+            # never leave the dialog unstyled and silent. Log so operators
+            # have visibility; the previously-applied stylesheet remains,
+            # so the dialog stays visible with the last known palette.
+            log_error(f"SettingsDialog._apply_theme_styles: tokens() failed: {e}")
             return
         try:
             self.setStyleSheet(build_settings_dialog_stylesheet(tokens))
