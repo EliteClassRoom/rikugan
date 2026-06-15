@@ -11,8 +11,28 @@ from .qt_compat import (
     QVBoxLayout,
     QWidget,
 )
-from .styles import build_input_area_stylesheet, build_skill_popup_stylesheet
+from .styles import build_input_area_stylesheet, host_stylesheet
 from .theme.manager import ThemeManager
+
+
+def _skill_popup_style() -> str:
+    """Inline QSS for the ``_SkillPopup`` (ported from the fork).
+
+    Targets the popup's object name (``#skill_popup``) and its child
+    ``QLabel`` rows so the popup renders as a bordered card with a
+    highlighted selected row. Applied through :func:`host_stylesheet`
+    (not the legacy ``build_skill_popup_stylesheet``) so the style still
+    takes effect in host/IDA-native mode instead of collapsing to an
+    empty string.
+    """
+    t = ThemeManager.instance().tokens()
+    return (
+        f"QFrame#skill_popup {{ background: {t.alt_base};"
+        f" border: 1px solid {t.mid}; border-radius: 4px; padding: 2px; }}"
+        f"QFrame#skill_popup QLabel {{ color: {t.text}; padding: 3px 8px; }}"
+        f'QFrame#skill_popup QLabel[selected="true"]'
+        f" {{ background: {t.highlight}; border-radius: 3px; }}"
+    )
 
 
 class _SkillPopup(QFrame):
@@ -29,13 +49,16 @@ class _SkillPopup(QFrame):
         super().__init__(parent)
         self.setObjectName("skill_popup")
         self.setWindowFlags(Qt.WindowType.ToolTip)
-        # Apply the theme-aware QSS at construction so the popup uses
-        # light backgrounds + dark text in Rikugan Light mode, and
-        # dark backgrounds + light text in Rikugan Dark mode.  The
-        # previous default used ``palette(highlight)`` which collapses
-        # to invisible in some light hosts.  The QSS is rebuilt by
-        # :meth:`apply_theme` on every ``themeChanged`` signal.
-        self.apply_theme()
+        # Inline QSS applied through host_stylesheet so the popup keeps its
+        # border / highlight even in host/IDA-native mode (where the legacy
+        # build_skill_popup_stylesheet returned "" and left the popup bare).
+        # Rebuilt by apply_theme() on every themeChanged signal.
+        self.setStyleSheet(
+            host_stylesheet(
+                _skill_popup_style(),
+                'QLabel[selected="true"] { font-weight: bold; }',
+            )
+        )
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(2, 2, 2, 2)
         self._layout.setSpacing(0)
@@ -45,14 +68,12 @@ class _SkillPopup(QFrame):
 
     def apply_theme(self) -> None:
         """Refresh the popup QSS for the current theme tokens."""
-        try:
-            tokens = ThemeManager.instance().tokens()
-        except Exception:
-            return
-        try:
-            self.setStyleSheet(build_skill_popup_stylesheet(tokens))
-        except Exception:
-            pass
+        self.setStyleSheet(
+            host_stylesheet(
+                _skill_popup_style(),
+                'QLabel[selected="true"] { font-weight: bold; }',
+            )
+        )
 
     def set_items(self, slugs: list[str]) -> None:
         """Replace popup contents with filtered slugs."""
