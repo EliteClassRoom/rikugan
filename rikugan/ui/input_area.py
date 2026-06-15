@@ -16,22 +16,18 @@ from .theme.manager import ThemeManager
 
 
 def _skill_popup_style() -> str:
-    """Inline QSS for the ``_SkillPopup`` (ported from the fork).
+    """Inline QSS for the ``_SkillPopup`` (matched 1:1 to the fork).
 
-    Targets the popup's object name (``#skill_popup``) and its child
-    ``QLabel`` rows so the popup renders as a bordered card with a
-    highlighted selected row. Applied through :func:`host_stylesheet`
-    (not the legacy ``build_skill_popup_stylesheet``) so the style still
-    takes effect in host/IDA-native mode instead of collapsing to an
-    empty string.
+    Applied through :func:`host_stylesheet` (not the legacy
+    ``build_skill_popup_stylesheet``) so the style still takes effect in
+    host/IDA-native mode instead of collapsing to an empty string.
     """
     t = ThemeManager.instance().tokens()
     return (
-        f"QFrame#skill_popup {{ background: {t.alt_base};"
-        f" border: 1px solid {t.mid}; border-radius: 4px; padding: 2px; }}"
-        f"QFrame#skill_popup QLabel {{ color: {t.text}; padding: 3px 8px; }}"
-        f'QFrame#skill_popup QLabel[selected="true"]'
-        f" {{ background: {t.highlight}; border-radius: 3px; }}"
+        f"QFrame#skill_popup {{ background: {t.alt_base}; border: 1px solid {t.mid}; "
+        f"border-radius: 4px; padding: 2px; }}"
+        f"QLabel {{ color: {t.text}; padding: 3px 8px; }}"
+        f'QLabel[selected="true"] {{ background: {t.highlight}; border-radius: 3px; }}'
     )
 
 
@@ -87,7 +83,6 @@ class _SkillPopup(QFrame):
 
         for slug in slugs:
             lbl = QLabel(f"/{slug}")
-            lbl.setObjectName("skill_popup_label")
             self._labels.append(lbl)
             self._layout.addWidget(lbl)
 
@@ -96,12 +91,9 @@ class _SkillPopup(QFrame):
 
     def _update_highlight(self) -> None:
         for i, lbl in enumerate(self._labels):
-            is_selected = i == self._selected_idx
-            was_selected = lbl.property("selected") == "true"
-            if was_selected != is_selected:
-                lbl.setProperty("selected", "true" if is_selected else "false")
-                lbl.style().unpolish(lbl)
-                lbl.style().polish(lbl)
+            lbl.setProperty("selected", "true" if i == self._selected_idx else "false")
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
 
     def move_selection(self, delta: int) -> None:
         if not self._slugs:
