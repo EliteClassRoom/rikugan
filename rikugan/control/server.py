@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
@@ -388,48 +389,45 @@ class ControlHandler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:
-        parts = self._path_parts()
-        if parts == ["health"]:
-            self._handle_health()
-        elif parts == ["tools"]:
-            if not self._require_auth():
-                return
-            self._handle_tools()
-        elif parts == ["events"]:
-            if not self._require_auth():
-                return
-            self._handle_events()
-        else:
-            self._send(404, {"Content-Type": "text/plain"}, "Not Found")
+        self._dispatch(
+            {
+                ("health",): (self._handle_health, False),
+                ("tools",): (self._handle_tools, True),
+                ("events",): (self._handle_events, True),
+            }
+        )
 
     def do_POST(self) -> None:
-        parts = self._path_parts()
-        if parts == ["prompt"]:
-            if not self._require_auth():
-                return
-            self._handle_prompt()
-        elif parts == ["answer"]:
-            if not self._require_auth():
-                return
-            self._handle_answer()
-        elif parts == ["tool-approval"]:
-            if not self._require_auth():
-                return
-            self._handle_tool_approval()
-        elif parts == ["approval"]:
-            if not self._require_auth():
-                return
-            self._handle_approval()
-        elif parts == ["cancel"]:
-            if not self._require_auth():
-                return
-            self._handle_cancel()
-        elif parts == ["shutdown"]:
-            if not self._require_auth():
-                return
-            self._handle_shutdown()
-        else:
+        self._dispatch(
+            {
+                ("prompt",): (self._handle_prompt, True),
+                ("answer",): (self._handle_answer, True),
+                ("tool-approval",): (self._handle_tool_approval, True),
+                ("approval",): (self._handle_approval, True),
+                ("cancel",): (self._handle_cancel, True),
+                ("shutdown",): (self._handle_shutdown, True),
+            }
+        )
+
+    def _dispatch(
+        self,
+        routes: dict[tuple[str, ...], tuple[Callable[[], None], bool]],
+    ) -> None:
+        """Resolve *routes* by path, gating auth-protected ones, else 404.
+
+        Each entry maps a path-parts key to ``(handler, requires_auth)``.
+        ``health`` is the only public route; every other endpoint goes
+        through ``_require_auth`` before its handler runs.
+        """
+        key = tuple(self._path_parts())
+        entry = routes.get(key)
+        if entry is None:
             self._send(404, {"Content-Type": "text/plain"}, "Not Found")
+            return
+        handler, requires_auth = entry
+        if requires_auth and not self._require_auth():
+            return
+        handler()
 
     # -- endpoint handlers ------------------------------------------------
 
