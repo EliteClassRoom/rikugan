@@ -91,6 +91,18 @@ class TestProviderRegistry(unittest.TestCase):
         with self.assertRaises(ProviderError):
             reg.create("nonexistent")
 
+    def test_dependency_warnings_returns_list(self):
+        """dependency_warnings() exists and returns a list (regression: the
+        method was missing on MAIN, causing panel_core to log
+        'ProviderRegistry' object has no attribute 'dependency_warnings')."""
+        reg = ProviderRegistry()
+        warnings = reg.dependency_warnings()
+        self.assertIsInstance(warnings, list)
+        # Each warning is a human-readable string (no internal objects leaked).
+        for w in warnings:
+            self.assertIsInstance(w, str)
+
+
 
 class TestProviderDefaultSync(unittest.TestCase):
     """Ensure PROVIDER_DEFAULT_MODELS stays in sync with provider constructors."""

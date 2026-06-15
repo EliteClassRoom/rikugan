@@ -11,6 +11,7 @@ import importlib
 import os
 from typing import Any, Union
 
+from ..core.dependencies import get_missing_dependency_warnings
 from ..core.errors import ProviderError
 from .base import LLMProvider
 
@@ -129,6 +130,14 @@ class ProviderRegistry:
     def list_providers(self) -> list[str]:
         """All known provider names. Does NOT import any adapter module."""
         return list(self._providers.keys())
+
+    def dependency_warnings(self) -> list[str]:
+        """Missing optional dependency warnings (e.g. uninstalled provider SDKs).
+
+        Thin wrapper over :func:`get_missing_dependency_warnings` so the UI
+        can source both registry state and dependency checks from one place.
+        """
+        return get_missing_dependency_warnings()
 
     # -- Instance creation ---------------------------------------------------
 
