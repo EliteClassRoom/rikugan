@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re as _re
+from collections.abc import Callable
 from typing import ClassVar
 
 from .qt_compat import (
@@ -151,6 +152,141 @@ def _format_tool_group_label(tool_names: list[str]) -> str:
 # Smart tool parameter summaries
 # ---------------------------------------------------------------------------
 
+#: Maximum length of a one-line tool summary (truncated with "..." if exceeded).
+_SUMMARY_MAX_CHARS = 80
+
+
+def _trunc(text: str, limit: int) -> str:
+    """Truncate *text* to *limit* chars, appending ``...`` when shortened."""
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+# Each formatter takes a ``_get(key, *fallbacks)`` accessor (which returns the
+# first non-None arg as a string) and returns the summary for one tool. Tools
+# sharing the same shape share the same callable, so adding a tool is a
+# one-line table entry rather than a new elif branch.
+def _fmt_address(getter) -> str:
+    return getter("address", "ea", "name", "target", "func_id")
+
+
+def _fmt_address_with_type(getter) -> str:
+    target = getter("address", "ea", "func_address", "var_name")
+    type_str = getter("type_str", "prototype", "type")
+    return f"{target}: {type_str}" if target and type_str else ""
+
+
+def _fmt_xref_target(getter) -> str:
+    return getter("address", "ea", "name", "struct_name")
+
+
+def _fmt_search_query(getter) -> str:
+    query = getter("pattern", "query", "filter", "name")
+    return f'"{query}"' if query else ""
+
+
+def _fmt_define_types(getter) -> str:
+    code = getter("c_code", "c_declaration", "types")
+    return _trunc(code, 60) if code else ""
+
+
+def _fmt_struct_name(getter) -> str:
+    return getter("name", "struct_name")
+
+
+def _fmt_execute_python(getter) -> str:
+    code = getter("code", "script")
+    if not code:
+        return ""
+    return _trunc(code.strip().split("\n")[0], 60)
+
+
+def _fmt_read_disassembly(getter) -> str:
+    return getter("name", "ea", "address", "start")
+
+
+def _fmt_hexdump(getter) -> str:
+    return getter("address", "ea", "name")
+
+
+def _fmt_rename_function(getter) -> str:
+    old = getter("old_name", "current_name", "ea")
+    new = getter("new_name")
+    return f"{old} → {new}" if old and new else ""
+
+
+def _fmt_rename_variable(getter) -> str:
+    func = getter("function_name", "func_address", "ea")
+    old = getter("variable_name", "old_name")
+    new = getter("new_name")
+    if not (old and new):
+        return ""
+    return f"{func}: {old} → {new}" if func else f"{old} → {new}"
+
+
+def _fmt_set_comment(getter) -> str:
+    addr = getter("address", "ea")
+    comment = _trunc(getter("comment", "text"), 50)
+    if addr and comment:
+        return f"{addr}: {comment}"
+    return comment
+
+
+def _fmt_exploration_report(getter) -> str:
+    cat = getter("category")
+    sm = _trunc(getter("summary"), 50)
+    return f"[{cat}] {sm}" if cat and sm else (sm or cat or "")
+
+
+def _fmt_phase_transition(getter) -> str:
+    phase = getter("to_phase")
+    reason = _trunc(getter("reason"), 40)
+    return f"→ {phase}" + (f": {reason}" if reason else "")
+
+
+#: Maps a stripped tool name to its summary formatter. Lookup happens after
+#: ``_strip_mcp_prefix``, so e.g. ``mcp__bn__decompile_function`` resolves here
+#: as ``decompile_function``.
+_TOOL_SUMMARY_FORMATTERS: dict[str, Callable[[Callable[..., str]], str]] = {
+    "decompile_function": _fmt_address,
+    "rename_function": _fmt_rename_function,
+    "rename_variable": _fmt_rename_variable,
+    "set_comment": _fmt_set_comment,
+    "set_function_comment": _fmt_set_comment,
+    "set_type": _fmt_address_with_type,
+    "set_function_prototype": _fmt_address_with_type,
+    "apply_type_to_variable": _fmt_address_with_type,
+    "xrefs_to": _fmt_xref_target,
+    "xrefs_from": _fmt_xref_target,
+    "function_xrefs": _fmt_xref_target,
+    "search_strings": _fmt_search_query,
+    "search_functions": _fmt_search_query,
+    "search_functions_by_name": _fmt_search_query,
+    "list_strings_filter": _fmt_search_query,
+    "define_types": _fmt_define_types,
+    "declare_c_type": _fmt_define_types,
+    "create_struct": _fmt_struct_name,
+    "execute_python": _fmt_execute_python,
+    "read_disassembly": _fmt_read_disassembly,
+    "read_function_disassembly": _fmt_read_disassembly,
+    "hexdump_address": _fmt_hexdump,
+    "hexdump_data": _fmt_hexdump,
+    "get_data_decl": _fmt_hexdump,
+    "exploration_report": _fmt_exploration_report,
+    "phase_transition": _fmt_phase_transition,
+}
+
+#: Generic fallback: first matching common parameter wins.
+_GENERIC_SUMMARY_KEYS = (
+    "target",
+    "address",
+    "ea",
+    "name",
+    "path",
+    "query",
+    "pattern",
+    "command",
+)
+
 
 def _format_tool_summary(tool_name: str, args_text: str) -> str:
     """Extract the most relevant parameter for a compact one-line summary."""
@@ -172,131 +308,19 @@ def _format_tool_summary(tool_name: str, args_text: str) -> str:
     # Strip MCP prefix for matching (works with any MCP server)
     short_name = _strip_mcp_prefix(tool_name)
 
-    summary = ""
-
-    if short_name in ("decompile_function",):
-        target = _get("address", "ea", "name", "target", "func_id")
-        if target:
-            summary = target
-
-    elif short_name in ("rename_function",):
-        old = _get("old_name", "current_name", "ea")
-        new = _get("new_name")
-        if old and new:
-            summary = f"{old} → {new}"
-
-    elif short_name in ("rename_variable",):
-        func = _get("function_name", "func_address", "ea")
-        old = _get("variable_name", "old_name")
-        new = _get("new_name")
-        if old and new:
-            summary = f"{func}: {old} → {new}" if func else f"{old} → {new}"
-
-    elif short_name in ("set_comment", "set_function_comment"):
-        addr = _get("address", "ea")
-        comment = _get("comment", "text")
-        if comment and len(comment) > 50:
-            comment = comment[:47] + "..."
-        if addr and comment:
-            summary = f"{addr}: {comment}"
-        elif comment:
-            summary = comment
-
-    elif short_name in (
-        "set_type",
-        "set_function_prototype",
-        "apply_type_to_variable",
-    ):
-        target = _get("address", "ea", "func_address", "var_name")
-        type_str = _get("type_str", "prototype", "type")
-        if target and type_str:
-            summary = f"{target}: {type_str}"
-
-    elif short_name in (
-        "xrefs_to",
-        "xrefs_from",
-        "function_xrefs",
-    ):
-        target = _get("address", "ea", "name", "struct_name")
-        if target:
-            summary = target
-
-    elif short_name in (
-        "search_strings",
-        "search_functions",
-        "search_functions_by_name",
-        "list_strings_filter",
-    ):
-        query = _get("pattern", "query", "filter", "name")
-        if query:
-            summary = f'"{query}"'
-
-    elif short_name in ("define_types", "declare_c_type"):
-        code = _get("c_code", "c_declaration", "types")
-        if code and len(code) > 60:
-            code = code[:57] + "..."
-        summary = code or ""
-
-    elif short_name in ("create_struct",):
-        name = _get("name", "struct_name")
-        summary = name
-
-    elif short_name in ("execute_python",):
-        code = _get("code", "script")
-        if code:
-            first_line = code.strip().split("\n")[0]
-            if len(first_line) > 60:
-                first_line = first_line[:57] + "..."
-            summary = first_line
-
-    elif short_name in (
-        "read_disassembly",
-        "read_function_disassembly",
-    ):
-        target = _get("name", "ea", "address", "start")
-        if target:
-            summary = target
-
-    elif short_name in ("hexdump_address", "hexdump_data", "get_data_decl"):
-        target = _get("address", "ea", "name")
-        if target:
-            summary = target
-
-    elif short_name == "exploration_report":
-        cat = _get("category")
-        sm = _get("summary")
-        if sm and len(sm) > 50:
-            sm = sm[:47] + "..."
-        summary = f"[{cat}] {sm}" if cat and sm else sm or cat or ""
-
-    elif short_name == "phase_transition":
-        phase = _get("to_phase")
-        reason = _get("reason")
-        if reason and len(reason) > 40:
-            reason = reason[:37] + "..."
-        summary = f"→ {phase}" + (f": {reason}" if reason else "")
-
+    fmt = _TOOL_SUMMARY_FORMATTERS.get(short_name)
+    if fmt is not None:
+        summary = fmt(_get)
     else:
         # Generic: try common parameter names
-        for key in (
-            "target",
-            "address",
-            "ea",
-            "name",
-            "path",
-            "query",
-            "pattern",
-            "command",
-        ):
+        summary = ""
+        for key in _GENERIC_SUMMARY_KEYS:
             val = _get(key)
             if val:
                 summary = val
                 break
 
-    # Truncate
-    if len(summary) > 80:
-        summary = summary[:77] + "..."
-    return summary
+    return _trunc(summary, _SUMMARY_MAX_CHARS)
 
 
 def _truncate_preview(text: str, max_lines: int = _TOOL_PREVIEW_LINES) -> str:
