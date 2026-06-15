@@ -11,23 +11,26 @@ from .qt_compat import (
     QVBoxLayout,
     QWidget,
 )
-from .styles import build_input_area_stylesheet, host_stylesheet
+from .styles import build_input_area_stylesheet
 from .theme.manager import ThemeManager
 
 
 def _skill_popup_style() -> str:
-    """Inline QSS for the ``_SkillPopup`` (matched 1:1 to the fork).
+    """Inline QSS for the ``_SkillPopup`` — always applied, never gated on host theme.
 
-    Applied through :func:`host_stylesheet` (not the legacy
-    ``build_skill_popup_stylesheet``) so the style still takes effect in
-    host/IDA-native mode instead of collapsing to an empty string.
+    The popup is a child of the Rikugan panel, not part of the host UI,
+    so it must keep its border + selected-row highlight in *every* theme
+    mode (including IDA-Native, where ``host_stylesheet``/``is_host_theme``
+    would otherwise swap in a bald fallback and leave the popup as bare
+    text). The selected row is both highlighted and bold.
     """
     t = ThemeManager.instance().tokens()
     return (
         f"QFrame#skill_popup {{ background: {t.alt_base}; border: 1px solid {t.mid}; "
         f"border-radius: 4px; padding: 2px; }}"
         f"QLabel {{ color: {t.text}; padding: 3px 8px; }}"
-        f'QLabel[selected="true"] {{ background: {t.highlight}; border-radius: 3px; }}'
+        f'QLabel[selected="true"] {{ background: {t.highlight};'
+        f' border-radius: 3px; font-weight: bold; }}'
     )
 
 
@@ -45,16 +48,11 @@ class _SkillPopup(QFrame):
         super().__init__(parent)
         self.setObjectName("skill_popup")
         self.setWindowFlags(Qt.WindowType.ToolTip)
-        # Inline QSS applied through host_stylesheet so the popup keeps its
-        # border / highlight even in host/IDA-native mode (where the legacy
-        # build_skill_popup_stylesheet returned "" and left the popup bare).
-        # Rebuilt by apply_theme() on every themeChanged signal.
-        self.setStyleSheet(
-            host_stylesheet(
-                _skill_popup_style(),
-                'QLabel[selected="true"] { font-weight: bold; }',
-            )
-        )
+        # Inline QSS applied directly (NOT via host_stylesheet) so the
+        # popup keeps border + highlight even in IDA-Native mode, where
+        # is_host_theme() is True and host_stylesheet would return a bald
+        # fallback. Rebuilt by apply_theme() on every themeChanged signal.
+        self.setStyleSheet(_skill_popup_style())
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(2, 2, 2, 2)
         self._layout.setSpacing(0)
@@ -64,12 +62,7 @@ class _SkillPopup(QFrame):
 
     def apply_theme(self) -> None:
         """Refresh the popup QSS for the current theme tokens."""
-        self.setStyleSheet(
-            host_stylesheet(
-                _skill_popup_style(),
-                'QLabel[selected="true"] { font-weight: bold; }',
-            )
-        )
+        self.setStyleSheet(_skill_popup_style())
 
     def set_items(self, slugs: list[str]) -> None:
         """Replace popup contents with filtered slugs."""
