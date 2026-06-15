@@ -8,6 +8,7 @@ from typing import Annotated
 from ..core.logging import log_debug
 from .base import parse_addr, tool
 from .formatting import format_function_summary
+from .pagination import format_page
 
 __all__ = ["format_function_summary"]
 
@@ -30,14 +31,8 @@ def list_functions(
     """List functions in the binary with pagination."""
 
     funcs = list(idautils.Functions())
-    total = len(funcs)
-    page = funcs[offset : offset + limit]
-
-    lines = [f"Functions {offset}–{offset + len(page)} of {total}:"]
-    for ea in page:
-        name = ida_name.get_name(ea)
-        lines.append(f"  0x{ea:x}  {name}")
-    return "\n".join(lines)
+    rows = [f"  0x{ea:x}  {ida_name.get_name(ea)}" for ea in funcs]
+    return format_page(rows, offset=offset, limit=limit, title="Functions")
 
 
 @tool(category="functions")

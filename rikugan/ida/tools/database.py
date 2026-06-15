@@ -7,9 +7,11 @@ from typing import Annotated
 
 from ...core.logging import log_debug
 from ...tools.base import parse_addr, tool
+from ...tools.value_format import bytes_needed_for_type, format_global_value
 
 try:
     ida_ida = importlib.import_module("ida_ida")
+    ida_name = importlib.import_module("ida_name")
     ida_nalt = importlib.import_module("ida_nalt")
     ida_segment = importlib.import_module("ida_segment")
     idaapi = importlib.import_module("idaapi")
@@ -151,3 +153,65 @@ def read_bytes(
         ascii_str = "".join(ascii_parts)
         lines.append(f"  0x{row_ea:08x}  {hex_str}  |{ascii_str}|")
     return "\n".join(lines)
+
+
+# --- Global-value inspection ----------------------------------------------
+# Helpers + read_global_value ported from the fork; format_global_value /
+# bytes_needed_for_type live in tools.value_format so the formatting logic
+# is shared and tested in one place rather than re-implemented per host.
+
+
+def _resolve_addr_or_name(value: str) -> int:
+    """Resolve *value* as a hex address, falling back to a symbol name."""
+    try:
+        return parse_addr(value)
+    except (TypeError, ValueError):
+        ea = ida_name.get_name_ea(idc.BADADDR, value)
+        if ea == idc.BADADDR:
+            raise ValueError(f"Unknown address or name: {value}") from None
+        return ea
+
+
+def _pointer_size() -> int:
+    """Return the binary's pointer width in bytes (2/4/8), defaulting to 8."""
+    try:
+        return 8 if ida_ida.inf_is_64bit() else 4 if ida_ida.inf_is_32bit() else 2
+    except AttributeError:
+        return 8
+
+
+def _read_raw_bytes(ea: int, size: int) -> bytes:
+    """Read *size* bytes starting at *ea* via the IDA byte API."""
+    return bytes(idc.get_wide_byte(ea + i) & 0xFF for i in range(max(0, size)))
+
+
+def _resolve_pointer_name(ea: int) -> str:
+    """Return the symbol name at *ea* (empty for null/invalid addresses)."""
+    if ea in (0, idc.BADADDR):
+        return ""
+    return ida_name.get_name(ea) or ""
+
+
+@tool(category="database")
+def read_global_value(
+    address: Annotated[str, "Global/data address or symbol name"],
+    type_hint: Annotated[
+        str,
+        "auto, u8/i8/u16/i16/u32/i32/u64/i64, ptr, string, utf16, or bytes",
+    ] = "auto",
+    size: Annotated[int, "Bytes to inspect for auto/string/bytes; 0 selects a sensible default"] = 0,
+) -> str:
+    """Read and interpret a global variable or data value."""
+
+    ea = _resolve_addr_or_name(address)
+    pointer_size = _pointer_size()
+    read_size = bytes_needed_for_type(type_hint, pointer_size, requested_size=size)
+    data = _read_raw_bytes(ea, read_size)
+    return format_global_value(
+        address=ea,
+        data=data,
+        pointer_size=pointer_size,
+        type_hint=type_hint,
+        name=ida_name.get_name(ea) or "",
+        resolve_pointer=_resolve_pointer_name,
+    )

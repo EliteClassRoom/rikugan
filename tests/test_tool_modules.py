@@ -77,7 +77,10 @@ class TestListFunctions(unittest.TestCase):
         result = list_functions(offset=0, limit=2)
         self.assertIn("Functions 0", result)
         lines = result.strip().split("\n")
-        self.assertLessEqual(len(lines), 3)
+        # header + 2 rows + optional continuation hint (format_page adds
+        # "... N more. Use offset=X" when more pages remain — a real
+        # improvement over the old bare list).
+        self.assertLessEqual(len(lines), 4)
 
     def test_full_list(self):
         from rikugan.ida.tools.functions import list_functions

@@ -7,6 +7,7 @@ from typing import Annotated
 
 from ...core.logging import log_debug
 from ...tools.base import parse_addr, tool
+from ...tools.pagination import format_page
 
 try:
     idautils = importlib.import_module("idautils")
@@ -23,13 +24,8 @@ def list_strings(
     """List defined strings in the binary with pagination."""
 
     strings = list(idautils.Strings())
-    total = len(strings)
-    page = strings[offset : offset + limit]
-
-    lines = [f"Strings {offset}\u2013{offset + len(page)} of {total}:"]
-    for s in page:
-        lines.append(f"  0x{s.ea:x}  [{s.length}] {s!s}")
-    return "\n".join(lines)
+    rows = [f"  0x{s.ea:x}  [{s.length}] {s!s}" for s in strings]
+    return format_page(rows, offset=offset, limit=limit, title="Strings")
 
 
 @tool(category="strings")
