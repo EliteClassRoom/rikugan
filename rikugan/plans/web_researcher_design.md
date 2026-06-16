@@ -1,5 +1,9 @@
 # Web Researcher Sub-Agent Architecture Design
 
+> **Status**: Design spec — NOT YET IMPLEMENTED (reviewed 2026-06-16).
+> Đây là tài liệu thiết kế cho `web_researcher` sub-agent. Chưa có code
+> (`grep web_researcher rikugan/ --include="*.py"` → 0 hit). Tham khảo khi triển khai.
+
 ## 1. Overview
 
 This document describes the architecture for implementing a new `web_researcher` sub-agent in Rikugan that leverages MCP (Model Context Protocol) tools for web search and image understanding capabilities.

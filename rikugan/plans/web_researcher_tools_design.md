@@ -1,5 +1,9 @@
 # Web Researcher Tools Architecture Design
 
+> **Status**: Design spec — NOT YET IMPLEMENTED (reviewed 2026-06-16).
+> Đây là tài liệu thiết kế cho `web_search` / `understand_image` tools. Chưa có code
+> triển khai theo spec này. Tham khảo khi triển khai.
+
 ## 1. Overview
 
 This document describes the architecture for implementing `web_search` and `understand_image` as **direct tools** (not sub-agents) in Rikugan. This approach enables the main agent to call these capabilities directly without orchestration delegation.
