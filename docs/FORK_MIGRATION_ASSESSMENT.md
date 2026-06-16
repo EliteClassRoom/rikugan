@@ -2,7 +2,7 @@
 
 > Đánh giá toàn diện (2026-06-14) giữa **MAIN** (`D:/re_dev_projects/vibe-clone/rikugan`, v1.2) và **FORK** (`D:/re_dev_projects/Rikugan`, v1.3.1).
 > Mục tiêu: xác định "tốt nhất của FORK" để port sang MAIN, đồng thời sửa các vấn đề tồn đọng của MAIN.
-> Superseds phần status cũ của [PROJECT_MODIFICATION_PLAN.md](PROJECT_MODIFICATION_PLAN.md) (cập nhật 2026-06-13, nay đã lạc hậu so với git history).
+> Supersedes plan cũ (PROJECT_MODIFICATION_PLAN.md, 2026-06-13) — file đó đã xóa vì lạc hậu so với git history.
 
 ---
 
