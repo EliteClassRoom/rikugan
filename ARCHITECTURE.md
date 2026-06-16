@@ -259,7 +259,7 @@ result = future.result(timeout=timeout)  # default 30s
 
 ### Tool Categories
 
-Each host provides ~56 tools organized by category:
+Each host provides 60+ tools organized by category:
 
 | Category | Examples |
 |----------|----------|
