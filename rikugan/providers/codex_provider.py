@@ -13,7 +13,7 @@ import urllib.request
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, TypedDict
 
 from ..core.errors import AuthenticationError, ContextLengthError, ProviderError, RateLimitError
 from ..core.types import Message, ModelInfo, ProviderCapabilities, Role, StreamChunk, TokenUsage, ToolCall
@@ -25,6 +25,23 @@ CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 CODEX_AUTH_MODE = "chatgpt"
 CODEX_ORIGINATOR = "codex_cli_rs"
 CODEX_MODELS_CLIENT_VERSION = "0.133.0"
+
+
+class _StreamCallState(TypedDict):
+    """Per-tool-call streaming buffer for ``_iter_sse``.
+
+    ``name`` accumulates the tool name; ``seen`` is the boolean gate set on
+    the first args delta so the done-event only emits the full ``arguments``
+    when no deltas were streamed first.
+    """
+
+    name: str
+    seen: bool
+
+
+# Sentinel returned when a done-event arrives for a call_id we never saw a
+# start/delta for — treat it as "no name, no deltas streamed".
+_EMPTY_CALL_STATE: _StreamCallState = {"name": "", "seen": False}
 
 
 @dataclass
@@ -545,7 +562,10 @@ class CodexProvider(LLMProvider):
             self._handle_api_error(e)
 
     def _iter_sse(self, response: Any) -> Generator[StreamChunk, None, None]:
-        buffers: dict[str, dict[str, str]] = {}
+        # Per-call streaming state. ``name`` accumulates the tool name; ``seen``
+        # is a boolean gate (set on the first args delta) so the done-event
+        # only emits the full ``arguments`` when NO deltas were streamed first.
+        buffers: dict[str, _StreamCallState] = {}
         for raw in response:
             line = raw.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -564,15 +584,15 @@ class CodexProvider(LLMProvider):
                 call_id = str(event.get("call_id") or event.get("item_id") or "")
                 if call_id:
                     delta = str(event.get("delta") or "")
-                    buffers.setdefault(call_id, {"name": "", "args": ""})
-                    buffers[call_id]["args"] += delta
+                    buffers.setdefault(call_id, {"name": "", "seen": False})
+                    buffers[call_id]["seen"] = True
                     yield StreamChunk(tool_call_id=call_id, tool_args_delta=delta)
             elif kind == "response.output_item.added":
                 item = event.get("item") or {}
                 if item.get("type") == "function_call":
                     call_id = str(item.get("call_id") or item.get("id") or "")
                     if call_id:
-                        existing = buffers.setdefault(call_id, {"name": "", "args": ""})
+                        existing = buffers.setdefault(call_id, {"name": "", "seen": False})
                         existing["name"] = str(item.get("name") or existing.get("name") or "")
                         yield StreamChunk(
                             tool_call_id=call_id,
@@ -585,11 +605,12 @@ class CodexProvider(LLMProvider):
                     call_id = str(item.get("call_id") or item.get("id") or "")
                     if call_id:
                         args = str(item.get("arguments") or "")
-                        if args and not buffers.get(call_id, {}).get("args"):
+                        state = buffers.get(call_id, _EMPTY_CALL_STATE)
+                        if args and not state["seen"]:
                             yield StreamChunk(tool_call_id=call_id, tool_args_delta=args)
                         yield StreamChunk(
                             tool_call_id=call_id,
-                            tool_name=str(item.get("name") or buffers.get(call_id, {}).get("name") or ""),
+                            tool_name=str(item.get("name") or state["name"] or ""),
                             is_tool_call_end=True,
                         )
             elif kind == "response.completed":

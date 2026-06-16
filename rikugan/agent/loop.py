@@ -536,7 +536,14 @@ class AgentLoop:
         else:
             # Estimate full in-memory context so compaction decisions work
             # even when provider streaming usage is missing.
-            full_messages = minify_messages(self.session.get_messages_for_provider(context_window=0))
+            #
+            # We estimate on the raw (un-minified) message list: minify only
+            # strips redundant whitespace, so skipping it here makes the
+            # token estimate marginally HIGHER, which is safe — compaction is
+            # conservative (triggers a touch early rather than late). This
+            # avoids a second full-history minify pass; the actual provider
+            # messages below are still minified before being sent.
+            full_messages = self.session.get_messages_for_provider(context_window=0)
             full_prompt_tokens = self._estimate_prompt_tokens(full_messages, system_prompt)
             if full_prompt_tokens > 0:
                 self._context_manager.update_usage(

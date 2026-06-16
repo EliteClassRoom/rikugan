@@ -486,7 +486,6 @@ class AnthropicProvider(LLMProvider):
             with client.messages.stream(**kwargs) as stream:
                 current_tool_id = None
                 current_tool_name = None
-                tool_args_buf = ""
 
                 in_thinking = False
 
@@ -498,7 +497,6 @@ class AnthropicProvider(LLMProvider):
                         if block.type == "tool_use":
                             current_tool_id = block.id
                             current_tool_name = block.name
-                            tool_args_buf = ""
                             yield StreamChunk(
                                 tool_call_id=block.id,
                                 tool_name=block.name,
@@ -518,7 +516,6 @@ class AnthropicProvider(LLMProvider):
                         elif delta.type == "text_delta":
                             yield StreamChunk(text=delta.text)
                         elif delta.type == "input_json_delta":
-                            tool_args_buf += delta.partial_json
                             yield StreamChunk(
                                 tool_call_id=current_tool_id,
                                 tool_name=current_tool_name,
@@ -538,7 +535,6 @@ class AnthropicProvider(LLMProvider):
                             )
                             current_tool_id = None
                             current_tool_name = None
-                            tool_args_buf = ""
 
                     elif etype == "message_delta":
                         sr = getattr(event, "delta", None)

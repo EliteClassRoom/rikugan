@@ -178,17 +178,17 @@ class ToolRegistry:
     def to_provider_format(self) -> list[dict[str, Any]]:
         """Return tool schemas in provider-compatible format.
 
-        Returns a deep copy so callers can freely mutate the nested
-        schema dicts without corrupting the cached originals.
+        Returns a shallow copy of the cached list. The schema dicts are
+        shared by reference — callers MUST treat them as read-only and must
+        not mutate nested ``properties``/``required`` data in place. Build a
+        new dict instead. (Called once per turn from the agent loop; the deep
+        copy it used to do duplicated 60+ nested schemas every turn for no
+        benefit, since every call site only filters the list and appends.)
         """
         with self._lock:
             if self._schema_cache is None:
                 self._schema_cache = [t.to_provider_format() for t in self._tools.values() if self._available(t)]
-            # Deep copy so callers cannot mutate nested schema data in the
-            # cached list (e.g. ``required`` lists, ``properties`` dicts).
-            import copy
-
-            return copy.deepcopy(self._schema_cache)
+            return list(self._schema_cache)
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
         with self._lock:

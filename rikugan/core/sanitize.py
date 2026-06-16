@@ -186,7 +186,13 @@ def strip_injection_markers(text: str) -> str:
 
     # 3. Standard patterns (these are ASCII-only so homoglyph evasion is
     #    less of a concern — adversaries mostly target the Anthropic string).
-    text = _ANTHROPIC_CONTROL_RE.sub("[FILTERED]", text)
+    # NOTE: the homoglyph-aware loop above (steps 1-2) already replaces EVERY
+    # _ANTHROPIC_CONTROL_RE match — both ASCII and obfuscated variants — because
+    # _normalize_homoglyphs is a 1-to-1 length-preserving translate() mapping, so
+    # positions in `normalized` map exactly onto `text`. A plain .sub() here would
+    # only re-scan already-[FILTERED] text and find nothing. Do NOT re-add it: the
+    # loop is strictly stronger (it also catches homoglyph-obfuscated variants the
+    # plain ASCII .sub() cannot match).
     text = _ROLE_MARKER_RE.sub("[FILTERED]", text)
     text = _INSTRUCTION_OVERRIDE_RE.sub("[FILTERED]", text)
     return text
