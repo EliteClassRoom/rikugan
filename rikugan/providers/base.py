@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Generator
 from typing import Any, NoReturn
@@ -103,12 +104,18 @@ class LLMProvider(ABC):
         self,
         client: Any,
         kwargs: dict[str, Any],
+        cancel_event: threading.Event | None = None,
     ) -> Generator[StreamChunk, None, None]:
         """Yield ``StreamChunk`` objects from the provider's streaming API.
 
         Receives the same kwargs produced by ``_build_request_kwargs``.
         The implementation may modify *kwargs* (e.g. add ``stream=True``)
         before passing them to the SDK.
+
+        ``cancel_event`` (optional) — if set, the implementation MUST
+        force-close the underlying HTTP stream within ~100ms so the
+        consumer's cancellation check fires promptly instead of waiting
+        for the next SSE chunk.
         """
 
     # -- Concrete pipeline implementations -------------------------------------
@@ -141,15 +148,21 @@ class LLMProvider(ABC):
         temperature: float = 0.3,
         max_tokens: int = 4096,
         system: str = "",
+        cancel_event: threading.Event | None = None,
     ) -> Generator[StreamChunk, None, None]:
         """Streaming chat completion.
 
         Builds request kwargs then delegates to ``_stream_chunks`` for the
         provider-specific streaming state machine.
+
+        ``cancel_event`` (optional) is a ``threading.Event`` the caller can
+        set to interrupt a slow HTTP stream. When set, the provider force-closes
+        the underlying connection so the consumer's cancellation check fires
+        within ~100ms instead of waiting for the next SSE chunk.
         """
         client = self._get_client()
         kwargs = self._build_request_kwargs(messages, tools, temperature, max_tokens, system)
-        yield from self._stream_chunks(client, kwargs)
+        yield from self._stream_chunks(client, kwargs, cancel_event=cancel_event)
 
     # -- Concrete shared implementations ---------------------------------------
 

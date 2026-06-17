@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from collections.abc import Generator
 from typing import Any, NoReturn
 
@@ -480,10 +481,41 @@ class AnthropicProvider(LLMProvider):
         self,
         client: Any,
         kwargs: dict[str, Any],
+        cancel_event: threading.Event | None = None,
     ) -> Generator[StreamChunk, None, None]:
-        """Yield StreamChunks from the Anthropic streaming API."""
+        """Yield StreamChunks from the Anthropic streaming API.
+
+        If ``cancel_event`` is set, a watchdog thread force-closes the
+        underlying HTTP stream so the consumer's cancellation check fires
+        within ~100ms instead of waiting for the next SSE chunk.
+        """
+        stream_ref: list = []
+        stream_ready = threading.Event()
+
+        def _watchdog() -> None:
+            """Close the stream when cancel_event fires."""
+            if cancel_event is None:
+                return
+            cancel_event.wait()
+            # Wait for the consumer to enter the with-block and set stream_ref[0].
+            if not stream_ready.wait(timeout=2.0):
+                return
+            s = stream_ref[0] if stream_ref else None
+            if s is not None:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+
+        watchdog: threading.Thread | None = None
+        if cancel_event is not None:
+            watchdog = threading.Thread(target=_watchdog, daemon=True)
+            watchdog.start()
+
         try:
             with client.messages.stream(**kwargs) as stream:
+                stream_ref.append(stream)
+                stream_ready.set()
                 current_tool_id = None
                 current_tool_name = None
 
@@ -570,5 +602,11 @@ class AnthropicProvider(LLMProvider):
                             )
 
         except Exception as e:
+            # If the watchdog closed the stream mid-iteration, the SDK raises
+            # a connection-related exception. Suppress when cancel is set so
+            # the consumer's _check_cancelled() can handle it cleanly.
+            if cancel_event is not None and cancel_event.is_set():
+                log_debug(f"AnthropicProvider stream closed by cancel: {e}")
+                return
             log_error(f"AnthropicProvider.chat_stream error: {e}")
             self._handle_api_error(e)

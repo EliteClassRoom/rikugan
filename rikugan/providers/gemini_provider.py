@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import threading
 from collections.abc import Generator
 from typing import Any, NoReturn
 
@@ -308,13 +309,47 @@ class GeminiProvider(LLMProvider):
         self,
         client: Any,
         kwargs: dict[str, Any],
+        cancel_event: threading.Event | None = None,
     ) -> Generator[StreamChunk, None, None]:
-        """Yield StreamChunks from the Gemini streaming API."""
+        """Yield StreamChunks from the Gemini streaming API.
+
+        If ``cancel_event`` is set, a watchdog thread attempts to close the
+        underlying stream so the consumer's cancellation check fires within
+        ~100ms instead of waiting for the next chunk.
+        """
+        # Cancel watchdog — Gemini SDK's stream object exposes .close() in
+        # recent versions; older versions silently ignore. The consumer's
+        # ``_check_cancelled()`` will still fire on the next chunk that
+        # happens to arrive.
+        stream_ref: list = []
+        stream_ready = threading.Event()
+
+        def _watchdog() -> None:
+            if cancel_event is None:
+                return
+            cancel_event.wait()
+            if not stream_ready.wait(timeout=2.0):
+                return
+            s = stream_ref[0] if stream_ref else None
+            if s is not None:
+                try:
+                    close = getattr(s, "close", None)
+                    if callable(close):
+                        close()
+                except Exception:
+                    pass
+
+        if cancel_event is not None:
+            threading.Thread(target=_watchdog, daemon=True).start()
+
         try:
             all_raw_parts: list = []
             last_usage: TokenUsage | None = None
             _in_thought = False
-            for chunk in client.models.generate_content_stream(**kwargs):
+            stream = client.models.generate_content_stream(**kwargs)
+            stream_ref.append(stream)
+            stream_ready.set()
+            for chunk in stream:
                 if not chunk.candidates or not chunk.candidates[0].content:
                     continue
                 parts = chunk.candidates[0].content.parts
@@ -359,4 +394,7 @@ class GeminiProvider(LLMProvider):
                 raw_parts=all_raw_parts if all_raw_parts else None,
             )
         except Exception as e:
+            if cancel_event is not None and cancel_event.is_set():
+                log_debug(f"GeminiProvider stream closed by cancel: {e}")
+                return
             self._handle_api_error(e)

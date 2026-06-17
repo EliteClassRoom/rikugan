@@ -71,13 +71,21 @@ class MockProvider(LLMProvider):
     def _handle_api_error(self, e):
         raise e
 
-    def _stream_chunks(self, client, kwargs):
+    def _stream_chunks(self, client, kwargs, cancel_event=None):
         yield from ()
 
     def chat(self, messages, tools=None, temperature=0.3, max_tokens=4096, system=""):
         return Message(role=Role.ASSISTANT, content="mock response")
 
-    def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system=""):
+    def chat_stream(
+        self,
+        messages,
+        tools=None,
+        temperature=0.3,
+        max_tokens=4096,
+        system="",
+        cancel_event=None,
+    ):
         if self._call_count < len(self._responses):
             chunks = self._responses[self._call_count]
             self._call_count += 1

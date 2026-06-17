@@ -214,8 +214,6 @@ def append_to_memory_file(md_path: str, content: str) -> None:
         f.write(content)
 
 
-
-
 class AgentLoop:
     """The core agentic loop: stream LLM -> execute tools -> repeat.
 
@@ -428,7 +426,6 @@ class AgentLoop:
     def _parse_plan(text: str) -> list[str]:
         """Parse a numbered plan from LLM text into step strings."""
         return _parse_plan_impl(text)
-
 
     def _format_provider_error_for_user(self, error: ProviderError) -> str:
         """Return a user-facing provider error message for chat display."""
@@ -700,6 +697,7 @@ class AgentLoop:
             temperature=self.config.provider.temperature,
             max_tokens=self.config.provider.max_tokens,
             system=system_prompt,
+            cancel_event=self._cancelled,
         )
 
         chunk_count = 0
@@ -724,9 +722,7 @@ class AgentLoop:
             if chunk.is_tool_call_end and chunk.tool_call_id:
                 tc_id = chunk.tool_call_id
                 if AgentLoop._is_duplicate_tool_call_end(tc_id, completed_tool_call_ids):
-                    log_debug(
-                        f"AgentLoop: ignoring duplicate tool_call_end for {tc_id!r}"
-                    )
+                    log_debug(f"AgentLoop: ignoring duplicate tool_call_end for {tc_id!r}")
                     continue
                 completed_tool_call_ids.add(tc_id)
                 tc_name = current_tool_names.get(tc_id, chunk.tool_name or "")
@@ -1072,9 +1068,7 @@ class AgentLoop:
         yield TurnEvent.tool_result_event(tc.id, tc.name, content, False)
         return tr
 
-    def _handle_delegate_external_task_tool(
-        self, tc: ToolCall
-    ) -> Generator[TurnEvent, None, ToolResult]:
+    def _handle_delegate_external_task_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle the delegate_external_task pseudo-tool.
 
         Streams ``A2ADispatcher`` events through the same TurnEvent
@@ -1093,9 +1087,7 @@ class AgentLoop:
         if not agent_name or not task:
             content = "Error: both 'agent' and 'task' are required."
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
-            return ToolResult(
-                tool_call_id=tc.id, name=tc.name, content=content, is_error=True
-            )
+            return ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
 
         # Lazily build a context prefix if requested. We read the
         # binary info + cursor position via the existing tool
@@ -1104,6 +1096,7 @@ class AgentLoop:
         if include_context:
             try:
                 from ...core.host import is_ida
+
                 if is_ida():
                     bin_info = self.tools.execute("get_binary_info", {})
                     ctx_lines = [

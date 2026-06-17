@@ -10,11 +10,17 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 from rikugan.core.types import (
-    Message, ModelInfo, ProviderCapabilities, Role, ToolCall,
-    StreamChunk, TokenUsage,
+    Message,
+    ModelInfo,
+    ProviderCapabilities,
+    Role,
+    ToolCall,
+    StreamChunk,
+    TokenUsage,
 )
 from rikugan.core.config import RikuganConfig
 from rikugan.agent.loop import AgentLoop, BackgroundAgentRunner
@@ -67,13 +73,21 @@ class MockProvider(LLMProvider):
     def _handle_api_error(self, e):
         raise e
 
-    def _stream_chunks(self, client, kwargs):
+    def _stream_chunks(self, client, kwargs, cancel_event=None):
         yield from ()
 
     def chat(self, messages, tools=None, temperature=0.3, max_tokens=4096, system=""):
         return Message(role=Role.ASSISTANT, content="mock response")
 
-    def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system=""):
+    def chat_stream(
+        self,
+        messages,
+        tools=None,
+        temperature=0.3,
+        max_tokens=4096,
+        system="",
+        cancel_event=None,
+    ):
         if self._call_count < len(self._responses):
             chunks = self._responses[self._call_count]
             self._call_count += 1
@@ -149,19 +163,23 @@ class TestAgentLoop(unittest.TestCase):
     def test_tool_call_and_result(self):
         # Set up a tool
         registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="echo_tool",
-            description="Echo the input",
-            parameters=[ParameterSchema(name="text", type="string", description="Text to echo", required=True)],
-            handler=lambda text: f"Echo: {text}",
-            category="test",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="echo_tool",
+                description="Echo the input",
+                parameters=[ParameterSchema(name="text", type="string", description="Text to echo", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
 
         # Turn 1: tool call, Turn 2: text response
-        provider = MockProvider(responses=[
-            _tool_call_response("echo_tool", {"text": "hello"}, call_id="call_1"),
-            _text_response("The echo returned hello"),
-        ])
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("echo_tool", {"text": "hello"}, call_id="call_1"),
+                _text_response("The echo returned hello"),
+            ]
+        )
         loop = self._make_loop(provider, tools=registry)
 
         events = list(loop.run("Echo hello"))
@@ -177,18 +195,22 @@ class TestAgentLoop(unittest.TestCase):
 
     def test_tool_error(self):
         registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="failing_tool",
-            description="Always fails",
-            parameters=[],
-            handler=lambda: (_ for _ in ()).throw(ValueError("bad input")),
-            category="test",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="failing_tool",
+                description="Always fails",
+                parameters=[],
+                handler=lambda: (_ for _ in ()).throw(ValueError("bad input")),
+                category="test",
+            )
+        )
 
-        provider = MockProvider(responses=[
-            _tool_call_response("failing_tool", {}, call_id="call_1"),
-            _text_response("Tool failed"),
-        ])
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("failing_tool", {}, call_id="call_1"),
+                _text_response("Tool failed"),
+            ]
+        )
         loop = self._make_loop(provider, tools=registry)
 
         events = list(loop.run("Run failing tool"))
@@ -204,18 +226,22 @@ class TestAgentLoop(unittest.TestCase):
             loop.cancel()
             return "done"
 
-        registry.register(ToolDefinition(
-            name="cancel_trigger",
-            description="Triggers cancel",
-            parameters=[],
-            handler=cancel_handler,
-            category="test",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="cancel_trigger",
+                description="Triggers cancel",
+                parameters=[],
+                handler=cancel_handler,
+                category="test",
+            )
+        )
 
-        provider = MockProvider(responses=[
-            _tool_call_response("cancel_trigger", {}, call_id="call_1"),
-            _text_response("Should not reach"),
-        ])
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("cancel_trigger", {}, call_id="call_1"),
+                _text_response("Should not reach"),
+            ]
+        )
         loop = self._make_loop(provider, tools=registry)
 
         events = list(loop.run("Trigger cancel"))
@@ -345,8 +371,11 @@ class TestProfileEnforcement(unittest.TestCase):
     """Test that analysis profiles are enforced in the agent loop."""
 
     def _make_loop_with_profile(
-        self, profile_name: str, provider: MockProvider,
-        tools: ToolRegistry = None, custom_profiles: dict = None,
+        self,
+        profile_name: str,
+        provider: MockProvider,
+        tools: ToolRegistry = None,
+        custom_profiles: dict = None,
     ) -> AgentLoop:
         config = RikuganConfig()
         config.auto_context = False
@@ -374,13 +403,15 @@ class TestProfileEnforcement(unittest.TestCase):
             calls.append("get_binary_info")
             return "Binary: test.exe"
 
-        registry.register(ToolDefinition(
-            name="get_binary_info",
-            description="Get binary info",
-            parameters=[],
-            handler=track_binary_info,
-            category="context",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="get_binary_info",
+                description="Get binary info",
+                parameters=[],
+                handler=track_binary_info,
+                category="context",
+            )
+        )
 
         provider = MockProvider(responses=[_text_response("Done")])
         session = SessionState(provider_name="mock", model_name="mock-model")
@@ -393,13 +424,15 @@ class TestProfileEnforcement(unittest.TestCase):
     def test_ioc_stripping_in_tool_results(self):
         """ioc_filters should strip hashes/IPs from tool results."""
         registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="test_tool",
-            description="Returns IOC data",
-            parameters=[],
-            handler=lambda: "Hash: d41d8cd98f00b204e9800998ecf8427e, IP: 10.0.0.1",
-            category="test",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="test_tool",
+                description="Returns IOC data",
+                parameters=[],
+                handler=lambda: "Hash: d41d8cd98f00b204e9800998ecf8427e, IP: 10.0.0.1",
+                category="test",
+            )
+        )
 
         # Use private profile which has all ioc_filters enabled
         config = RikuganConfig()
@@ -407,10 +440,12 @@ class TestProfileEnforcement(unittest.TestCase):
         config.active_profile = "private"
         session = SessionState(provider_name="mock", model_name="mock-model")
 
-        provider = MockProvider(responses=[
-            _tool_call_response("test_tool", {}, call_id="call_ioc"),
-            _text_response("Done"),
-        ])
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("test_tool", {}, call_id="call_ioc"),
+                _text_response("Done"),
+            ]
+        )
         loop = AgentLoop(provider, registry, config, session)
 
         events = list(loop.run("Run test"))
@@ -426,20 +461,24 @@ class TestProfileEnforcement(unittest.TestCase):
     def test_denied_tools_filtered_from_schema(self):
         """Denied tools should not appear in the tools schema."""
         registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="allowed_tool",
-            description="Allowed",
-            parameters=[],
-            handler=lambda: "ok",
-            category="test",
-        ))
-        registry.register(ToolDefinition(
-            name="denied_tool",
-            description="Denied",
-            parameters=[],
-            handler=lambda: "ok",
-            category="test",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="allowed_tool",
+                description="Allowed",
+                parameters=[],
+                handler=lambda: "ok",
+                category="test",
+            )
+        )
+        registry.register(
+            ToolDefinition(
+                name="denied_tool",
+                description="Denied",
+                parameters=[],
+                handler=lambda: "ok",
+                category="test",
+            )
+        )
 
         custom_profiles = {
             "restricted": {
@@ -450,7 +489,10 @@ class TestProfileEnforcement(unittest.TestCase):
 
         provider = MockProvider(responses=[_text_response("Done")])
         loop = self._make_loop_with_profile(
-            "restricted", provider, tools=registry, custom_profiles=custom_profiles,
+            "restricted",
+            provider,
+            tools=registry,
+            custom_profiles=custom_profiles,
         )
 
         schema = loop._build_tools_schema(None, False)
@@ -461,13 +503,15 @@ class TestProfileEnforcement(unittest.TestCase):
     def test_granular_ioc_filter_only_selected(self):
         """Only selected IOC categories should be redacted."""
         registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="test_tool",
-            description="Returns mixed IOCs",
-            parameters=[],
-            handler=lambda: "Hash: d41d8cd98f00b204e9800998ecf8427e, IP: 10.0.0.1, url: http://evil.com/bad",
-            category="test",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="test_tool",
+                description="Returns mixed IOCs",
+                parameters=[],
+                handler=lambda: "Hash: d41d8cd98f00b204e9800998ecf8427e, IP: 10.0.0.1, url: http://evil.com/bad",
+                category="test",
+            )
+        )
 
         # Custom profile with only hashes enabled
         custom_profiles = {
@@ -482,10 +526,12 @@ class TestProfileEnforcement(unittest.TestCase):
         config.custom_profiles = custom_profiles
         session = SessionState(provider_name="mock", model_name="mock-model")
 
-        provider = MockProvider(responses=[
-            _tool_call_response("test_tool", {}, call_id="call_granular"),
-            _text_response("Done"),
-        ])
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("test_tool", {}, call_id="call_granular"),
+                _text_response("Done"),
+            ]
+        )
         loop = AgentLoop(provider, registry, config, session)
 
         events = list(loop.run("Run test"))
@@ -502,13 +548,15 @@ class TestProfileEnforcement(unittest.TestCase):
     def test_custom_filter_rule_in_tool_result(self):
         """Custom filter rules should be applied to tool results."""
         registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="test_tool",
-            description="Returns sensitive data",
-            parameters=[],
-            handler=lambda: "hostname: DESKTOP-VICTIM, key: sk-abcdef1234567890",
-            category="test",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="test_tool",
+                description="Returns sensitive data",
+                parameters=[],
+                handler=lambda: "hostname: DESKTOP-VICTIM, key: sk-abcdef1234567890",
+                category="test",
+            )
+        )
 
         custom_profiles = {
             "custom-rules": {
@@ -526,10 +574,12 @@ class TestProfileEnforcement(unittest.TestCase):
         config.custom_profiles = custom_profiles
         session = SessionState(provider_name="mock", model_name="mock-model")
 
-        provider = MockProvider(responses=[
-            _tool_call_response("test_tool", {}, call_id="call_custom"),
-            _text_response("Done"),
-        ])
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("test_tool", {}, call_id="call_custom"),
+                _text_response("Done"),
+            ]
+        )
         loop = AgentLoop(provider, registry, config, session)
 
         events = list(loop.run("Run test"))
@@ -545,23 +595,27 @@ class TestProfileEnforcement(unittest.TestCase):
     def test_default_profile_no_filtering(self):
         """Default profile should not strip IOCs or hide metadata."""
         registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="test_tool",
-            description="Returns data",
-            parameters=[],
-            handler=lambda: "Hash: d41d8cd98f00b204e9800998ecf8427e",
-            category="test",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="test_tool",
+                description="Returns data",
+                parameters=[],
+                handler=lambda: "Hash: d41d8cd98f00b204e9800998ecf8427e",
+                category="test",
+            )
+        )
 
         config = RikuganConfig()
         config.auto_context = False
         config.active_profile = "default"
         session = SessionState(provider_name="mock", model_name="mock-model")
 
-        provider = MockProvider(responses=[
-            _tool_call_response("test_tool", {}, call_id="call_def"),
-            _text_response("Done"),
-        ])
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("test_tool", {}, call_id="call_def"),
+                _text_response("Done"),
+            ]
+        )
         loop = AgentLoop(provider, registry, config, session)
 
         events = list(loop.run("Run test"))
@@ -576,13 +630,15 @@ class TestProfileEnforcement(unittest.TestCase):
     def test_denied_tool_blocked_at_execution(self):
         """Denied tools should be blocked at execution time, not just schema filtering."""
         registry = ToolRegistry()
-        registry.register(ToolDefinition(
-            name="list_functions",
-            description="Lists functions",
-            parameters=[],
-            handler=lambda: "func1\nfunc2\nfunc3",
-            category="functions",
-        ))
+        registry.register(
+            ToolDefinition(
+                name="list_functions",
+                description="Lists functions",
+                parameters=[],
+                handler=lambda: "func1\nfunc2\nfunc3",
+                category="functions",
+            )
+        )
 
         custom_profiles = {
             "restricted": {
@@ -592,12 +648,17 @@ class TestProfileEnforcement(unittest.TestCase):
         }
 
         # LLM tries to call the denied tool anyway
-        provider = MockProvider(responses=[
-            _tool_call_response("list_functions", {}, call_id="call_denied"),
-            _text_response("Done"),
-        ])
+        provider = MockProvider(
+            responses=[
+                _tool_call_response("list_functions", {}, call_id="call_denied"),
+                _text_response("Done"),
+            ]
+        )
         loop = self._make_loop_with_profile(
-            "restricted", provider, tools=registry, custom_profiles=custom_profiles,
+            "restricted",
+            provider,
+            tools=registry,
+            custom_profiles=custom_profiles,
         )
 
         events = list(loop.run("list functions"))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import threading
 import uuid
 from collections.abc import Generator
 from typing import Any, NoReturn
@@ -348,8 +349,13 @@ class OpenAIProvider(LLMProvider):
         self,
         client: Any,
         kwargs: dict[str, Any],
+        cancel_event: threading.Event | None = None,
     ) -> Generator[StreamChunk, None, None]:
         """Yield StreamChunks from the OpenAI streaming API.
+
+        If ``cancel_event`` is set, a watchdog thread force-closes the
+        underlying HTTP stream so the consumer's cancellation check fires
+        within ~100ms instead of waiting for the next SSE chunk.
 
         Usage semantics
         ---------------
@@ -399,7 +405,37 @@ class OpenAIProvider(LLMProvider):
             self._handle_api_error(e)
             return
 
-        yield from self._iter_stream_chunks(stream)
+        # Cancel watchdog — closes the stream if cancel_event fires so the
+        # consumer's per-chunk cancellation check is reached promptly.
+        stream_ref: list = []
+        stream_ready = threading.Event()
+
+        def _watchdog() -> None:
+            if cancel_event is None:
+                return
+            cancel_event.wait()
+            if not stream_ready.wait(timeout=2.0):
+                return
+            s = stream_ref[0] if stream_ref else None
+            if s is not None:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+
+        if cancel_event is not None:
+            threading.Thread(target=_watchdog, daemon=True).start()
+
+        stream_ref.append(stream)
+        stream_ready.set()
+
+        try:
+            yield from self._iter_stream_chunks(stream)
+        except Exception as e:
+            if cancel_event is not None and cancel_event.is_set():
+                log_debug(f"OpenAIProvider stream closed by cancel: {e}")
+                return
+            raise
 
     def _iter_stream_chunks(
         self,
@@ -481,9 +517,7 @@ class OpenAIProvider(LLMProvider):
                             current_tool_calls[idx] = {
                                 "id": tc_delta.id or "",
                                 "name": (
-                                    tc_delta.function.name
-                                    if tc_delta.function and tc_delta.function.name
-                                    else ""
+                                    tc_delta.function.name if tc_delta.function and tc_delta.function.name else ""
                                 ),
                                 "args": "",
                                 # How much of the buffered argument
@@ -589,8 +623,7 @@ class OpenAIProvider(LLMProvider):
                         if not end_id or end_id in emitted_tool_call_end_ids:
                             if end_id in emitted_tool_call_end_ids:
                                 log_debug(
-                                    f"OpenAIProvider._stream_chunks: "
-                                    f"skipping duplicate tool_call_end for {end_id!r}"
+                                    f"OpenAIProvider._stream_chunks: skipping duplicate tool_call_end for {end_id!r}"
                                 )
                             continue
                         emitted_tool_call_end_ids.add(end_id)

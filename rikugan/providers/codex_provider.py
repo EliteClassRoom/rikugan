@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any, NoReturn, TypedDict
 
 from ..core.errors import AuthenticationError, ContextLengthError, ProviderError, RateLimitError
+from ..core.logging import log_debug
 from ..core.types import Message, ModelInfo, ProviderCapabilities, Role, StreamChunk, TokenUsage, ToolCall
 from .base import LLMProvider
 
@@ -553,12 +555,49 @@ class CodexProvider(LLMProvider):
             raise ProviderError(msg or str(e), provider="codex") from e
         raise ProviderError(str(e), provider="codex") from e
 
-    def _stream_chunks(self, client: Any, kwargs: dict[str, Any]) -> Generator[StreamChunk, None, None]:
+    def _stream_chunks(
+        self,
+        client: Any,
+        kwargs: dict[str, Any],
+        cancel_event: threading.Event | None = None,
+    ) -> Generator[StreamChunk, None, None]:
         try:
             response = self._request("POST", "responses", kwargs, stream=True)
+        except Exception as e:
+            self._handle_api_error(e)
+            return
+
+        # Cancel watchdog — close urllib response so the SSE read loop
+        # unblocks and exits within ~100ms.
+        response_ref: list = []
+        response_ready = threading.Event()
+
+        def _watchdog() -> None:
+            if cancel_event is None:
+                return
+            cancel_event.wait()
+            if not response_ready.wait(timeout=2.0):
+                return
+            r = response_ref[0] if response_ref else None
+            if r is not None:
+                try:
+                    r.close()
+                except Exception:
+                    pass
+
+        if cancel_event is not None:
+            threading.Thread(target=_watchdog, daemon=True).start()
+
+        response_ref.append(response)
+        response_ready.set()
+
+        try:
             with self._track_request_handle(response):
                 yield from self._iter_sse(response)
         except Exception as e:
+            if cancel_event is not None and cancel_event.is_set():
+                log_debug(f"CodexProvider stream closed by cancel: {e}")
+                return
             self._handle_api_error(e)
 
     def _iter_sse(self, response: Any) -> Generator[StreamChunk, None, None]:
