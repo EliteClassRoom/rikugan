@@ -112,7 +112,7 @@ def build_zip(files: list[Path], out_path: Path, source_root: Path) -> None:
             zf.write(src, arcname)
 
 
-# ── Stubs filled in by Task 3 ─────────────────────────────────────────
+# ── SHA256 + CLI ───────────────────────────────────────────────────────
 
 
 def sha256_file(path: Path) -> str:

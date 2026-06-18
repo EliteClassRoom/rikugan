@@ -27,7 +27,7 @@ Concrete gaps in the current pipeline:
 
 ## Goals (in priority order)
 
-1. Ship a downloadable, integrity-verifiable artifact per release (zip + tar.gz + SHA256SUMS).
+1. Ship a downloadable, integrity-verifiable artifact per release (HCLI-compliant flat zip + SHA256SUMS).
 2. Catch regressions before the release is published — without depending on the drifted `ci.yml`.
 3. Support both `v*` (current convention) and bare `1.0`-style tags (legacy).
 4. Allow safe re-runs of the release for an existing tag.
