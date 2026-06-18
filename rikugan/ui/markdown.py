@@ -335,6 +335,15 @@ def md_to_html(text: str, source=None) -> str:
     Uses markdown-it-py when available; falls back to the legacy
     regex converter otherwise.
 
+    Emoji / keycap / variation-selector codepoints are stripped from
+    the full input *before* markdown parsing.  The chat uses a
+    monospace-derived font that lacks glyphs for these codepoints,
+    so they render as tofu boxes regardless of whether they sit
+    inside a fenced code block, an inline `` `code` `` span, a list
+    item, a heading, or a plain paragraph.  Stripping at the input
+    layer covers every output path (markdown-it + legacy fallback)
+    without threading the strip through every per-token handler.
+
     Results are memoized in :data:`_HTML_CACHE` keyed by a hash of the
     input text and the current ``ThemeManager.tokens()`` identity.
     The cache is invalidated automatically when the theme changes
@@ -342,6 +351,13 @@ def md_to_html(text: str, source=None) -> str:
     """
     if not text:
         return ""
+
+    # Input-level emoji strip.  The per-token handlers in
+    # ``markdown_renderer`` and the legacy ``_stash_block`` apply
+    # the same strip to fenced/indented code blocks; keeping them
+    # is a defense-in-depth safety net for any caller that
+    # bypasses this public entry point.
+    text = _strip_emoji(text)
 
     key = _cache_key(text)
     cached = _HTML_CACHE.get(key)

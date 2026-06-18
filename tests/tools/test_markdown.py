@@ -184,19 +184,37 @@ class TestMdToHtmlFencedCodeBlockEmojiStrip(unittest.TestCase):
         self.assertIn("xor eax, eax", text)
         self.assertIn("ret", text)
 
-    def test_inline_code_not_stripped(self):
-        # The strip is scoped to fenced code blocks.  Inline code
-        # (`` `foo` ``) keeps emoji — those use a different style path
-        # and the bug only manifested on fenced blocks.
-        result = md_to_html("press the 🎉 key")
-        self.assertIn("🎉", result)
+    def test_keycap_in_numbered_list_strips_modifier(self):
+        # Regression: ``1️⃣`` in a numbered list item was rendering as
+        # tofu (digit + VS-16 + combining keycap where the chat's
+        # monospace font has no keycap glyph). The strip is applied at
+        # the input of ``md_to_html`` so it covers list items,
+        # paragraphs, and headings — not only fenced code blocks.
+        result = md_to_html("1. 1️⃣ C2 Configuration Storage\n")
+        text = self._strip_tags(result)
+        self.assertNotIn("⃣", text)
+        self.assertNotIn("️", text)
+        self.assertIn("1", text)
+        self.assertIn("C2 Configuration Storage", text)
 
-    def test_emoji_outside_code_block_preserved(self):
-        # Regular paragraphs keep their emoji — we only strip from
-        # inside fenced blocks.
+    def test_paragraph_strips_pictograph_emoji(self):
+        # Regression: ``🎉`` in a regular paragraph also rendered as
+        # tofu in the chat font. Input-level strip removes it from
+        # every output path (markdown-it and legacy fallback).
         result = md_to_html("Analysis complete 🎉\n")
         text = self._strip_tags(result)
-        self.assertIn("🎉", text)
+        self.assertNotIn("🎉", text)
+        self.assertIn("Analysis complete", text)
+
+    def test_inline_code_strips_emoji(self):
+        # Inline `` `foo` `` spans now also strip emoji: same
+        # monospace-font rationale as fenced blocks. Only difference
+        # vs. fenced blocks is the wrapping style (inline span vs.
+        # block div).
+        result = md_to_html("press the `🎉` key")
+        text = self._strip_tags(result)
+        self.assertNotIn("🎉", text)
+        self.assertIn("press the", text)
 
     def test_legacy_path_strips_emoji(self):
         # The legacy regex fallback in ``_legacy_md_to_html`` must
