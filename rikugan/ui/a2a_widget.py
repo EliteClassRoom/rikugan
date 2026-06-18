@@ -21,13 +21,14 @@ import time
 import uuid
 from typing import Any
 
+from ..agent.a2a import A2ADispatcher
+from ..agent.turn import TurnEventType
 from .qt_compat import (
     QCheckBox,
     QComboBox,
     QEvent,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -43,10 +44,6 @@ from .qt_compat import (
     QWidget,
     Signal,
 )
-from ..agent.a2a import A2ADispatcher
-from ..agent.a2a.types import ExternalAgentConfig
-from ..agent.turn import TurnEvent, TurnEventType
-
 
 # ---------------------------------------------------------------------------
 # Background worker — runs the dispatcher in a separate thread
@@ -135,13 +132,13 @@ class _HistoryRow:
     """Lightweight record for one delegation row in the history table."""
 
     __slots__ = (
-        "task_id",
         "agent_name",
-        "task_excerpt",
-        "status",
-        "started_at",
-        "result_text",
         "error_text",
+        "result_text",
+        "started_at",
+        "status",
+        "task_excerpt",
+        "task_id",
     )
 
     def __init__(
@@ -220,7 +217,9 @@ class A2ABridgeWidget(QWidget):
         # attach ``SelectionMode`` there (consistent with agent_tree.py
         # and bulk_renamer.py).
         self._agent_list.setSelectionMode(
-            __import__("rikugan.ui.qt_compat", fromlist=["QAbstractItemView"]).QAbstractItemView.SelectionMode.SingleSelection
+            __import__(
+                "rikugan.ui.qt_compat", fromlist=["QAbstractItemView"]
+            ).QAbstractItemView.SelectionMode.SingleSelection
         )
         _safe_connect(self._agent_list, "itemDoubleClicked", self._on_agent_double_clicked)
         layout.addWidget(self._agent_list, 1)
@@ -265,8 +264,7 @@ class A2ABridgeWidget(QWidget):
         # Task text
         self._task_edit = QPlainTextEdit()
         self._task_edit.setPlaceholderText(
-            "Describe what the external agent should do. "
-            "Be specific — the external agent has no Rikugan tool access."
+            "Describe what the external agent should do. Be specific — the external agent has no Rikugan tool access."
         )
         self._task_edit.setMinimumHeight(80)
         layout.addWidget(self._task_edit, 1)
@@ -275,8 +273,7 @@ class A2ABridgeWidget(QWidget):
         opt_row = QHBoxLayout()
         self._include_context_check = QCheckBox("Include current binary context")
         self._include_context_check.setToolTip(
-            "Prepend the binary name, arch, entry point, and current "
-            "function decompilation to the task before sending."
+            "Prepend the binary name, arch, entry point, and current function decompilation to the task before sending."
         )
         opt_row.addWidget(self._include_context_check)
         opt_row.addStretch(1)
@@ -295,16 +292,12 @@ class A2ABridgeWidget(QWidget):
         layout.setSpacing(4)
 
         self._history_table = QTableWidget(0, 5)
-        self._history_table.setHorizontalHeaderLabels(
-            ["Time", "Agent", "Task", "Status", "Result"]
-        )
+        self._history_table.setHorizontalHeaderLabels(["Time", "Agent", "Task", "Status", "Result"])
         # Same QAbstractItemView-via-base-class trick for the
         # ``SelectionBehavior`` and ``EditTrigger`` enums. The qt_stubs
         # only attach them to the base class.
         _abstract = __import__("rikugan.ui.qt_compat", fromlist=["QAbstractItemView"]).QAbstractItemView
-        self._history_table.setSelectionBehavior(
-            _abstract.SelectionBehavior.SelectRows
-        )
+        self._history_table.setSelectionBehavior(_abstract.SelectionBehavior.SelectRows)
         self._history_table.setEditTriggers(_abstract.EditTrigger.NoEditTriggers)
         self._history_table.verticalHeader().setVisible(False)
         # Stretch the Result column so long outputs are readable.
@@ -371,9 +364,7 @@ class A2ABridgeWidget(QWidget):
                 self._target_combo_agents.append(agent)
 
         count = len(agents)
-        self._agent_count_label.setText(
-            f"{count} agent{'s' if count != 1 else ''}"
-        )
+        self._agent_count_label.setText(f"{count} agent{'s' if count != 1 else ''}")
         self._send_btn.setEnabled(count > 0)
 
     def _on_agent_double_clicked(self, item: QListWidgetItem) -> None:
@@ -412,9 +403,7 @@ class A2ABridgeWidget(QWidget):
         count = self._safe_int(getattr(self._target_combo, "count", lambda: 0)(), default=-1)
         if count <= 0:
             return None
-        i = index if index is not None else self._safe_int(
-            self._target_combo.currentIndex(), default=0
-        )
+        i = index if index is not None else self._safe_int(self._target_combo.currentIndex(), default=0)
         if i < 0 or i >= count:
             return None
         try:
@@ -463,6 +452,7 @@ class A2ABridgeWidget(QWidget):
 
         # Build cancel event + thread + worker.
         import threading
+
         cancel_event = threading.Event()
         worker = _A2AWorker(
             self._dispatcher,
@@ -528,6 +518,7 @@ class A2ABridgeWidget(QWidget):
         # formatting is consistent across the app.
         try:
             from .message_widgets import _OutputDialog  # local import to avoid cycle
+
             dlg = _OutputDialog(row.agent_name, row.task_excerpt, row.result_text, self)
             dlg.exec()
             return
@@ -535,6 +526,7 @@ class A2ABridgeWidget(QWidget):
             pass
         try:
             from PySide6.QtWidgets import QMessageBox  # type: ignore[import-not-found]
+
             box = QMessageBox(self)
             box.setWindowTitle(f"{row.agent_name} — output")
             box.setText(row.result_text or row.error_text or "(no output)")
@@ -545,7 +537,6 @@ class A2ABridgeWidget(QWidget):
     def _on_clear_history_clicked(self) -> None:
         """Drop completed/failed rows from the table. In-flight rows stay."""
         for task_id in list(self._history.keys()):
-            row = self._history[task_id]
             if task_id not in self._inflight:
                 del self._history[task_id]
         self._rebuild_history_table()
@@ -568,9 +559,7 @@ class A2ABridgeWidget(QWidget):
         # Update only the result column to avoid scroll jumping.
         row_idx = self._find_row_index(task_id)
         if row_idx >= 0:
-            self._history_table.item(row_idx, 4).setText(
-                self._format_result_excerpt(row.result_text)
-            )
+            self._history_table.item(row_idx, 4).setText(self._format_result_excerpt(row.result_text))
 
     def _on_task_completed(self, task_id: str, _result_text: str) -> None:
         """Task finished successfully."""
@@ -642,6 +631,7 @@ class A2ABridgeWidget(QWidget):
         # break the test.
         try:
             from PySide6.QtGui import QColor  # type: ignore[import-not-found]
+
             if row.status == "completed":
                 status_item.setForeground(QColor("#3fb950"))
             elif row.status == "failed":
@@ -688,7 +678,7 @@ class A2ABridgeWidget(QWidget):
         self._cancel_btn.setEnabled(in_flight)
         self._view_output_btn.setEnabled(task_id in self._history)
 
-    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 (Qt naming)
+    def changeEvent(self, event: QEvent) -> None:
         """Re-render agent list when the host theme flips — keeps colours consistent."""
         if event.type() == QEvent.Type.PaletteChange:
             self._refresh_agents()

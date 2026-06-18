@@ -49,9 +49,7 @@ class ExternalAgentRegistry:
         self.agents = discovered
         return discovered
 
-    def _materialize_a2a_agents(
-        self, specs: list[dict[str, Any]]
-    ) -> list[ExternalAgentConfig]:
+    def _materialize_a2a_agents(self, specs: list[dict[str, Any]]) -> list[ExternalAgentConfig]:
         """Build ExternalAgentConfig objects from in-memory spec dicts.
 
         Each spec must include at minimum ``name`` and ``endpoint``.

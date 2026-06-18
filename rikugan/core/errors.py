@@ -38,18 +38,9 @@ _AUTH_GUIDANCE: dict[str, str] = {
         "configure a key in Rikugan settings, "
         "or run `claude setup-token` for OAuth."
     ),
-    "openai": (
-        "Set the OPENAI_API_KEY environment variable "
-        "or configure a key in Rikugan settings."
-    ),
-    "gemini": (
-        "Set the GOOGLE_API_KEY or GEMINI_API_KEY environment variable "
-        "or configure a key in Rikugan settings."
-    ),
-    "minimax": (
-        "Set the MINIMAX_API_KEY environment variable "
-        "or configure a key in Rikugan settings."
-    ),
+    "openai": ("Set the OPENAI_API_KEY environment variable or configure a key in Rikugan settings."),
+    "gemini": ("Set the GOOGLE_API_KEY or GEMINI_API_KEY environment variable or configure a key in Rikugan settings."),
+    "minimax": ("Set the MINIMAX_API_KEY environment variable or configure a key in Rikugan settings."),
     "ollama": (
         "Ollama does not require an API key. "
         "Ensure the Ollama service is running (default: http://localhost:11434). "
@@ -65,7 +56,9 @@ _AUTH_GUIDANCE: dict[str, str] = {
 
 def _auth_guidance_for(provider: str) -> str:
     """Return provider-specific guidance, or a generic fallback."""
-    return _AUTH_GUIDANCE.get(provider, "Set the API key via the provider's environment variable or in Rikugan settings.")
+    return _AUTH_GUIDANCE.get(
+        provider, "Set the API key via the provider's environment variable or in Rikugan settings."
+    )
 
 
 class AuthenticationError(ProviderError):

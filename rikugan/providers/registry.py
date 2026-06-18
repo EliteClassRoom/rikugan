@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib
 import os
-from typing import Any, Union
+from typing import Any
 
 from ..core.dependencies import get_missing_dependency_warnings
 from ..core.errors import ProviderError
@@ -28,7 +28,7 @@ _BUILTIN_PROVIDER_SPECS: dict[str, str] = {
 
 # Entry is either an import spec string ("module:ClassName") or an
 # already-resolved class (from register()).
-ProviderEntry = Union[str, type[LLMProvider]]
+ProviderEntry = str | type[LLMProvider]
 
 
 class ProviderRegistry:
@@ -56,9 +56,7 @@ class ProviderRegistry:
         """Resolve an entry to its provider class, importing its module if needed."""
         entry = self._providers.get(name)
         if entry is None:
-            raise ProviderError(
-                f"Unknown provider: {name}. Available: {self.list_providers()}"
-            )
+            raise ProviderError(f"Unknown provider: {name}. Available: {self.list_providers()}")
         if isinstance(entry, str):
             mod_path, cls_name = entry.rsplit(":", 1)
             cls = getattr(importlib.import_module(mod_path), cls_name)
@@ -78,6 +76,7 @@ class ProviderRegistry:
             return getattr(self._resolve_entry("minimax"), "DEFAULT_API_BASE", "")
         if name == "ollama":
             from .ollama_provider import DEFAULT_OLLAMA_URL
+
             return os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL)
         return ""
 
@@ -190,10 +189,8 @@ class ProviderRegistry:
         """
         cached = self._instances.get(name)
         if cached is not None:
-            if (
-                api_key == cached.api_key
-                and self._normalized_api_base(name, api_base)
-                == self._normalized_api_base(name, cached.api_base)
+            if api_key == cached.api_key and self._normalized_api_base(name, api_base) == self._normalized_api_base(
+                name, cached.api_base
             ):
                 if model and cached.model != model:
                     cached.model = model

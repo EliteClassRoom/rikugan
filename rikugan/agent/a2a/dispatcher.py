@@ -25,7 +25,6 @@ from .registry import ExternalAgentRegistry
 from .subprocess_bridge import SubprocessBridge
 from .types import A2AEvent, A2ATaskStatus, ExternalAgentConfig
 
-
 # Default cap on how many chars of stdout/event payload to surface to
 # the LLM as a tool result. The full text is stored in session metadata
 # (via the ``text`` field on the final ``completed`` event), but
@@ -37,12 +36,14 @@ _MAX_RESULT_CHARS = 8000
 #: Statuses that mean "no more polling needed" — the task is in a
 #: terminal state and the loop should exit regardless of the elapsed
 #: timer.
-_TERMINAL_TASK_STATUSES = frozenset({
-    A2ATaskStatus.COMPLETED,
-    A2ATaskStatus.FAILED,
-    A2ATaskStatus.CANCELLED,
-    A2ATaskStatus.TIMEOUT,
-})
+_TERMINAL_TASK_STATUSES = frozenset(
+    {
+        A2ATaskStatus.COMPLETED,
+        A2ATaskStatus.FAILED,
+        A2ATaskStatus.CANCELLED,
+        A2ATaskStatus.TIMEOUT,
+    }
+)
 
 
 class A2ADispatcher:
@@ -159,8 +160,7 @@ class A2ADispatcher:
         agent = self._find_agent(agent_name)
         if agent is None:
             yield TurnEvent.error_event(
-                f"External agent '{agent_name}' not found. "
-                f"Available: {', '.join(a.name for a in agents) or '(none)'}"
+                f"External agent '{agent_name}' not found. Available: {', '.join(a.name for a in agents) or '(none)'}"
             )
             return ""
 
@@ -178,9 +178,7 @@ class A2ADispatcher:
         if agent.transport == "a2a":
             return (yield from self._run_a2a(agent, full_task, cancel_event))
 
-        yield TurnEvent.error_event(
-            f"Agent '{agent.name}' has unknown transport: {agent.transport!r}"
-        )
+        yield TurnEvent.error_event(f"Agent '{agent.name}' has unknown transport: {agent.transport!r}")
         return ""
 
     # -- Transport implementations ------------------------------------------
@@ -279,9 +277,7 @@ class A2ADispatcher:
                 break
             if elapsed >= self._timeout:
                 a2a_client.cancel_task(a2a_task.id)
-                yield TurnEvent.error_event(
-                    f"A2A task {a2a_task.id} timed out after {self._timeout}s"
-                )
+                yield TurnEvent.error_event(f"A2A task {a2a_task.id} timed out after {self._timeout}s")
                 return ""
             # wait_event.wait() returns True if set during the wait,
             # False on timeout. Either way we re-check status.
@@ -305,9 +301,7 @@ class A2ADispatcher:
     # -- Helpers ------------------------------------------------------------
 
     @staticmethod
-    def _translate_subprocess_event(
-        agent: ExternalAgentConfig, event: A2AEvent
-    ) -> str | None:
+    def _translate_subprocess_event(agent: ExternalAgentConfig, event: A2AEvent) -> str | None:
         """Map a SubprocessBridge event to user-facing text.
 
         Returns None for events that should not be surfaced (cancelled
@@ -328,10 +322,7 @@ class A2ADispatcher:
         """Cap returned text to keep the LLM context window healthy."""
         if len(text) <= _MAX_RESULT_CHARS:
             return text
-        return (
-            text[:_MAX_RESULT_CHARS]
-            + f"\n\n[...{len(text) - _MAX_RESULT_CHARS} chars truncated...]"
-        )
+        return text[:_MAX_RESULT_CHARS] + f"\n\n[...{len(text) - _MAX_RESULT_CHARS} chars truncated...]"
 
 
 __all__ = ["A2ADispatcher"]

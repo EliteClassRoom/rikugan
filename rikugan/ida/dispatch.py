@@ -193,8 +193,7 @@ class IdaHeadlessDispatcher:
                 if job.cancel():
                     # Job was still QUEUED — safe to cancel.
                     job.exception = DispatcherTimeoutError(
-                        f"IDA dispatcher job timed out after "
-                        f"{_DEFAULT_JOB_TIMEOUT:.0f}s"
+                        f"IDA dispatcher job timed out after {_DEFAULT_JOB_TIMEOUT:.0f}s"
                     )
                     job.event.set()
                 else:
@@ -208,9 +207,7 @@ class IdaHeadlessDispatcher:
 
             if finished:
                 if self._shutdown.is_set() and job.exception is None:
-                    raise DispatcherShutdownError(
-                        "Dispatcher shut down while waiting for job"
-                    )
+                    raise DispatcherShutdownError("Dispatcher shut down while waiting for job")
 
                 if job.exception is not None:
                     raise job.exception

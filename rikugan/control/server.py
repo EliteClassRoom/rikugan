@@ -313,9 +313,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _send(
-        self, status: int, headers: dict[str, str], body: str
-    ) -> None:
+    def _send(self, status: int, headers: dict[str, str], body: str) -> None:
         self.send_response(status)
         for k, v in headers.items():
             self.send_header(k, v)
@@ -477,9 +475,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self._send(*make_error_json("Server is shutting down", status=503))
                 return
             if not self._state.is_idle:
-                self._send(
-                    *make_error_json("A run is already in progress", status=409)
-                )
+                self._send(*make_error_json("A run is already in progress", status=409))
                 return
 
             run_id = uuid.uuid4().hex[:8]
@@ -599,11 +595,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         has_approved = "approved" in body
 
         if has_decision and has_approved:
-            self._send(
-                *make_error_json(
-                    "Use 'decision' or 'approved', not both", status=400
-                )
-            )
+            self._send(*make_error_json("Use 'decision' or 'approved', not both", status=400))
             return
 
         if has_decision:
@@ -615,8 +607,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             ):
                 self._send(
                     *make_error_json(
-                        "Invalid 'decision' value. "
-                        "Use one of: allow, allow_all, deny",
+                        "Invalid 'decision' value. Use one of: allow, allow_all, deny",
                         status=400,
                     )
                 )
@@ -635,9 +626,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         else:
             self._send(
                 *make_error_json(
-                    "Missing decision field. "
-                    "Send {'decision': 'allow|allow_all|deny'} "
-                    "or {'approved': true|false}",
+                    "Missing decision field. Send {'decision': 'allow|allow_all|deny'} or {'approved': true|false}",
                     status=400,
                 )
             )
@@ -657,9 +646,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             runner.agent_loop.submit_tool_approval(decision)
         except Exception:
             logger.exception("submit_tool_approval RPC failed")
-            self._send(
-                *make_error_json("Failed to submit tool approval", status=500)
-            )
+            self._send(*make_error_json("Failed to submit tool approval", status=500))
             return
 
         self._send(*make_json_response({"status": "ok"}))
@@ -677,11 +664,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         has_approved = "approved" in body
 
         if has_decision and has_approved:
-            self._send(
-                *make_error_json(
-                    "Use 'decision' or 'approved', not both", status=400
-                )
-            )
+            self._send(*make_error_json("Use 'decision' or 'approved', not both", status=400))
             return
 
         if has_decision:
@@ -692,8 +675,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             ):
                 self._send(
                     *make_error_json(
-                        "Invalid 'decision' value. "
-                        "Use 'approve' or 'deny'.",
+                        "Invalid 'decision' value. Use 'approve' or 'deny'.",
                         status=400,
                     )
                 )
@@ -712,9 +694,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         else:
             self._send(
                 *make_error_json(
-                    "Missing decision field. "
-                    "Send {'decision': 'approve|deny'} "
-                    "or {'approved': true|false}",
+                    "Missing decision field. Send {'decision': 'approve|deny'} or {'approved': true|false}",
                     status=400,
                 )
             )
@@ -781,9 +761,9 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self._send(*err)
                 return
             if run is None:
-                self._send(*make_json_response(
-                    {"events": [], "index": 0, "finished": True,
-                     "exit_code": 0, "final_text": ""}))
+                self._send(
+                    *make_json_response({"events": [], "index": 0, "finished": True, "exit_code": 0, "final_text": ""})
+                )
                 return
 
         # Long-poll: wait for new events or run completion.
@@ -796,13 +776,9 @@ class ControlHandler(BaseHTTPRequestHandler):
                     if requested_run_id is not None:
                         if run_s is None or run_s.run_id != requested_run_id:
                             break
-                    if run_s is not None and (
-                        run_s.next_seq > from_index or run_s.finished
-                    ):
+                    if run_s is not None and (run_s.next_seq > from_index or run_s.finished):
                         break
-                    self._state.condition.wait(
-                        timeout=min(1.0, deadline - time.monotonic())
-                    )
+                    self._state.condition.wait(timeout=min(1.0, deadline - time.monotonic()))
 
         with self._state.lock:
             run_state = self._state.run
@@ -866,9 +842,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         """Cancel active run, stop broker/HTTP server, notify bootstrap."""
         with self._state.lock:
             if self._state.shutting_down:
-                self._send(
-                    *make_json_response({"status": "already_shutting_down"})
-                )
+                self._send(*make_json_response({"status": "already_shutting_down"}))
                 return
             self._state.shutting_down = True
             run_state = self._state.run
@@ -970,10 +944,9 @@ class ControlServer:
         # Validate token format if provided.
         if token is not None:
             import re
+
             if not re.fullmatch(r"[0-9a-fA-F]{64}", token):
-                raise ValueError(
-                    "Server token must be 64 hex characters."
-                )
+                raise ValueError("Server token must be 64 hex characters.")
 
         self._controller = controller
         self._host = host
@@ -1015,9 +988,7 @@ class ControlServer:
         pumping the dispatcher and detecting shutdown.
         """
         handler_cls = _make_handler(self._state, self._controller)
-        self._httpd = ThreadingHTTPServer(
-            (self._host, self._port), handler_cls
-        )
+        self._httpd = ThreadingHTTPServer((self._host, self._port), handler_cls)
         self._port = self._httpd.server_port
 
         # Wire the shutdown callback so /shutdown can stop the server.

@@ -261,17 +261,13 @@ class RikuganPanel(idaapi.PluginForm):
             # ``is_dark_theme()``/``is_host_theme()``-aware style
             # getters; the new ``ThemeManager.tokens()`` derives its
             # own value.
-            self._core.set_theme(
-                "auto", effective_theme="dark" if is_dark else "light"
-            )
+            self._core.set_theme("auto", effective_theme="dark" if is_dark else "light")
         else:
             # config_theme == "ida" (or any non-dark/light value):
             # tell the core to use the host's Qt theme.  Inline-styled
             # widgets get the helper palette so action buttons render
             # with the right contrast in a dark IDA.
-            self._core.set_theme(
-                "ida", effective_theme="dark" if is_dark else "light"
-            )
+            self._core.set_theme("ida", effective_theme="dark" if is_dark else "light")
         set_code_block_theme(
             bg=_rgb_to_hex(c["code_block_bg"]),
             border=_rgb_to_hex(c["code_block_border"]),
@@ -440,6 +436,7 @@ class RikuganPanel(idaapi.PluginForm):
         if config_theme not in ("auto", "ida"):
             return  # bundled-constant mode — no need to poll
         try:
+            from rikugan.ui.theme.manager import ThemeManager
             from rikugan.ui.theme.tokens import ThemeMode
             from rikugan.ui.theme.watcher import IDAThemeWatcher
 
@@ -457,9 +454,7 @@ class RikuganPanel(idaapi.PluginForm):
             # Watcher is best-effort — never block panel creation on it.
             import traceback
 
-            ida_kernwin.msg(
-                f"[Rikugan] ThemeWatcher init failed: {type(e).__name__}: {e}\n"
-            )
+            ida_kernwin.msg(f"[Rikugan] ThemeWatcher init failed: {type(e).__name__}: {e}\n")
             self._theme_watcher = None
 
     def _apply_font_override(self) -> None:

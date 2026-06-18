@@ -105,11 +105,10 @@ def _safe_note_path(notes_dir: str, genre: str, title: str) -> str:
     # Containment check: the resolved candidate must be inside notes_root.
     try:
         candidate.relative_to(notes_root)
-    except ValueError:
+    except ValueError as e:
         raise ValueError(
-            f"Path traversal blocked: genre='{genre}', title='{title}' "
-            f"resolves outside notes directory"
-        )
+            f"Path traversal blocked: genre='{genre}', title='{title}' resolves outside notes directory"
+        ) from e
 
     return str(candidate)
 

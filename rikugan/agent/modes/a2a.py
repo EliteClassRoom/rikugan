@@ -23,15 +23,15 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import TYPE_CHECKING
 
-from ..turn import TurnEvent, TurnEventType
 from ..a2a import A2ADispatcher
+from ..turn import TurnEvent, TurnEventType
 
 if TYPE_CHECKING:
     from ..loop import AgentLoop
 
 
 def run_a2a_mode(
-    loop: "AgentLoop",
+    loop: AgentLoop,
     user_message: str,
     system_prompt: str,
     tools_schema: list,
@@ -54,24 +54,14 @@ def run_a2a_mode(
     """
     parts = user_message.split(maxsplit=1)
     if len(parts) < 2:
-        yield TurnEvent.error_event(
-            "Usage: /a2a <agent> <message>\n"
-            "Example: /a2a claude \"summarize the main function\""
-        )
-        yield TurnEvent.text_done(
-            "Usage: /a2a <agent> <message>\n"
-            "Example: /a2a claude \"summarize the main function\""
-        )
+        yield TurnEvent.error_event('Usage: /a2a <agent> <message>\nExample: /a2a claude "summarize the main function"')
+        yield TurnEvent.text_done('Usage: /a2a <agent> <message>\nExample: /a2a claude "summarize the main function"')
         return
 
     agent_name, task_text = parts[0].strip(), parts[1].strip()
     if not agent_name or not task_text:
-        yield TurnEvent.error_event(
-            "Both agent name and message are required for /a2a."
-        )
-        yield TurnEvent.text_done(
-            "Both agent name and message are required for /a2a."
-        )
+        yield TurnEvent.error_event("Both agent name and message are required for /a2a.")
+        yield TurnEvent.text_done("Both agent name and message are required for /a2a.")
         return
 
     # Build dispatcher using the same config the pseudo-tool
@@ -92,7 +82,6 @@ def run_a2a_mode(
     )
 
     collected_text = ""
-    is_error = False
     try:
         for event in dispatcher.run_task(
             agent_name,
@@ -103,11 +92,9 @@ def run_a2a_mode(
                 collected_text += event.text or ""
                 yield event
             elif event.type == TurnEventType.ERROR:
-                is_error = True
                 collected_text += event.error or "External agent error"
                 yield event
     except Exception as e:
-        is_error = True
         collected_text += f"\nDispatcher exception: {e}"
         yield TurnEvent.error_event(f"Dispatcher exception: {e}")
 

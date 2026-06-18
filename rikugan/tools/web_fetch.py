@@ -13,11 +13,14 @@ import ipaddress
 import re
 import socket
 import urllib.parse
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from ..core.errors import ToolError
 from ..core.logging import log_debug
 from .base import tool
+
+if TYPE_CHECKING:
+    import requests
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -94,7 +97,7 @@ def _resolve_hostsafe(host: str) -> tuple[bool, str]:
 def _fetch_with_safe_redirects(
     url: str,
     headers: dict[str, str],
-) -> "requests.Response":
+) -> requests.Response:
     """Perform the HTTP request, validating every redirect hop for safety.
 
     Raises ToolError on unsafe redirects, HTTP errors, or timeouts.
@@ -220,7 +223,7 @@ def _html_to_markdown(html_content: str, url: str) -> str:
     global _HAS_HTML2TEXT
     if _HAS_HTML2TEXT is None:
         try:
-            import html2text as _h2t  # noqa: F811
+            import html2text  # probe only; real use is below
 
             _HAS_HTML2TEXT = True
         except ImportError:

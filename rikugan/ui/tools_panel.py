@@ -69,6 +69,7 @@ class ToolsPanel(QWidget):
         # before panel_core wires it in.
         try:
             from .a2a_widget import A2ABridgeWidget
+
             self._a2a_widget = A2ABridgeWidget(self)
         except Exception:
             self._a2a_widget = QLabel("A2A bridge unavailable")

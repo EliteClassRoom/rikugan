@@ -144,10 +144,7 @@ def run_prompt(
                 detail = event.type.value
                 if event.tool_name:
                     detail = f"{detail} ({event.tool_name})"
-                errors.append(
-                    f"Approval required for {detail} — "
-                    f"auto-denied in one-shot mode"
-                )
+                errors.append(f"Approval required for {detail} — auto-denied in one-shot mode")
                 if exit_code in (EXIT_SUCCESS, EXIT_TOOL_FAILURE):
                     exit_code = EXIT_APPROVAL_REQUIRED
                 # Unblock the agent so it does not hang on approval queues.

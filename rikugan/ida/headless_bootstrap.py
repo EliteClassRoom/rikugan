@@ -162,14 +162,11 @@ def _run_one_shot(controller, dispatcher, config: dict) -> None:
 
     def _do_prompt() -> None:
         try:
-            result_holder.append(
-                run_prompt(controller, prompt, json_events=bool(output_file or json_output))
-            )
+            result_holder.append(run_prompt(controller, prompt, json_events=bool(output_file or json_output)))
         except Exception as exc:
             import traceback
-            error_holder.append(
-                f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
-            )
+
+            error_holder.append(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
 
     t = threading.Thread(target=_do_prompt, daemon=True)
     t.start()
@@ -299,8 +296,7 @@ def main() -> None:
         if not mode:
             _clean_exit_ida(
                 2,
-                "No bootstrap config found. Set RIKUGAN_HEADLESS_BOOTSTRAP env var "
-                "or use rikugan-headless CLI.",
+                "No bootstrap config found. Set RIKUGAN_HEADLESS_BOOTSTRAP env var or use rikugan-headless CLI.",
             )
         config = {"mode": mode, "prompt": prompt}
 

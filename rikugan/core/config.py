@@ -357,10 +357,7 @@ class RikuganConfig:
         builtins = sorted(_BUILTIN_PROVIDER_NAMES)
         customs = sorted(self.custom_providers.keys())
         known = builtins + customs
-        return (
-            f"Unknown provider: '{name}'. "
-            f"Available providers: {', '.join(known)}"
-        )
+        return f"Unknown provider: '{name}'. Available providers: {', '.join(known)}"
 
     @classmethod
     def load_or_create(cls) -> RikuganConfig:

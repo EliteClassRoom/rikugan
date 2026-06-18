@@ -97,6 +97,7 @@ class MCPManager:
         if enabled_configs:
             try:
                 from .client import reset_mcp_sdk_probe
+
                 reset_mcp_sdk_probe()
             except Exception as exc:
                 log_warning(f"MCP: failed to reset SDK probe before server start: {exc}")
@@ -110,7 +111,6 @@ class MCPManager:
             configs = [c for c in self._configs if c.enabled]
 
         for config in configs:
-
             thread = threading.Thread(
                 target=self._start_one,
                 args=(config, registry, on_complete, gen),

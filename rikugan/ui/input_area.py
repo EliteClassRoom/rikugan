@@ -30,7 +30,7 @@ def _skill_popup_style() -> str:
         f"border-radius: 4px; padding: 2px; }}"
         f"QLabel {{ color: {t.text}; padding: 3px 8px; }}"
         f'QLabel[selected="true"] {{ background: {t.highlight};'
-        f' border-radius: 3px; font-weight: bold; }}'
+        f" border-radius: 3px; font-weight: bold; }}"
     )
 
 

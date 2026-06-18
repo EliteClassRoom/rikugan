@@ -79,12 +79,14 @@ def _enumerate_all_functions(
         func = ida_funcs.get_func(ea)
         if func is not None:
             size_bytes = func.end_ea - func.start_ea
-        funcs.append({
-            "address": ea,
-            "name": name,
-            "is_import": is_import,
-            "size_bytes": size_bytes,
-        })
+        funcs.append(
+            {
+                "address": ea,
+                "name": name,
+                "is_import": is_import,
+                "size_bytes": size_bytes,
+            }
+        )
     return funcs
 
 

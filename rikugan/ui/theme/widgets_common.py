@@ -257,12 +257,10 @@ ERR_STATUS_STYLE = {
 # History navigation strip styles (used by paginated restore in chat_view)
 HISTORY_NAV_FRAME_STYLE = {
     "dark": (
-        "QFrame#history_nav { background: #252526; border: 1px solid #3c3c3c; "
-        "border-radius: 4px; padding: 2px 4px; }"
+        "QFrame#history_nav { background: #252526; border: 1px solid #3c3c3c; border-radius: 4px; padding: 2px 4px; }"
     ),
     "light": (
-        "QFrame#history_nav { background: #e8e0d8; border: 1px solid #d2c9c4; "
-        "border-radius: 4px; padding: 2px 4px; }"
+        "QFrame#history_nav { background: #e8e0d8; border: 1px solid #d2c9c4; border-radius: 4px; padding: 2px 4px; }"
     ),
 }
 

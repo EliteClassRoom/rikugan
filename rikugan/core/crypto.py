@@ -19,6 +19,7 @@ import base64
 import importlib.util
 import json
 import os
+from typing import Any
 
 _VERIFY_SENTINEL = "rikugan-encryption-v1"
 _PBKDF2_ITERATIONS = 600_000
@@ -33,7 +34,7 @@ def is_available() -> bool:
     return importlib.util.find_spec("cryptography") is not None
 
 
-def _load_crypto_primitives():
+def _load_crypto_primitives() -> tuple[Any, Any, Any, Any]:
     """Import the heavy crypto primitives on first use.
 
     Returns the tuple ``(AESGCM, SHA256, PBKDF2HMAC, InvalidTag)`` so

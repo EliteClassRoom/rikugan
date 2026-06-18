@@ -76,7 +76,7 @@ def _get_log_debug() -> Any:
 class _PhaseRecord:
     """A single timing record for a named phase."""
 
-    __slots__ = ("label", "start_ns", "end_ns", "meta")
+    __slots__ = ("end_ns", "label", "meta", "start_ns")
 
     def __init__(self, label: str, start_ns: int, end_ns: int, meta: dict[str, Any] | None = None) -> None:
         self.label = label
@@ -217,9 +217,7 @@ class _StartupSession:
             # Total elapsed since session start
             if base_ns is not None:
                 total_ms = (time.perf_counter_ns() - base_ns) / 1_000_000.0
-                log_debug_fn(
-                    f"=== Startup timing: {len(sorted_records)} phases, {total_ms:.0f}ms total ==="
-                )
+                log_debug_fn(f"=== Startup timing: {len(sorted_records)} phases, {total_ms:.0f}ms total ===")
         except Exception as e:
             import sys
 

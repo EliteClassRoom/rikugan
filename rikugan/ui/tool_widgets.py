@@ -73,13 +73,7 @@ def _tool_card_css(
     t = ThemeManager.instance().tokens()
     border = accent or _tool_border(t)
     bg = background or _tool_bg(t)
-    return (
-        f"QFrame#{object_name} {{"
-        f" background-color: {bg};"
-        f" border: 1px solid {border};"
-        f" border-radius: {radius}px;"
-        f"}}"
-    )
+    return f"QFrame#{object_name} {{ background-color: {bg}; border: 1px solid {border}; border-radius: {radius}px;}}"
 
 
 # ---------------------------------------------------------------------------

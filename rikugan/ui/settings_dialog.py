@@ -658,6 +658,7 @@ class SettingsDialog(QDialog):
             # distinguish the two and the *effective* palette is
             # decided by the live QApplication.
             from .styles import set_current_theme
+
             legacy_value = "ida" if mode in (ThemeMode.IDA_NATIVE, ThemeMode.AUTO) else mode.value
             set_current_theme(legacy_value)
             # Persist on ``config.theme`` — the canonical RikuganConfig

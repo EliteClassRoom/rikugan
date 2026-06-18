@@ -153,7 +153,9 @@ class TestCodexRequestPayload(unittest.TestCase):
     def test_omits_generation_knobs_and_empty_tool_fields(self):
         provider = CodexProvider(model="gpt-5-codex")
 
-        kwargs = provider._build_request_kwargs([Message(role=Role.USER, content="hi")], tools=None, system="")
+        kwargs = provider._build_request_kwargs(
+            [Message(role=Role.USER, content="hi")], tools=None, temperature=0.7, max_tokens=1024, system=""
+        )
 
         self.assertNotIn("temperature", kwargs)
         self.assertNotIn("max_output_tokens", kwargs)
@@ -175,7 +177,9 @@ class TestCodexRequestPayload(unittest.TestCase):
             }
         ]
 
-        kwargs = provider._build_request_kwargs([Message(role=Role.USER, content="hi")], tools=tools, system="sys")
+        kwargs = provider._build_request_kwargs(
+            [Message(role=Role.USER, content="hi")], tools=tools, temperature=0.7, max_tokens=1024, system="sys"
+        )
 
         self.assertEqual(kwargs["instructions"], "sys")
         self.assertEqual(kwargs["tool_choice"], "auto")

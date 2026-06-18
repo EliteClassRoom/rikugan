@@ -12,6 +12,7 @@ first imported.  This keeps auth_cache import cheap.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 
 _cached_oauth: tuple[str, str] | None = None  # (token, auth_type)
 _keychain_consent: bool = False  # set by UI after user accepts OAuth risk
@@ -19,7 +20,7 @@ _consent_generation: int = 0  # bumped on every consent change or cache invalida
 _lock = threading.Lock()  # guards the four globals above
 
 
-def _get_resolver():
+def _get_resolver() -> Callable[..., tuple[str, str]]:
     """Lazily import and return resolve_anthropic_auth."""
     from .anthropic_provider import resolve_anthropic_auth
 

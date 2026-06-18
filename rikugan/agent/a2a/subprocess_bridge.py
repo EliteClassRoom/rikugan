@@ -37,8 +37,7 @@ def _validate_task(task: str) -> None:
         raise ValueError("SubprocessBridge task is empty")
     if task.startswith("-"):
         raise ValueError(
-            f"SubprocessBridge task starts with '-', refusing to pass to subprocess "
-            f"as a CLI flag: {task[:80]!r}"
+            f"SubprocessBridge task starts with '-', refusing to pass to subprocess as a CLI flag: {task[:80]!r}"
         )
 
 
@@ -109,6 +108,7 @@ class SubprocessBridge:
         # even when the subprocess is blocked on I/O and never
         # produces a line.
         stdout_queue: queue.Queue[str | None] = queue.Queue()
+
         # ``None`` is the sentinel: thread enqueues ``None`` after
         # stdout closes (process exited) to wake the main loop.
         def _drain_stdout() -> None:
@@ -138,9 +138,7 @@ class SubprocessBridge:
 
             # Spawn the drain thread. ``daemon=True`` so the test
             # process can exit even if the bridge hangs.
-            reader_thread = threading.Thread(
-                target=_drain_stdout, daemon=True
-            )
+            reader_thread = threading.Thread(target=_drain_stdout, daemon=True)
             reader_thread.start()
 
             deadline = time.monotonic() + timeout
@@ -156,9 +154,7 @@ class SubprocessBridge:
                     if proc.poll() is None:
                         proc.kill()
                     cancelled = True  # treat timeout as cancellation
-                    yield A2AEvent(
-                        type="error", text=f"Timeout after {timeout}s"
-                    )
+                    yield A2AEvent(type="error", text=f"Timeout after {timeout}s")
                     break
                 try:
                     line = stdout_queue.get(timeout=0.1)

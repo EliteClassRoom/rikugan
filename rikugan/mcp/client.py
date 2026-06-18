@@ -26,7 +26,7 @@ def _check_mcp_sdk() -> bool:
     global _HAS_MCP
     if _HAS_MCP is None:
         try:
-            import mcp  # noqa: F401
+            import mcp
             import mcp.client.stdio  # noqa: F401
 
             _HAS_MCP = True

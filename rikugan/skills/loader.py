@@ -139,7 +139,7 @@ def _read_frontmatter_only(md_path: str) -> str:
                 return ""
             if not line.lstrip("\ufeff").startswith("---"):
                 return ""
-            lines = []
+            lines: list[str] = []
             for line in f:
                 if line.strip() == "---":
                     return "\n".join(lines)

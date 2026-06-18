@@ -163,9 +163,7 @@ class SessionHistory:
                 try:
                     self._write_manifest(entries, last_full_scan=last_full_scan)
                 except OSError as write_err:
-                    log_warning(
-                        f"Failed to update session manifest after saving {session.id}: {write_err}"
-                    )
+                    log_warning(f"Failed to update session manifest after saving {session.id}: {write_err}")
         except Exception as e:
             log_warning(f"Failed to update session manifest entry for {session.id}: {e}")
 
@@ -180,9 +178,7 @@ class SessionHistory:
                 try:
                     self._write_manifest(entries, last_full_scan=last_full_scan)
                 except OSError as write_err:
-                    log_warning(
-                        f"Failed to write session manifest after removing {session_id}: {write_err}"
-                    )
+                    log_warning(f"Failed to write session manifest after removing {session_id}: {write_err}")
 
     def _validate_manifest_entry(self, session_id: str, entry: dict[str, Any]) -> bool:
         """Check that the session file on disk matches the manifest entry.
@@ -363,9 +359,7 @@ class SessionHistory:
                 json_ids = {
                     fname[:-5]
                     for fname in os.listdir(self._dir)
-                    if fname.endswith(".json")
-                    and fname != MANIFEST_FILE
-                    and not fname.endswith(_SUMMARY_SUFFIX)
+                    if fname.endswith(".json") and fname != MANIFEST_FILE and not fname.endswith(_SUMMARY_SUFFIX)
                 }
             except OSError as scan_err:
                 log_warning(f"Failed to scan sessions directory for manifest validation: {scan_err}")
@@ -397,16 +391,18 @@ class SessionHistory:
                 manifest_misses += 1
                 continue
 
-            sessions.append({
-                "id": sid,
-                "created_at": entry.get("created_at", 0),
-                "provider": entry.get("provider", ""),
-                "model": entry.get("model", ""),
-                "idb_path": entry.get("idb_path", ""),
-                "db_instance_id": entry.get("db_instance_id", ""),
-                "messages": entry.get("messages", 0),
-                "description": entry.get("description", ""),
-            })
+            sessions.append(
+                {
+                    "id": sid,
+                    "created_at": entry.get("created_at", 0),
+                    "provider": entry.get("provider", ""),
+                    "model": entry.get("model", ""),
+                    "idb_path": entry.get("idb_path", ""),
+                    "db_instance_id": entry.get("db_instance_id", ""),
+                    "messages": entry.get("messages", 0),
+                    "description": entry.get("description", ""),
+                }
+            )
 
         # If many entries are stale, rebuild once and re-filter
         # in this same call — no recursion.
@@ -429,16 +425,18 @@ class SessionHistory:
                         continue
                 if not self._validate_manifest_entry(sid, entry):
                     continue
-                sessions.append({
-                    "id": sid,
-                    "created_at": entry.get("created_at", 0),
-                    "provider": entry.get("provider", ""),
-                    "model": entry.get("model", ""),
-                    "idb_path": entry.get("idb_path", ""),
-                    "db_instance_id": entry.get("db_instance_id", ""),
-                    "messages": entry.get("messages", 0),
-                    "description": entry.get("description", ""),
-                })
+                sessions.append(
+                    {
+                        "id": sid,
+                        "created_at": entry.get("created_at", 0),
+                        "provider": entry.get("provider", ""),
+                        "model": entry.get("model", ""),
+                        "idb_path": entry.get("idb_path", ""),
+                        "db_instance_id": entry.get("db_instance_id", ""),
+                        "messages": entry.get("messages", 0),
+                        "description": entry.get("description", ""),
+                    }
+                )
 
         if sessions:
             sessions.sort(key=lambda s: s.get("created_at", 0))

@@ -433,9 +433,7 @@ class BulkRenamerEngine:
             max_workers=self._max_workers,
             thread_name_prefix="rikugan-quick-rename",
         ) as executor:
-            futures = [
-                executor.submit(self._quick_run_one_batch, sub, state) for sub in sub_batches
-            ]
+            futures = [executor.submit(self._quick_run_one_batch, sub, state) for sub in sub_batches]
             for future in futures:
                 try:
                     future.result()
@@ -455,9 +453,7 @@ class BulkRenamerEngine:
         )
         log_info("Bulk renamer quick mode finished")
 
-    def _quick_decompile_jobs(
-        self, pending: list[RenameJob]
-    ) -> list[tuple[RenameJob, str]]:
+    def _quick_decompile_jobs(self, pending: list[RenameJob]) -> list[tuple[RenameJob, str]]:
         """Phase 1: decompile each pending job into a ``(job, part_text)`` tuple.
 
         Jobs whose ``decompiled_code`` was already populated by
@@ -532,9 +528,7 @@ class BulkRenamerEngine:
             part = part[: BulkRenamerEngine._MAX_FUNC_CHARS] + "\n// ... (truncated)\n"
         return part
 
-    def _quick_split_batches(
-        self, decompiled: list[tuple[RenameJob, str]]
-    ) -> list[list[tuple[RenameJob, str]]]:
+    def _quick_split_batches(self, decompiled: list[tuple[RenameJob, str]]) -> list[list[tuple[RenameJob, str]]]:
         """Phase 2: bin-pack decompiled jobs into context-window-sized sub-batches.
 
         Starts a new sub-batch whenever adding the next part would exceed
@@ -959,7 +953,6 @@ class BulkRenamerEngine:
                 total=state.total,
             )
         )
-
 
     def _update_mgr_agent(
         self,

@@ -1618,11 +1618,11 @@ def build_skill_popup_stylesheet(tokens: object) -> str:
         f"QFrame#skill_popup QLabel {{"
         f" background: transparent; color: {text}; padding: 3px 8px;"
         f"}}"
-        f"QFrame#skill_popup QLabel[selected=\"true\"] {{"
+        f'QFrame#skill_popup QLabel[selected="true"] {{'
         f" background-color: {highlight}; color: {highlight_text};"
         f" border-radius: 3px;"
         f"}}"
-        f"QFrame#skill_popup QLabel[selected=\"false\"] {{"
+        f'QFrame#skill_popup QLabel[selected="false"] {{'
         f" background-color: {alt_base}; color: {text};"
         f"}}"
     )

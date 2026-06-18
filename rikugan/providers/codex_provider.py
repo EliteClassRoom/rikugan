@@ -256,7 +256,7 @@ def codex_auth_status() -> tuple[str, str]:
 class CodexProvider(LLMProvider):
     """Adapter for Codex-backed ChatGPT OAuth sessions."""
 
-    def __init__(self, api_key: str = "", api_base: str = "", model: str = "gpt-5.4", **kwargs):
+    def __init__(self, api_key: str = "", api_base: str = "", model: str = "gpt-5.4", **kwargs: Any):
         super().__init__(api_key=api_key, api_base=api_base or CODEX_BASE_URL, model=model)
         self._auth: dict[str, Any] = {}
 
@@ -474,8 +474,14 @@ class CodexProvider(LLMProvider):
         self,
         messages: list[Message],
         tools: list[dict[str, Any]] | None,
+        temperature: float,
+        max_tokens: int,
         system: str,
     ) -> dict[str, Any]:
+        # Codex/ChatGPT OAuth sessions do not support temperature/max_tokens
+        # overrides (server-side defaults apply), so these are accepted to
+        # satisfy the LLMProvider contract but intentionally unused.
+        del temperature, max_tokens
         kwargs: dict[str, Any] = {
             "model": self.model,
             "input": self._format_messages(messages),
@@ -592,8 +598,7 @@ class CodexProvider(LLMProvider):
         response_ready.set()
 
         try:
-            with self._track_request_handle(response):
-                yield from self._iter_sse(response)
+            yield from self._iter_sse(response)
         except Exception as e:
             if cancel_event is not None and cancel_event.is_set():
                 log_debug(f"CodexProvider stream closed by cancel: {e}")

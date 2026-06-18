@@ -11,6 +11,7 @@ from typing import Any
 
 try:
     from PySide6.QtGui import QPalette  # type: ignore[import-not-found]
+
     _HAS_QT = True
 except ImportError:  # pragma: no cover
     QPalette = None  # type: ignore[assignment]

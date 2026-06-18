@@ -74,7 +74,7 @@ def _find_ida(ida_path: str | None = None) -> str:
         candidates.append(env_path)
 
     if sys.platform == "win32":
-        exe_name = "idat.exe"      # IDA 9.x text-mode binary (headless)
+        exe_name = "idat.exe"  # IDA 9.x text-mode binary (headless)
         legacy_name = "idat64.exe"  # pre-9.x 64-bit text-mode (legacy)
     elif sys.platform == "darwin":
         exe_name = "idat"
@@ -240,7 +240,9 @@ def _launch_ida_ask(
     # Fallback
     return {
         "exit_code": max(proc.returncode, 3),
-        "errors": [f"Could not parse output (rc={proc.returncode}). stderr: {proc.stderr[:1000] if proc.stderr else ''}"],
+        "errors": [
+            f"Could not parse output (rc={proc.returncode}). stderr: {proc.stderr[:1000] if proc.stderr else ''}"
+        ],
     }
 
 
@@ -270,9 +272,7 @@ def _launch_ida_serve(
     # Create an internal ready file if the user didn't provide one.
     internal_ready_file: str | None = None
     if not ready_file:
-        rfd, internal_ready_file = tempfile.mkstemp(
-            suffix=".json", prefix="rikugan_ready_"
-        )
+        rfd, internal_ready_file = tempfile.mkstemp(suffix=".json", prefix="rikugan_ready_")
         os.close(rfd)
         # Re-open cfg to add the ready_file field.
         bootstrap_cfg["ready_file"] = internal_ready_file
@@ -442,9 +442,7 @@ def _http_get(url: str, token: str) -> dict:
     Network errors, non-2xx responses, invalid JSON, and non-object JSON
     all produce a truthy ``{"error": True, ...}`` result.
     """
-    req = urllib.request.Request(
-        url, headers={"Authorization": f"Bearer {token}"}
-    )
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return _decode_json_response(resp.read())
@@ -524,9 +522,10 @@ def cmd_serve(args: argparse.Namespace) -> None:
     # Validate token format: must be 64 hex characters if provided.
     if args.token:
         import re
+
         if not re.fullmatch(r"[0-9a-fA-F]{64}", args.token):
             print("ERROR: --token must be 64 hex characters.", file=sys.stderr)
-            print("  Example: python -c \"import secrets; print(secrets.token_hex(32))\"", file=sys.stderr)
+            print('  Example: python -c "import secrets; print(secrets.token_hex(32))"', file=sys.stderr)
             sys.exit(2)
 
     ready_file = os.path.abspath(args.ready_file) if args.ready_file else None
@@ -547,8 +546,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
     if args.api_base:
         bootstrap_cfg["api_base"] = args.api_base
 
-    ready = _launch_ida_serve(ida_exe, binary, bootstrap_cfg, ready_file=ready_file,
-                              ready_timeout=args.ready_timeout)
+    ready = _launch_ida_serve(ida_exe, binary, bootstrap_cfg, ready_file=ready_file, ready_timeout=args.ready_timeout)
 
     if "error" in ready:
         print(f"ERROR: {ready.get('message', 'Failed to start serve mode')}", file=sys.stderr)
@@ -660,9 +658,7 @@ def cmd_prompt_remote(args: argparse.Namespace) -> None:
 def cmd_answer(args: argparse.Namespace) -> None:
     """Send an answer to a running server."""
     url = f"{args.server}/answer"
-    result = _http_post(
-        url, args.token, {"run_id": args.run_id, "answer": args.answer}
-    )
+    result = _http_post(url, args.token, {"run_id": args.run_id, "answer": args.answer})
     _die_on_error(result, "answer")
     print(json.dumps(result))
 
@@ -749,7 +745,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--ida", help="Path to IDA executable")
     p_serve.add_argument("--no-auto-wait", action="store_true", help="Skip auto-analysis wait")
     p_serve.add_argument("--ready-file", help="Write server URL/token to this file")
-    p_serve.add_argument("--ready-timeout", type=int, default=120, help="Seconds to wait for server readiness (default: 120)")
+    p_serve.add_argument(
+        "--ready-timeout", type=int, default=120, help="Seconds to wait for server readiness (default: 120)"
+    )
     p_serve.add_argument("--provider", help="Override the LLM provider (e.g. openai, anthropic, ollama)")
     p_serve.add_argument("--model", help="Override the LLM model name")
     p_serve.add_argument("--api-base", help="Override the API base URL for custom/Ollama endpoints")
@@ -838,4 +836,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

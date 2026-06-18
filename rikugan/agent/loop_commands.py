@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 _MAX_GOAL_CHARS = 1000
 
+
 def _handle_memory_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
     """Show current RIKUGAN.md contents in chat."""
     idb_dir = ""
@@ -204,6 +205,7 @@ def _handle_doctor_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
     # "issues" because the plugin can still run; they're warnings.
     try:
         from ...core.dependencies import get_missing_dependency_warnings
+
         for warning in get_missing_dependency_warnings():
             issues.append(warning)
     except Exception:
@@ -222,4 +224,3 @@ def _handle_doctor_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
     else:
         lines.append("\nNo issues found.")
     yield TurnEvent.text_done("\n".join(lines))
-

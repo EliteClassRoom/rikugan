@@ -172,6 +172,7 @@ def _plain_code(code: str) -> str:
 # re-imported under a fresh manager (e.g. after reset() in a test
 # setUp), the connect runs again against the new instance.
 
+
 def _on_theme_changed(_tokens) -> None:
     clear_formatter_cache()
 
