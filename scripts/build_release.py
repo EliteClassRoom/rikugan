@@ -114,18 +114,57 @@ def build_zip(files: list[Path], out_path: Path, source_root: Path) -> None:
 
 
 def sha256_file(path: Path) -> str:
-    """Compute SHA256 hex digest của file."""
-    raise NotImplementedError
+    """Compute SHA256 hex digest của file (streamed, 1 MB chunks)."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def write_sha256sums(paths: list[Path], out_path: Path) -> None:
-    """Write SHA256SUMS file (GNU coreutils format)."""
-    raise NotImplementedError
+    """Write SHA256SUMS file (GNU coreutils format: hex + 2 spaces + name).
+
+    Written in binary mode with explicit ``\n`` line endings so the file
+    matches the GNU coreutils format on every platform (works with
+    ``sha256sum -c`` on Linux CI regardless of the build host's
+    default newline convention).
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("wb") as f:
+        for p in paths:
+            line = f"{sha256_file(p)}  {p.name}\n".encode("utf-8")
+            f.write(line)
 
 
 def main() -> int:
-    """CLI entry point. See module docstring."""
-    raise NotImplementedError
+    """CLI entry point. See module docstring.
+
+    Returns:
+        0 on success, 1 if no files were collected.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", required=True, help="Version vd: 1.2.3")
+    parser.add_argument("--out-dir", type=Path, default=Path("dist"))
+    parser.add_argument("--source-root", type=Path, default=Path("."))
+    args = parser.parse_args()
+
+    archive_name = f"rikugan-v{args.version}.zip"
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    files = collect(args.source_root)
+    if not files:
+        print("ERROR: no files collected (source root empty?)", file=sys.stderr)
+        return 1
+
+    zip_path = args.out_dir / archive_name
+    build_zip(files, zip_path, args.source_root)
+
+    sums_path = args.out_dir / "SHA256SUMS"
+    write_sha256sums([zip_path], sums_path)
+
+    print(f"OK: {zip_path} ({zip_path.stat().st_size} bytes, {len(files)} files)")
+    print(f"OK: {sums_path}")
+    return 0
 
 
 if __name__ == "__main__":

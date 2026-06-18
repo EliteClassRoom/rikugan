@@ -7,6 +7,8 @@ layout that mirrors the real project, then runs ``collect()`` /
 
 from __future__ import annotations
 
+import hashlib
+import re
 import zipfile
 from pathlib import Path
 
@@ -312,3 +314,124 @@ def test_build_zip_preserves_file_contents(tmp_path: Path) -> None:
     # Assert
     with zipfile.ZipFile(out) as zf:
         assert zf.read("x.py") == b"secret content 12345\n"
+
+
+# ── sha256_file ───────────────────────────────────────────────────────
+
+
+def test_sha256_matches_stdlib(tmp_path: Path) -> None:
+    # Arrange
+    p = tmp_path / "x.txt"
+    p.write_bytes(b"hello world")
+    expected = hashlib.sha256(b"hello world").hexdigest()
+
+    # Act
+    result = sha256_file(p)
+
+    # Assert
+    assert result == expected
+    assert len(result) == 64
+    assert re.fullmatch(r"[0-9a-f]{64}", result)
+
+
+def test_sha256_handles_large_file(tmp_path: Path) -> None:
+    # Arrange: 5 MB random data
+    p = tmp_path / "big.bin"
+    p.write_bytes(bytes(range(256)) * (5 * 1024 * 1024 // 256))
+    expected = hashlib.sha256(p.read_bytes()).hexdigest()
+
+    # Act
+    result = sha256_file(p)
+
+    # Assert
+    assert result == expected
+
+
+# ── write_sha256sums ───────────────────────────────────────────────────
+
+
+def test_write_sha256sums_format(tmp_path: Path) -> None:
+    # Arrange
+    a = tmp_path / "rikugan-v1.0.zip"
+    a.write_bytes(b"alpha")
+    out = tmp_path / "SHA256SUMS"
+
+    # Act
+    write_sha256sums([a], out)
+
+    # Assert: two-space separator, hex + filename
+    content = out.read_text(encoding="utf-8").strip()
+    m = re.fullmatch(r"^([0-9a-f]{64})  (rikugan-v1\.0\.zip)$", content)
+    assert m, f"unexpected SHA256SUMS format: {content!r}"
+
+
+# ── main() / CLI ──────────────────────────────────────────────────────
+
+
+def _run_main(cwd: Path, argv: list[str]) -> int:
+    """Helper: run main() with the given argv (no subprocess)."""
+    import os
+    import sys
+
+    old_argv = sys.argv
+    old_cwd = Path.cwd()
+    sys.argv = ["build_release.py", *argv]
+    try:
+        os.chdir(cwd)
+        from scripts import build_release
+
+        return build_release.main()
+    finally:
+        sys.argv = old_argv
+        os.chdir(old_cwd)
+
+
+def test_main_writes_zip_and_sums(tmp_path: Path) -> None:
+    # Arrange
+    _seed_fake_repo(tmp_path)
+    out_dir = tmp_path / "dist"
+
+    # Act
+    rc = _run_main(tmp_path, ["--version", "1.2.3", "--out-dir", str(out_dir), "--source-root", str(tmp_path)])
+
+    # Assert
+    assert rc == 0
+    assert (out_dir / "rikugan-v1.2.3.zip").is_file()
+    assert (out_dir / "SHA256SUMS").is_file()
+    # No tar.gz
+    assert not (out_dir / "rikugan-v1.2.3.tar.gz").exists()
+
+
+def test_main_archive_is_flat(tmp_path: Path) -> None:
+    # Arrange
+    _seed_fake_repo(tmp_path)
+    out_dir = tmp_path / "dist"
+
+    # Act
+    _run_main(tmp_path, ["--version", "1.2.3", "--out-dir", str(out_dir), "--source-root", str(tmp_path)])
+
+    # Assert: ida-plugin.json at root
+    with zipfile.ZipFile(out_dir / "rikugan-v1.2.3.zip") as zf:
+        names = zf.namelist()
+    assert "ida-plugin.json" in names
+    assert "rikugan_plugin.py" in names
+
+
+def test_main_fails_when_no_files_collected(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Arrange: completely empty source root
+    out_dir = tmp_path / "dist"
+
+    # Act
+    rc = _run_main(tmp_path, ["--version", "9.9.9", "--out-dir", str(out_dir), "--source-root", str(tmp_path)])
+
+    # Assert
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "no files collected" in captured.err.lower()
+
+
+def test_main_requires_version_arg(tmp_path: Path) -> None:
+    # Act + Assert
+    with pytest.raises(SystemExit) as exc:
+        _run_main(tmp_path, ["--out-dir", str(tmp_path), "--source-root", str(tmp_path)])
+    assert exc.value.code == 2  # argparse error code
