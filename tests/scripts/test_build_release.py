@@ -100,6 +100,12 @@ def _seed_fake_repo(root: Path) -> None:
     (root / "rikugan" / "skills" / "builtins").mkdir()
     (root / "rikugan" / "skills" / "builtins" / "ctf").mkdir()
     (root / "rikugan" / "skills" / "builtins" / "ctf" / "SKILL.md").write_text("# ctf\n", encoding="utf-8")
+    # Nested tests/ and docs/ inside rikugan/ (regression seed: these MUST be excluded
+    # even though they live inside an INCLUDE_PATHS directory).
+    (root / "rikugan" / "tests").mkdir()
+    (root / "rikugan" / "tests" / "test_nested.py").write_text("# nested test\n", encoding="utf-8")
+    (root / "rikugan" / "docs").mkdir()
+    (root / "rikugan" / "docs" / "NESTED.md").write_text("# nested doc\n", encoding="utf-8")
     # Junk that MUST be excluded
     (root / "tests").mkdir()
     (root / "tests" / "test_x.py").write_text("# test\n", encoding="utf-8")
@@ -174,6 +180,27 @@ def test_collect_excludes_tests_and_docs(tmp_path: Path) -> None:
     assert "ARCHITECTURE.md" not in included
     assert "DEVELOPMENT.md" not in included
     assert "llms.txt" not in included
+
+
+def test_collect_excludes_nested_tests_and_docs(tmp_path: Path) -> None:
+    """Regression: tests/ and docs/ nested inside rikugan/ must be excluded.
+
+    The Task 1 test suite only seeded tests/ and docs/ at the REPO ROOT, where
+    they are silently ignored because they sit outside INCLUDE_PATHS. The real
+    rikugan/ package ships nested rikugan/tests/ and rikugan/docs/ subdirs
+    (see v1.2 leak: rikugan/docs/HEADLESS_PROVIDER.md, rikugan/tests/conftest.py,
+    rikugan/tests/test_*.py). These need an explicit EXCLUDE_NAMES entry.
+    """
+    # Arrange
+    _seed_fake_repo(tmp_path)
+
+    # Act
+    result = collect(tmp_path)
+
+    # Assert
+    included = {p.relative_to(tmp_path).as_posix() for p in result}
+    assert "rikugan/tests/test_nested.py" not in included, "nested rikugan/tests/ leaked into archive"
+    assert "rikugan/docs/NESTED.md" not in included, "nested rikugan/docs/ leaked into archive"
 
 
 def test_collect_excludes_dev_assets_and_config(tmp_path: Path) -> None:

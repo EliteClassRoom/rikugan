@@ -59,6 +59,8 @@ EXCLUDE_NAMES: set[str] = {
     ".reasonix",
     ".claude",
     "node_modules",
+    "docs",
+    "tests",
 }
 
 # File suffix KHÔNG được include.
