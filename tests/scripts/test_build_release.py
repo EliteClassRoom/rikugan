@@ -119,10 +119,6 @@ def _seed_fake_repo(root: Path) -> None:
     (root / "pyproject.toml").write_text("# toml\n", encoding="utf-8")
     (root / "uv.lock").write_text("# lock\n", encoding="utf-8")
     (root / "ci-local.sh").write_text("# ci script\n", encoding="utf-8")
-    # Top-level scripts/ subdir — used so the build_zip tests have
-    # >1 top-level dir to assert against (HCLI flat-layout check).
-    (root / "scripts").mkdir()
-    (root / "scripts" / "build_release.py").write_text("# build\n", encoding="utf-8")
     # Junk inside rikugan/ that MUST be excluded
     (root / "rikugan" / "core" / "__pycache__").mkdir()
     (root / "rikugan" / "core" / "__pycache__" / "config.cpython-311.pyc").write_bytes(b"PYC")
@@ -141,8 +137,8 @@ def test_collect_includes_runtime_files(tmp_path: Path) -> None:
     # Assert: every INCLUDE_PATHS file appears in result
     included = {p.relative_to(tmp_path).as_posix() for p in result}
     for spec in INCLUDE_PATHS:
-        if spec in ("rikugan", "scripts"):
-            # recursive dirs — covered in other tests
+        if spec == "rikugan":
+            # recursive dir — covered in other tests
             continue
         assert spec in included, f"expected {spec!r} in collect() output"
 
@@ -287,7 +283,7 @@ def test_build_zip_entry_point_at_root(tmp_path: Path) -> None:
 
 
 def test_build_zip_no_wrapping_subfolder(tmp_path: Path) -> None:
-    # Arrange — HCLI requires flat layout; reject any wrapping subfolder
+    # Arrange — HCLI requires flat layout; reject any version-named wrapping subfolder
     _seed_fake_repo(tmp_path)
     files = collect(tmp_path)
     out = tmp_path / "out.zip"
@@ -295,17 +291,14 @@ def test_build_zip_no_wrapping_subfolder(tmp_path: Path) -> None:
     # Act
     build_zip(files, out, tmp_path)
 
-    # Assert: no entry begins with a single wrapping prefix like "rikugan-v1.2.3/"
+    # Assert: NO entry is wrapped under a `rikugan-v<version>/` subfolder.
+    # That is the actual HCLI packaging bug (metadata nested one level deep).
+    import re
+
     with zipfile.ZipFile(out) as zf:
         names = zf.namelist()
-    wrapping = [n for n in names if "/" in n and not n.startswith(("rikugan/", "install", "scripts/"))]
-    # entries like "rikugan/core/config.py" are fine (real subdir); only a SINGLE
-    # common prefix on every entry would indicate a wrapping subfolder
-    import os.path
-
-    top_dirs = {n.split("/")[0] for n in names if "/" in n}
-    # If there is exactly ONE top-level dir wrapping everything, that's the bug.
-    assert len(top_dirs) > 1, f"single wrapping subfolder detected: {top_dirs}"
+    wrapped = [n for n in names if re.match(r"^rikugan-v\d+\.\d+/[^/]", n)]
+    assert not wrapped, f"entries wrapped under a version subfolder: {wrapped}"
 
 
 def test_build_zip_preserves_file_contents(tmp_path: Path) -> None:

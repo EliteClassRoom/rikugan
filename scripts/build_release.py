@@ -44,7 +44,6 @@ INCLUDE_PATHS: list[str] = [
     "ida-plugin.json",
     "LICENSE",
     "README.md",
-    "scripts",  # build_release.py (and any future build scripts)
 ]
 
 # File/dir KHÔNG được include dù nằm trong INCLUDE_PATHS (match bất kỳ path part nào).
