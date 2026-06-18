@@ -1,8 +1,10 @@
 # GitHub Release Pipeline — Design Spec
 
-**Date**: 2026-06-18
+**Date**: 2026-06-18 (revised 2026-06-18 for HCLI packaging compliance)
 **Status**: Approved (pending user review of written spec)
-**Scope**: Replace `.github/workflows/release.yml` (currently 36 lines, no build artifact) with a full release pipeline: tag/version validation, inline CI re-run, curated archive build, SHA256SUMS, GitHub Release publish with auto-notes and pre-release detection.
+**Scope**: Replace `.github/workflows/release.yml` (currently 36 lines, no build artifact) with a full release pipeline: tag/version validation, inline CI re-run, **HCLI-compliant plugin archive** build (flat ZIP per Hex-Rays spec), SHA256SUMS, `hcli plugin lint` packaging validation, GitHub Release publish with auto-notes and pre-release detection.
+
+> **HCLI compliance (revised):** The release artifact must be installable by Hex-Rays' official plugin manager `hcli`. Per [Plugin Packaging and Format](https://hcli.docs.hex-rays.com/reference/plugin-packaging-and-format/), the `ida-plugin.json` metadata file **must sit at the root of the ZIP** (no wrapping subfolder), and HCLI only accepts ZIP archives (no tar.gz). This spec was revised after the original approval to align with that contract.
 
 ---
 
@@ -95,6 +97,7 @@ verify  →  build  →  publish
    - `python -m mypy rikugan/core rikugan/providers`
    - `python -m pytest tests/ --tb=short -q`
    - `desloppify scan --profile objective --no-badge` + score gate (`>= 89.0 - 0.5`)
+6. **HCLI packaging lint** (revised): `hcli plugin lint` against the built archive is run in the `build` job after the ZIP is produced (see Job 2), because lint needs the artifact to exist. Code-level checks stay in `verify`; packaging-correctness checks belong next to where the artifact is built.
 
 **Why inline re-run?** The `ci.yml` workflow triggers on `branches: [main, dev]` (upstream drift — does not match `master` of this fork). Tag pushes do not match a `branches` filter. Inline re-run is independent of `ci.yml` and runs against the same SHA the release will publish, so the verify-then-publish chain is closed-loop.
 
@@ -106,7 +109,11 @@ verify  →  build  →  publish
 1. `actions/checkout@v4`.
 2. `actions/setup-python@v5` with `python-version: "3.11"`.
 3. Run `python scripts/build_release.py --version "$VERSION" --out-dir dist`.
-4. `actions/upload-artifact@v4` with `name: release-artifacts`, `path: dist/`, `if-no-files-found: error`.
+4. **HCLI packaging validation** (revised): install the Hex-Rays CLI and lint the archive:
+   - `pip install hex-rays-cli` (or the documented install method for `hcli`).
+   - `hcli plugin lint dist/rikugan-v{version}.zip` — fails the job if HCLI reports problems. This is the authoritative check that the archive is installable by HCLI.
+   - **Fallback if `hcli` is unavailable on the runner**: run a structural validation shim in Python — assert `ida-plugin.json` is at the ZIP root, `entryPoint` exists at root, required fields present, no wrapping subfolder. The shim is a secondary check; HCLI lint is preferred when available.
+5. `actions/upload-artifact@v4` with `name: release-artifacts`, `path: dist/`, `if-no-files-found: error`.
 
 **Build script** — `scripts/build_release.py`:
 
@@ -115,9 +122,9 @@ verify  →  build  →  publish
 | **Include list** | `rikugan_plugin.py`, `rikugan/`, `install.sh`, `install_ida.sh`, `install.ps1`, `install_ida.bat`, `requirements.txt`, `ida-plugin.json`, `LICENSE`, `README.md` |
 | **Exclude (any part of path)** | `__pycache__`, `.git`, `.venv`, `.mypy_cache`, `.ruff_cache`, `.pytest_cache`, `.desloppify`, `.codegraph`, `.reasonix`, `.claude`, `node_modules` |
 | **Exclude (suffix)** | `.pyc`, `.pyo`, `.pyd` |
-| **Output names** | `rikugan-v{version}.zip`, `rikugan-v{version}.tar.gz`, `SHA256SUMS` |
-| **Archive layout** | `rikugan-v{version}/rikugan_plugin.py`, `rikugan-v{version}/rikugan/...`, `rikugan-v{version}/install.sh`, ... |
-| **SHA256SUMS format** | `<hex>  rikugan-v{version}.zip\n<hex>  rikugan-v{version}.tar.gz\n` (two-space separator, GNU coreutils convention) |
+| **Output name** | `rikugan-v{version}.zip` (single ZIP — HCLI accepts only ZIP) |
+| **Archive layout** | **Flat** — files at ZIP root, no wrapping subfolder: `ida-plugin.json`, `rikugan_plugin.py`, `rikugan/...`, `install.sh`, ... This matches the HCLI contract that `ida-plugin.json` sits "in the root directory of the plugin within the archive". |
+| **SHA256SUMS** | `<hex>  rikugan-v{version}.zip\n` (two-space separator, GNU coreutils convention) |
 
 The script is invokable locally (same CLI as in CI) so the same build can be reproduced off-CI for debugging.
 
@@ -133,7 +140,6 @@ The script is invokable locally (same CLI as in CI) so the same build can be rep
 - `fail_on_unmatched_files: true` (so a broken glob fails the job instead of producing an empty release)
 - `files`:
   - `dist/rikugan-v{version}.zip`
-  - `dist/rikugan-v{version}.tar.gz`
   - `dist/SHA256SUMS`
 
 **Idempotency**: `softprops/action-gh-release@v2` overwrites an existing release with the same tag. The release artifacts, notes, and pre-release flag are all re-applied. This is what makes `workflow_dispatch` re-runs safe.
@@ -162,7 +168,7 @@ The regex is intentionally simple. It does not catch every pre-release conventio
 | Action | File | Purpose |
 |--------|------|---------|
 | Rewrite | `.github/workflows/release.yml` | Replace the 36-line skeleton with the 3-job pipeline (~150 lines) |
-| Add | `scripts/build_release.py` | Build script: collect files, build zip/tar.gz, write SHA256SUMS |
+| Add | `scripts/build_release.py` | Build script: collect files, build flat zip, write SHA256SUMS |
 | Add | `scripts/test_build_release.py` | Unit tests for the build script (AAA pattern, pytest) |
 | Edit | `AGENTS.md` | Update the "Release Flow" subsection to describe the new pipeline + workflow_dispatch re-run path |
 | Edit | `DEVELOPMENT.md` | Same: update the "Release Process" subsection, mention `scripts/build_release.py` for local dry-runs |
@@ -185,13 +191,14 @@ In `scripts/test_build_release.py`, using pytest + AAA pattern. Each test seeds 
 | `test_collect_excludes_pycache_and_dotfiles` | `__pycache__/`, `.git/`, `.mypy_cache/`, `*.pyc` are all skipped |
 | `test_collect_excludes_dev_assets` | `assets/`, `chat_examples/`, `webpage/`, `pyproject.toml`, `uv.lock`, `ci-local.sh`, `__pycache__` skipped |
 | `test_build_zip_creates_valid_archive` | Output opens as a valid `ZipFile`; `namelist()` count matches `collect()` count |
-| `test_build_tar_creates_valid_archive` | Output opens as a valid `tarfile`; `getnames()` count matches |
-| `test_archive_internal_path_prefix` | Each entry starts with `rikugan-v{version}/` |
+| `test_zip_ida_plugin_json_at_root` | `ida-plugin.json` is at the ZIP root (HCLI contract) |
+| `test_zip_entry_point_at_root` | `entryPoint` from `ida-plugin.json` resolves at the ZIP root |
+| `test_zip_no_wrapping_subfolder` | No single subfolder wraps every entry (HCLI contract) |
 | `test_sha256_matches_stdlib` | `sha256_file(p) == hashlib.sha256(p.read_bytes()).hexdigest()` |
-| `test_archive_basename_format` | `--version 1.2.3` produces `rikugan-v1.2.3.zip` and `.tar.gz` |
+| `test_archive_basename_format` | `--version 1.2.3` produces `rikugan-v1.2.3.zip` (no tar.gz) |
 | `test_empty_source_root_fails` | `collect()` returning `[]` → script exits with code 1 and prints error to stderr |
 | `test_argparse_requires_version` | Omitting `--version` → `SystemExit(2)` from argparse |
-| `test_sha256sums_format` | File content matches `^[a-f0-9]{64}  rikugan-v.*\.[zip\|tar\.gz]$` (regex) |
+| `test_sha256sums_format` | File content matches `^[a-f0-9]{64}  rikugan-v.*\.zip$` (regex) |
 
 ### Local dry-run (before push)
 
@@ -199,32 +206,35 @@ In `scripts/test_build_release.py`, using pytest + AAA pattern. Each test seeds 
 # Build locally
 python scripts/build_release.py --version 1.2.3 --out-dir /tmp/rikugan-test
 
-# Inspect contents
+# Inspect contents — ida-plugin.json MUST be at the ZIP root, no subfolder
 unzip -l /tmp/rikugan-test/rikugan-v1.2.3.zip
-tar -tzf /tmp/rikugan-test/rikugan-v1.2.3.tar.gz
 
 # Verify SHA256SUMS
 ( cd /tmp/rikugan-test && sha256sum -c SHA256SUMS )
 
+# If hcli is installed locally, validate the archive
+hcli plugin lint /tmp/rikugan-test/rikugan-v1.2.3.zip
+
 # Run unit tests
-python -m pytest scripts/test_build_release.py -v
+python -m pytest tests/scripts/test_build_release.py -v
 ```
 
 ### Pre-merge checklist
 
-- [ ] `scripts/build_release.py` runs locally, produces zip + tar.gz + SHA256SUMS in the right format.
-- [ ] `python -m pytest scripts/test_build_release.py -v` — all pass.
-- [ ] `./ci-local.sh` still passes (script lives in `scripts/`, not `rikugan/`, so ruff/mypy don't lint it; but pytest does pick it up if `tests/` is the test root — confirm `conftest.py` and rootdir behavior).
-- [ ] `actions/download-artifact@v4`, `actions/upload-artifact@v4`, `softprops/action-gh-release@v2` are pinned to a major version (or `vN.M` for patch updates).
+- [ ] `scripts/build_release.py` runs locally, produces flat zip + SHA256SUMS in the right format.
+- [ ] `unzip -l` shows `ida-plugin.json` and `rikugan_plugin.py` at the ZIP root (no wrapping subfolder).
+- [ ] `python -m pytest tests/scripts/test_build_release.py -v` — all pass.
+- [ ] `./ci-local.sh` still passes (script lives in `scripts/`, not `rikugan/`, so ruff/mypy don't lint it; pytest picks up `tests/scripts/`).
+- [ ] `actions/download-artifact@v4`, `actions/upload-artifact@v4`, `softprops/action-gh-release@v2` are pinned to a major version.
 
 ### Post-merge smoke test
 
 1. Push a throwaway tag: `git tag v0.0.0-test && git push origin v0.0.0-test`.
 2. Watch the workflow run on GitHub Actions:
    - `verify` job: ruff/mypy/pytest/desloppify all green; tag/version match; `is_prerelease=false`.
-   - `build` job: `dist/` contains the three expected files.
+   - `build` job: `dist/` contains `rikugan-v0.0.0-test.zip` + `SHA256SUMS`; `hcli plugin lint` passes (or the structural shim passes as fallback).
    - `publish` job: a **draft** release appears at `https://github.com/EliteClassRoom/rikugan/releases/tag/v0.0.0-test`.
-3. Verify the draft release has all three artifacts attached, and `SHA256SUMS` content is correct.
+3. Verify the draft release has both artifacts attached, and `SHA256SUMS` content is correct.
 4. Delete the throwaway tag and the draft release:
    ```bash
    git push origin :refs/tags/v0.0.0-test
@@ -234,10 +244,10 @@ python -m pytest scripts/test_build_release.py -v
 ### Long-term sanity check
 
 After the next real release (`v1.3.0` or whatever the next version is):
-- The GitHub Release page shows the three artifacts (zip, tar.gz, SHA256SUMS).
+- The GitHub Release page shows both artifacts (`rikugan-v{version}.zip`, `SHA256SUMS`).
 - The auto-generated release notes section appears (same as before).
 - Pre-release flag is correct for the tag pattern used.
-- A user with no git access can `curl -L https://github.com/EliteClassRoom/rikugan/releases/download/v1.3.0/rikugan-v1.3.0.zip -o rikugan.zip` and get a working archive.
+- A user can `curl -L https://github.com/EliteClassRoom/rikugan/releases/download/v1.3.0/rikugan-v1.3.0.zip -o rikugan.zip` and install via `hcli plugin install rikugan.zip` (flat layout — HCLI finds `ida-plugin.json` at the ZIP root).
 
 ---
 
@@ -250,7 +260,8 @@ After the next real release (`v1.3.0` or whatever the next version is):
 | `softprops/action-gh-release@v2` does not validate artifact paths | Use `fail_on_unmatched_files: true`; check the build job's `if-no-files-found: error` on upload |
 | Tag pattern `[0-9]*.[0-9]*` could match unintended tags (e.g., a branch named `1.2`) | Branch refs and tag refs are separate in GitHub; the `tags:` filter only matches tags |
 | A re-run via `workflow_dispatch` re-uploads artifacts but does not re-validate CI | The verify job always re-runs the full CI suite for any trigger, so re-runs are safe; a malicious commit pushed between tag and re-run would be caught by the inline re-run |
-| Archive layout (`rikugan-v{version}/` prefix) is different from current install path | Document in `DEVELOPMENT.md` and add a one-line note in the release notes. Users on the legacy `curl | bash` path are unaffected. |
+| HCLI (`hex-rays-cli`) may not be pip-installable or may change install method | Build job runs `hcli plugin lint`; if HCLI is unavailable on the runner, a structural-validation shim (Python) asserts the ZIP is flat with `ida-plugin.json` at root and the `entryPoint` file present — this catches the most common packaging mistake without depending on HCLI |
+| Flat ZIP layout differs from the legacy `curl | bash` install path | The two paths are independent. Legacy `install.sh` clones the repo (unchanged); the release ZIP is the HCLI-installable path. Document both in `DEVELOPMENT.md`. |
 
 ---
 
@@ -258,7 +269,8 @@ After the next real release (`v1.3.0` or whatever the next version is):
 
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml) — current minimal release workflow (to be rewritten)
 - [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — drift context (separate concern)
-- [`ida-plugin.json`](../../ida-plugin.json) — version source of truth
+- [`ida-plugin.json`](../../ida-plugin.json) — version source of truth + HCLI plugin metadata
+- **[Hex-Rays: Plugin Packaging and Format](https://hcli.docs.hex-rays.com/reference/plugin-packaging-and-format/)** — authoritative spec for the flat-ZIP layout, required `ida-plugin.json` fields, and `hcli plugin lint`
 - [`ci-local.sh`](../../ci-local.sh) — local CI mirror (the inline re-run in `verify` follows the same step order)
 - [`AGENTS.md`](../../AGENTS.md) §"CI/CD & Branch Model" / §"Release Flow" — sections to be updated
 - [`DEVELOPMENT.md`](../../DEVELOPMENT.md) §"Release Process" — section to be updated
