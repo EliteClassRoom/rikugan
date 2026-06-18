@@ -157,13 +157,43 @@ Format: `type(scope): short description`
 
 ## Release Process
 
-1. Bump `version` in `ida-plugin.json` (trên `master`)
-2. Tag and push:
+Pipeline release đầy đủ tự động:
+
+1. Bump `version` trong `ida-plugin.json`
+2. Commit + push:
    ```bash
-   git tag v0.x.x
-   git push origin v0.x.x
+   git add ida-plugin.json
+   git commit -m "chore: bump version to 1.x.x"
+   git push origin master
    ```
-4. GitHub Actions validates the tag matches `ida-plugin.json` and publishes the GitHub Release
+3. Tag và push:
+   ```bash
+   git tag v1.x.x
+   git push origin v1.x.x
+   ```
+4. GitHub Actions tự chạy (verify → build → publish). Release xuất hiện tại `https://github.com/EliteClassRoom/rikugan/releases/tag/v1.x.x` với 2 artifact: `rikugan-v1.x.x.zip` + `SHA256SUMS`.
+
+**Install artifact** (HCLI): `curl -L https://github.com/EliteClassRoom/rikugan/releases/download/v1.x.x/rikugan-v1.x.x.zip -o rikugan.zip` rồi `hcli plugin install rikugan.zip`. ZIP phẳng theo spec Hex-Rays.
+
+**Re-run**: Actions tab → workflow "Release" → "Run workflow" → nhập tag.
+
+**Pre-release**: thêm suffix `-rc1`, `-beta1`, `-dev1` → GitHub tự đánh dấu pre-release.
+
+**Local dry-run** (test trước khi tag):
+```bash
+python scripts/build_release.py --version 1.x.x-test --out-dir /tmp/rikugan-test
+unzip -l /tmp/rikugan-test/rikugan-v1.x.x-test.zip   # ida-plugin.json phải ở gốc
+python scripts/validate_archive.py /tmp/rikugan-test/rikugan-v1.x.x-test.zip
+rm -rf /tmp/rikugan-test
+```
+
+**Smoke test pipeline** (dùng suffix `-rc1` → GitHub đánh dấu pre-release, không phải stable):
+```bash
+git tag v0.0.0-rc1 && git push origin v0.0.0-rc1
+# → check Actions tab: 3 jobs xanh
+git push origin :refs/tags/v0.0.0-rc1
+gh release delete v0.0.0-rc1 --repo EliteClassRoom/rikugan --yes
+```
 
 ---
 

@@ -455,13 +455,28 @@ CI does **not** run `desloppify review` (the LLM-powered subjective scoring) —
 ### Release Flow
 
 1. Bump `version` trong `ida-plugin.json` (trên `master`)
-2. Push tag: `git tag v0.x.x && git push origin v0.x.x`
-3. GitHub Actions creates the GitHub Release (trigger trên tag `v*`)
+2. Commit + push lên `master`
+3. Tag và push:
+   ```bash
+   git tag v1.x.x
+   git push origin v1.x.x
+   ```
+4. GitHub Actions workflow `.github/workflows/release.yml` tự động:
+   - **`verify`** — validate tag ↔ `ida-plugin.json.version`, re-run toàn bộ CI checks inline (ruff/mypy/pytest/desloppify). Fail → release không publish.
+   - **`build`** — chạy `scripts/build_release.py` tạo `rikugan-v1.x.x.zip` (flat HCLI layout), validate bằng `hcli plugin lint` (hoặc Python shim `scripts/validate_archive.py` nếu HCLI không có), tạo `SHA256SUMS`.
+   - **`publish`** — `softprops/action-gh-release@v2` tạo/cập nhật GitHub Release với artifact + auto-generated notes.
+5. Tag suffix `-rc1`, `-beta1`, `-dev1`, ... → auto pre-release. Tag `v1.x.x` (no suffix) → stable.
+
+**HCLI layout**: ZIP phải phẳng — `ida-plugin.json` và `rikugan_plugin.py` ở gốc, không có subfolder bao quanh (spec Hex-Rays). User install bằng `hcli plugin install rikugan-v1.x.x.zip`.
+
+**Re-run cho tag đã push**: Actions tab → workflow "Release" → "Run workflow" → nhập tag name.
+
+**Trigger pattern**: `v*` (chuẩn) **và** bare version (vd: `1.0` — legacy). Xem `docs/superpowers/specs/2026-06-18-github-release-pipeline-design.md`.
 
 ### Workflow Files
 
 - `.github/workflows/ci.yml` — lint, typecheck, test, quality gate (triggers on PR to `main`/`dev` — **không** trigger trên `master` của fork; xem "CI trigger drift" ở trên)
-- `.github/workflows/release.yml` — version validation + GitHub Release (triggers on `v*` tag)
+- `.github/workflows/release.yml` — 3-job pipeline (verify → build → publish) tạo HCLI flat-ZIP `rikugan-v1.x.x.zip` + `SHA256SUMS` (triggers trên tag `v*` / bare `[0-9]*.[0-9]*` / `workflow_dispatch`)
 
 ## Development Standards
 
