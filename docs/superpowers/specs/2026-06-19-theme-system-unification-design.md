@@ -86,9 +86,23 @@ Changes:
   read from `ThemeManager`) without rewriting the getter return values.
   Refactoring getters to read token values directly is explicitly out of
   scope for Phase 2 (that belongs to Phase 3).
-- Remove `_current_theme`, `_effective_theme`, `is_dark_theme()`,
-  `get_current_theme()`, `set_current_theme()` from `styles.py`.
-- Remove the 2 `set_current_theme` callers: `panel_core.py:1084` and
+- Remove the **dark/light branch** half of the legacy bridge ONLY:
+  `_effective_theme`, `is_dark_theme()`, `get_current_theme()`. These are
+  read exclusively by the 5 `widgets_*.py` `_branch()` helpers (verified),
+  so they are safe to delete once `_branch()` is rewritten.
+- **KEEP the host-inherit half**: `_current_theme`, `is_host_theme()`,
+  `use_native_host_theme()`, `host_stylesheet()`, `maybe_host_stylesheet()`.
+  These answer a *different* question ("inherit host Qt palette vs force
+  Rikugan palette") and are consumed widely (~40 sites: `markdown.py`,
+  `markdown_renderer.py`, `chat_view.py`, `input_area.py`,
+  `message_widgets.py` via `host_stylesheet`, `panel_core.py`,
+  `settings_dialog.py`, and the 3 `build_*_stylesheet` builders). They are
+  NOT part of the "dark/light branch" problem and must survive Phase 2.
+- Remove the `set_current_theme(..., effective_theme=...)` *effective-theme*
+  parameter and its uses at `panel_core.py:1084` and `settings_dialog.py:668`
+  (the callers only needed it to feed `is_dark_theme()`, now gone). The
+  `set_current_theme` function itself is kept (it still syncs `_current_theme`
+  for `is_host_theme()`) but simplified to a single-arg form.
   `settings_dialog.py:668` (ThemeManager.set_mode already drives everything).
 - Re-export shim: `styles.py` keeps re-exporting the `widgets_*.py` getters so
   consumers importing from `rikugan.ui.styles` keep working.
