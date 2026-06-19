@@ -166,6 +166,20 @@ def _tool_color(name: str) -> str:
     return _TOOL_COLORS.get(_strip_mcp_prefix(name), _DEFAULT_TOOL_COLOR)
 
 
+def _build_approval_header(tool_name: str) -> str:
+    """Build the approval-gate header label for a tool call.
+
+    The header names the *actual* tool being approved (with the MCP
+    ``mcp__<server>__`` prefix stripped) instead of the historical
+    hard-coded ``"Approve execute_python?"``. The same approval widget
+    is reused for every mutating tool when ``config.approve_mutations``
+    is set, so a label that always says ``execute_python`` left the user
+    unable to tell whether they were authorising a rename, a type
+    change, or arbitrary script execution.
+    """
+    return f"Approve {_strip_mcp_prefix(tool_name)}?"
+
+
 def _format_tool_group_label(tool_names: list[str]) -> str:
     """Human-friendly group label for collapsed tool-call runs."""
     count = len(tool_names)
@@ -1034,16 +1048,32 @@ class ToolApprovalWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
 
-        self._header = QLabel("Approve execute_python?")
+        self._header = QLabel(_build_approval_header(tool_name))
         self._header.setStyleSheet(get_tool_approval_header_style())
         layout.addWidget(self._header)
+
+        # ``description`` is the human-readable summary of what the tool
+        # will do (e.g. "rename sub_1000 → process_data"). The agent
+        # loop builds it via ``_describe_tool_call`` for mutating tools
+        # that have no ``code`` field; rendering it prominently lets the
+        # user decide whether to approve without having to decode the
+        # raw JSON args below.
+        if description and description.strip():
+            desc_label = QLabel(description.strip())
+            desc_label.setWordWrap(True)
+            desc_label.setStyleSheet("font-weight: bold; font-size: inherit;")
+            layout.addWidget(desc_label)
 
         code = self._extract_code(args_text)
         code_lines = code.strip().splitlines() if code.strip() else []
 
-        self._info = QLabel(f"Python code — {len(code_lines)} line{'s' if len(code_lines) != 1 else ''}")
-        self._info.setStyleSheet("color: #808080; font-size: inherit;")
-        layout.addWidget(self._info)
+        if code.strip():
+            # Only label the preview "Python code" when there is code to
+            # show. For mutating tools without a ``code`` field the
+            # description above already says what will happen.
+            self._info = QLabel(f"Python code — {len(code_lines)} line{'s' if len(code_lines) != 1 else ''}")
+            self._info.setStyleSheet("color: #808080; font-size: inherit;")
+            layout.addWidget(self._info)
 
         editor = self._build_code_editor(code, code_lines)
         if editor is not None:

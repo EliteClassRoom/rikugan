@@ -11,24 +11,26 @@ import sys
 import unittest
 
 from tests.qt_stubs import ensure_pyside6_stubs
+
 ensure_pyside6_stubs()
 
 # Ensure the real module is loaded even if another test stubbed it.
 sys.modules.pop("rikugan.ui.tool_widgets", None)
 
 from rikugan.ui.tool_widgets import (  # noqa: E402
-    _strip_mcp_prefix,
-    _tool_color,
+    _DEFAULT_TOOL_COLOR,
+    _build_approval_header,
     _format_tool_group_label,
     _format_tool_summary,
+    _strip_mcp_prefix,
+    _tool_color,
     _truncate_preview,
-    _DEFAULT_TOOL_COLOR,
 )
-
 
 # ---------------------------------------------------------------------------
 # _strip_mcp_prefix
 # ---------------------------------------------------------------------------
+
 
 class TestStripMcpPrefix(unittest.TestCase):
     def test_plain_name_unchanged(self):
@@ -53,6 +55,7 @@ class TestStripMcpPrefix(unittest.TestCase):
 # _tool_color
 # ---------------------------------------------------------------------------
 
+
 class TestToolColor(unittest.TestCase):
     def test_known_analysis_tool(self):
         color = _tool_color("decompile_function")
@@ -74,6 +77,7 @@ class TestToolColor(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # _format_tool_group_label
 # ---------------------------------------------------------------------------
+
 
 class TestFormatToolGroupLabel(unittest.TestCase):
     def test_empty_list(self):
@@ -105,6 +109,7 @@ class TestFormatToolGroupLabel(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # _format_tool_summary
 # ---------------------------------------------------------------------------
+
 
 class TestFormatToolSummary(unittest.TestCase):
     def test_decompile_with_address(self):
@@ -174,6 +179,7 @@ class TestFormatToolSummary(unittest.TestCase):
 # _truncate_preview
 # ---------------------------------------------------------------------------
 
+
 class TestTruncatePreview(unittest.TestCase):
     def test_short_text_unchanged(self):
         text = "line1\nline2\nline3"
@@ -198,6 +204,46 @@ class TestTruncatePreview(unittest.TestCase):
         text = "a\nb\nc\nd\ne"
         result = _truncate_preview(text, max_lines=2)
         self.assertIn("… +3 lines", result)
+
+
+# ---------------------------------------------------------------------------
+# _build_approval_header
+# ---------------------------------------------------------------------------
+
+
+class TestBuildApprovalHeader(unittest.TestCase):
+    """The approval-gate header must name the actual tool being approved.
+
+    Regression: ``ToolApprovalWidget`` hard-coded ``"Approve
+    execute_python?"`` even though the same widget is reused for every
+    mutating tool when ``config.approve_mutations`` is set (rename,
+    set_type, nop_microcode, create_struct, ...). A user approving a
+    mutation saw a header that named an unrelated script tool, so they
+    could not tell what they were authorising. ``_build_approval_header``
+    is the pure helper that derives the correct label from the tool name.
+    """
+
+    def test_execute_python_keeps_expected_label(self):
+        # The motivating case the header was originally written for —
+        # keep it so the fix does not regress script approvals.
+        self.assertEqual(_build_approval_header("execute_python"), "Approve execute_python?")
+
+    def test_mutating_tool_named_in_header(self):
+        # The bug: a mutation approval must name the mutating tool, not
+        # fall back to "execute_python".
+        self.assertEqual(_build_approval_header("rename_function"), "Approve rename_function?")
+        self.assertEqual(_build_approval_header("nop_microcode"), "Approve nop_microcode?")
+
+    def test_mcp_prefix_stripped(self):
+        # MCP-bridged tools carry a ``mcp__<server>__`` prefix that is
+        # noise in a user-facing label.
+        self.assertEqual(
+            _build_approval_header("mcp__myserver__custom_tool"),
+            "Approve custom_tool?",
+        )
+
+    def test_generic_tool_named(self):
+        self.assertEqual(_build_approval_header("search_strings"), "Approve search_strings?")
 
 
 if __name__ == "__main__":
