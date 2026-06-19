@@ -43,7 +43,6 @@ from .qt_compat import (
 )
 from .styles import (
     build_small_button_stylesheet,
-    build_theme_stylesheet,
     maybe_host_stylesheet,
     use_native_host_theme,
 )
@@ -528,7 +527,6 @@ class RikuganPanelCore(QWidget):
 
     def _build_ui(self) -> None:
         self.setObjectName("rikugan_panel")
-        self.setStyleSheet(build_theme_stylesheet(self))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -727,7 +725,6 @@ class RikuganPanelCore(QWidget):
         """
         if not use_native_host_theme():
             # Re-apply the global QSS template with the new token values.
-            self.setStyleSheet(build_theme_stylesheet(self))
             self._apply_action_button_styles()
             if hasattr(self, "_mode_bar") and self._mode_bar is not None:
                 self._mode_bar.setStyleSheet(self._MODE_BAR_STYLE_TEMPLATE)

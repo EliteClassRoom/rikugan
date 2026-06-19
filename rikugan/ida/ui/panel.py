@@ -404,10 +404,9 @@ class RikuganPanel(idaapi.PluginForm):
         }}
         /* History navigation strip (paginated restore) — object-name-scoped
            so the host's generic QPushButton/QLabel rules above do not leak
-           into Rikugan's nav widgets.  These selectors must be kept
-           identical in shape to the scoped ones in LIGHT_THEME / DARK_THEME
-           (rikugan/ui/styles.py) so the same widget object names resolve
-           cleanly in every host theme. */
+           into Rikugan's nav widgets.  These selectors are kept identical
+           in shape to the per-theme scoped variants so the same widget
+           object names resolve cleanly in every host theme. */
         QFrame#history_nav {{
             background-color: {surface};
             border: 1px solid {border};
