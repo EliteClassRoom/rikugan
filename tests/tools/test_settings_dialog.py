@@ -66,8 +66,6 @@ for _mod_name in [
         "resolve_auth_cached",
         "DEFAULT_OLLAMA_URL",
         "ProviderRegistry",
-        "DARK_THEME",
-        "build_theme_stylesheet",
         "build_small_button_stylesheet",
         "maybe_host_stylesheet",
         "use_native_host_theme",
@@ -120,8 +118,6 @@ _STUBBED_BY_THIS_MODULE = frozenset(
 _styles_mod = sys.modules.get("rikugan.ui.styles")
 if _styles_mod is not None:
     _styles_mod.maybe_host_stylesheet = lambda css: css
-    _styles_mod.build_theme_stylesheet = lambda: ""
-    _styles_mod.DARK_THEME = ""
 
 # Ensure DEFAULT_OLLAMA_URL is a string on the stub (real module already has it)
 _ollama_mod = sys.modules.get("rikugan.providers.ollama_provider")

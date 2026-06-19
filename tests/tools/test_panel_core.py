@@ -68,9 +68,7 @@ _STUBBED_MODULES = [
     "rikugan.providers.ollama_provider",
     "rikugan.providers.registry",
 ]
-_STUBBED_MODULE_BACKUPS: dict[str, object] = {
-    name: sys.modules.get(name) for name in _STUBBED_MODULES
-}
+_STUBBED_MODULE_BACKUPS: dict[str, object] = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
 
 
 for _mod_name in [
@@ -104,8 +102,6 @@ for _mod_name in [
     # deterministic regardless of collection order.
     _stub = _StubModule(_mod_name)
     for _attr in [
-        "DARK_THEME",
-        "build_theme_stylesheet",
         "build_small_button_stylesheet",
         "maybe_host_stylesheet",
         "use_native_host_theme",
