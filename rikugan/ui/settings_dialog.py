@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import queue
 import threading
 from collections.abc import Callable
@@ -213,6 +214,13 @@ class SettingsDialog(QDialog):
         # scope the QSS so it does not bleed into the host UI.
         self.setObjectName("rikugan_settings")
         self._config = config
+        # Snapshot the config at construction so ``done(Rejected)`` can
+        # restore it. Provider switching, custom-provider add/remove and
+        # UI→config syncs mutate the *live* config object eagerly (before
+        # the dialog is accepted), so without this snapshot a Cancel
+        # would silently persist those edits — losing e.g. the previous
+        # provider's API key. Accepted dialogs keep the live edits.
+        self._config_snapshot = copy.deepcopy(config)
         self._tool_registry = tool_registry
         self._registry = registry or ProviderRegistry()
         self._registry.register_custom_providers(list(self._config.custom_providers.keys()))
@@ -841,7 +849,36 @@ class SettingsDialog(QDialog):
         except RuntimeError as e:
             log_debug(f"SettingsDialog.done timer cleanup: {e}")
         self._fetcher.shutdown()
+        # Cancel: the user discarded the dialog, so roll the live config
+        # back to its pre-dialog state. Without this the eager UI→config
+        # syncs (provider switch, key edits) would persist despite Cancel.
+        if result == QDialog.DialogCode.Rejected:
+            self._restore_config_from_snapshot()
         super().done(result)
+
+    def _restore_config_from_snapshot(self) -> None:
+        """Restore the live config to the snapshot taken at construction.
+
+        Copies field-by-field rather than swapping the object reference
+        so callers that hold ``config`` (the panel, the agent runner)
+        see the reverted values without us having to propagate a new
+        object up the call stack.
+        """
+        snap = self._config_snapshot
+        self._config.provider.name = snap.provider.name
+        self._config.provider.api_key = snap.provider.api_key
+        self._config.provider.api_base = snap.provider.api_base
+        self._config.provider.model = snap.provider.model
+        self._config.provider.temperature = snap.provider.temperature
+        self._config.provider.max_tokens = snap.provider.max_tokens
+        self._config.provider.context_window = snap.provider.context_window
+        self._config.providers = copy.deepcopy(snap.providers)
+        self._config.custom_providers = copy.deepcopy(snap.custom_providers)
+        self._config.active_profile = snap.active_profile
+        self._config.theme = snap.theme
+        self._config.disabled_skills = list(snap.disabled_skills)
+        self._config.enabled_external_skills = list(snap.enabled_external_skills)
+        self._config.enabled_external_mcp = list(snap.enabled_external_mcp)
 
     # --- Fetcher polling (main thread only, no cross-thread signals) ---
 

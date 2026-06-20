@@ -310,6 +310,55 @@ class TestInlineCodeSpans(unittest.TestCase):
         self.assertIn("&lt;b&gt;", result)
 
 
+class TestMdToHtmlHtmlInjection(unittest.TestCase):
+    """Regression: raw HTML must never reach the Qt rich-text engine.
+
+    Rikugan is a reverse-engineering tool where untrusted binary
+    content (strings, decompiler output, function names) flows into
+    the LLM prompt and back into the assistant's markdown response.
+    CLAUDE.md section 3 names binary-as-prompt-injection as a top
+    attack surface, so the markdown render boundary must escape — not
+    emit verbatim — any raw HTML the model echoes.
+
+    The ``commonmark`` preset of ``markdown-it-py`` defaults to
+    ``html: True`` (verified at runtime), which emits ``html_block`` /
+    ``html_inline`` tokens whose content the renderer passed through
+    untouched. A binary that embeds ``<img src=x onerror=...>`` in a
+    string the assistant quotes would render it in the chat QLabel.
+    These tests pin the safe behaviour: raw HTML is escaped so the
+    user sees the literal markup instead of the browser interpreting it.
+    """
+
+    def test_block_level_script_is_escaped(self):
+        result = md_to_html("<script>alert(1)</script>")
+        self.assertNotIn("<script>", result)
+        # The literal text must still be visible to the user.
+        self.assertIn("&lt;script&gt;", result)
+
+    def test_inline_img_onerror_is_escaped(self):
+        result = md_to_html("hi <img src=x onerror=alert(1)> bye")
+        # The attack vector is the ``<img>`` *tag* reaching Qt's rich
+        # text engine (which could load the image / fire onerror). Once
+        # the tag is escaped to ``&lt;img&gt;`` the rest is inert text,
+        # so we assert on the tag boundary, not on the literal word
+        # "onerror" (an analyst may legitimately quote that word).
+        self.assertNotIn("<img", result)
+        self.assertIn("&lt;img", result)
+
+    def test_inline_bold_tag_is_escaped_not_rendered(self):
+        # A model echoing real HTML should show as text, not render as
+        # bold in the chat bubble.
+        result = md_to_html("plain <b>bold</b> text")
+        self.assertNotIn("<b>", result)
+        self.assertIn("&lt;b&gt;", result)
+
+    def test_javascript_link_not_interpreted(self):
+        # The javascript: scheme in a link must not survive as a real
+        # href the Qt rich-text engine would honour on click.
+        result = md_to_html("[click](javascript:alert(1))")
+        self.assertNotIn('href="javascript:', result)
+
+
 class TestMdToHtmlIntegration(unittest.TestCase):
     def test_mixed_content(self):
         md = "# Title\n\nSome **bold** and `code`.\n\n- item\n- item2"

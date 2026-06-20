@@ -916,6 +916,98 @@ class TestThemeManagerBootstrapsFromConfig(unittest.TestCase):
         self.assertEqual(self._ThemeManager.instance().mode, ThemeMode.IDA_NATIVE)
 
 
+class TestSettingsDialogCancelReverts(unittest.TestCase):
+    """Cancelling the settings dialog must revert every config mutation.
+
+    Regression: ``_on_provider_changed`` wrote edits into the *live*
+    ``self._config`` (via ``_sync_config_from_ui`` +
+    ``config.switch_provider``) so a provider switch persisted
+    immediately. Because ``done(Rejected)`` only closed the dialog
+    without reverting, clicking Cancel after switching providers left
+    the config silently altered — losing the previous provider's API
+    key/model. These tests pin the Cancel = discard contract: whatever
+    the user does inside the dialog, a rejected dialog restores the
+    config object to its pre-dialog state.
+    """
+
+    def setUp(self):
+        _install_real_config_module()
+        _install_tab_stubs()
+        from rikugan.ui.theme.manager import ThemeManager
+
+        self._ThemeManager = ThemeManager
+        ThemeManager.reset()
+
+    def tearDown(self):
+        self._ThemeManager.reset()
+
+    def _build_dialog(self, config=None):
+        from rikugan.core.config import RikuganConfig
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        if config is None:
+            config = RikuganConfig()
+        return config, SettingsDialog(config=config)
+
+    def test_cancel_reverts_provider_switch(self):
+        from rikugan.core.config import RikuganConfig
+
+        config = RikuganConfig()
+        config.provider.name = "anthropic"
+        config.provider.api_key = "sk-original-key"
+        _, dlg = self._build_dialog(config=config)
+
+        original_name = config.provider.name
+        original_key = config.provider.api_key
+
+        # Simulate the in-dialog mutation the current code performs when
+        # the user switches providers — the live config is rewritten.
+        config.switch_provider("gemini")
+        self.assertNotEqual(config.provider.name, original_name)
+
+        # ... then the user changes their mind and cancels the dialog.
+        from rikugan.ui.qt_compat import QDialog
+
+        dlg.done(QDialog.DialogCode.Rejected)
+
+        self.assertEqual(config.provider.name, original_name)
+        self.assertEqual(config.provider.api_key, original_key)
+
+    def test_cancel_reverts_api_key_edit(self):
+        from rikugan.core.config import RikuganConfig
+
+        config = RikuganConfig()
+        config.provider.name = "anthropic"
+        config.provider.api_key = "sk-original-key"
+        _, dlg = self._build_dialog(config=config)
+
+        # An in-dialog edit mutates the live config (the bug).
+        config.provider.api_key = "sk-typo-wrong-key"
+        from rikugan.ui.qt_compat import QDialog
+
+        dlg.done(QDialog.DialogCode.Rejected)
+
+        # The live config must not carry the typo after cancel.
+        self.assertEqual(config.provider.api_key, "sk-original-key")
+
+    def test_accept_still_persists_changes(self):
+        # Guard: revert-on-reject must not also clobber the accept path.
+        from rikugan.core.config import RikuganConfig
+
+        config = RikuganConfig()
+        config.provider.name = "anthropic"
+        config.provider.api_key = "sk-original-key"
+        _, dlg = self._build_dialog(config=config)
+
+        config.switch_provider("gemini")
+        from rikugan.ui.qt_compat import QDialog
+
+        dlg.done(QDialog.DialogCode.Accepted)
+
+        # Accept path keeps the change the user just made.
+        self.assertEqual(config.provider.name, "gemini")
+
+
 def tearDownModule() -> None:
     """Remove the stub modules this test file installed.
 

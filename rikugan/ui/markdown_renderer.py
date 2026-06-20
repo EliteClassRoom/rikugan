@@ -295,10 +295,14 @@ class QtRenderer:
                 i += 1
                 continue
             if ttype == "html_block":
-                # ``markdown-it`` already filtered any unsafe HTML
-                # when configured with ``html: false``; emit it
-                # verbatim so the user sees their raw markup.
-                out.append(tok.content)
+                # Defensive: the parser is configured with
+                # ``html: False`` (see rikugan/ui/markdown.py) so raw
+                # HTML never reaches this branch — it is emitted as
+                # escaped text via the CommonMark path instead. If a
+                # future change re-enables HTML, escape here rather
+                # than passing through verbatim, since binary content
+                # is an injection vector.
+                out.append(_html.escape(tok.content))
                 i += 1
                 continue
             if ttype == "table_open":

@@ -93,7 +93,17 @@ def _resolve_markdown_it() -> tuple | None:
     except ImportError:
         _markdown_it_failed = True
         return None
-    md = MarkdownIt("commonmark").enable("table").enable("strikethrough")
+    # ``html: False`` is deliberate: Rikugan renders untrusted binary
+    # content (strings, decompiler output, function names) that has
+    # flowed through the LLM and back into the assistant's markdown
+    # response. With the default ``html: True``, markdown-it emits
+    # ``html_block`` / ``html_inline`` tokens whose content this code's
+    # renderer passes through verbatim — letting ``<script>`` /
+    # ``<img onerror=...>`` reach the Qt rich-text engine. Disabling raw
+    # HTML turns those into escaped text so the user sees the literal
+    # markup instead of the browser interpreting it. See CLAUDE.md
+    # section 3 (binary-as-prompt-injection attack surface).
+    md = MarkdownIt("commonmark", {"html": False}).enable("table").enable("strikethrough")
     renderer = QtRenderer(md)
     _md_instance, _qt_renderer = md, renderer
     return md, renderer

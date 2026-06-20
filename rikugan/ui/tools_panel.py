@@ -21,7 +21,7 @@ from .styles import (
 
 
 class ToolsPanel(QWidget):
-    """Standalone tools window containing tabs: Renamer, Agents, A2A, Orchestra."""
+    """Standalone tools window containing tabs: Renamer, Agents, A2A."""
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
@@ -76,11 +76,6 @@ class ToolsPanel(QWidget):
             self._a2a_widget.setStyleSheet(get_placeholder_style())
         self._tabs.addTab(self._a2a_widget, "A2A")
 
-        self._orchestra_placeholder = QLabel("Not loaded")
-        self._orchestra_placeholder.setStyleSheet(get_placeholder_style())
-        self._orchestra_placeholder.setWordWrap(True)
-        self._tabs.addTab(self._orchestra_placeholder, "Orchestra")
-
         main_layout.addWidget(self._tabs)
 
     def _replace_tab(self, index: int, widget: QWidget, label: str) -> None:
@@ -102,10 +97,6 @@ class ToolsPanel(QWidget):
     def set_a2a_widget(self, widget: QWidget) -> None:
         """Replace the A2A tab content (replaces our default bridge)."""
         self._replace_tab(2, widget, "A2A")
-
-    def set_orchestra_widget(self, widget: QWidget) -> None:
-        """Replace the Orchestra tab content."""
-        self._replace_tab(3, widget, "Orchestra")
 
     def hide_header(self) -> None:
         """Hide the title bar (used when embedded in a dockable form)."""

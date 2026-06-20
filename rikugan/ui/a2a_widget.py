@@ -272,8 +272,18 @@ class A2ABridgeWidget(QWidget):
         # Options
         opt_row = QHBoxLayout()
         self._include_context_check = QCheckBox("Include current binary context")
+        # Disabled: the widget used to forward a "not implemented"
+        # placeholder string instead of real binary context, which
+        # silently misled users (the external agent answered with no
+        # context). Leave the control visible-but-off with an honest
+        # tooltip until the dispatcher path that injects real context
+        # is wired in. See C5 / Phase 2.
+        self._include_context_check.setEnabled(False)
+        self._include_context_check.setChecked(False)
         self._include_context_check.setToolTip(
-            "Prepend the binary name, arch, entry point, and current function decompilation to the task before sending."
+            "Not available yet — binary-context injection for external agents "
+            "is planned for a future release. Describe the relevant context in "
+            "the task text for now."
         )
         opt_row.addWidget(self._include_context_check)
         opt_row.addStretch(1)
@@ -430,16 +440,13 @@ class A2ABridgeWidget(QWidget):
             self._task_edit.setFocus()
             return
 
-        # Build context prefix if requested. We don't reach into
-        # the IDA tool registry here — the dispatcher has its own
-        # context-loading path. The widget just forwards the bool.
+        # Binary-context inclusion is disabled in the UI (checkbox is
+        # off + unclickable) until the dispatcher path that injects
+        # real context is wired in. Forwarding the checkbox state here
+        # would previously send a misleading "not implemented"
+        # placeholder to the external agent; we send no prefix until
+        # the feature ships.
         context_prefix = ""
-        if self._include_context_check.isChecked():
-            context_prefix = (
-                "[Rikugan binary context requested but not implemented in this "
-                "build — tool_registry injection is wired in the dispatcher but "
-                "not yet exposed via the widget. See Phase 2 follow-up.]"
-            )
 
         task_id = uuid.uuid4().hex[:12]
         row = _HistoryRow(
