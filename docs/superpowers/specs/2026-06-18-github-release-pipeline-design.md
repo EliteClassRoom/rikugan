@@ -156,8 +156,8 @@ A tag is marked pre-release if it matches `-(rc|alpha|beta|pre|dev)[0-9]*$`:
 | `v1.2.3` | `false` | stable |
 | `v2.0.0-rc1` | `true` | pre-release |
 | `v2.0.0-beta2` | `true` | pre-release |
-| `1.0` (legacy) | `false` | stable |
-| `1.2.3-dev4` | `true` | pre-release |
+| `v1.0.0` (legacy, written `1.0` at the time) | `false` | stable |
+| `v1.2.3-dev4` | `true` | pre-release |
 
 The regex is intentionally simple. It does not catch every pre-release convention SemVer recognizes (e.g., `.` separators in `1.2.0.0`), but it covers the conventions used in this project (`-rc`, `-alpha`, `-beta`, `-pre`, `-dev`).
 
