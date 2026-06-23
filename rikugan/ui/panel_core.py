@@ -1133,9 +1133,21 @@ class RikuganPanelCore(QWidget):
             # (observed on PySide6 6.7+ when the signal is on a
             # partially-initialised manager).
             try:
+                import warnings
+
                 from .theme.manager import ThemeManager
 
-                ThemeManager.instance().themeChanged.disconnect(self._on_theme_changed)
+                # PySide6 emits a RuntimeWarning (NOT an exception) when
+                # disconnecting a slot that was never connected. Suppress
+                # just that case to keep test output clean; the call itself
+                # is idempotent at the Qt level.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        category=RuntimeWarning,
+                        message=".*Failed to disconnect.*",
+                    )
+                    ThemeManager.instance().themeChanged.disconnect(self._on_theme_changed)
             except (RuntimeError, TypeError, SystemError, ImportError) as e:
                 log_debug(f"ThemeManager disconnect skipped: {e}")
             _SharedSpinnerTimer.shutdown()
