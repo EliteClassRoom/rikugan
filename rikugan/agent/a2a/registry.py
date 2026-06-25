@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from ...core.logging import log_debug
 from .client import A2AClient
 from .subprocess_bridge import SubprocessBridge
 from .types import ExternalAgentConfig
@@ -73,8 +74,9 @@ class ExternalAgentRegistry:
                     cfg.model = spec.get("model", cfg.model)
                     out.append(cfg)
                     continue
-            except Exception:
-                pass
+            except Exception as e:
+                # Best-effort discovery: fall back to a manual config below.
+                log_debug(f"a2a registry discover failed for {endpoint}: {e}")
             out.append(
                 ExternalAgentConfig(
                     name=spec.get("name", "unknown"),

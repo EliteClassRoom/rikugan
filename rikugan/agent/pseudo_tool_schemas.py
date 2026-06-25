@@ -18,6 +18,8 @@ changing them changes model behaviour.  ``loop.py`` imports these
 constants rather than redefining them inline.
 """
 
+from __future__ import annotations
+
 # Pseudo-tool: structured finding during binary exploration.
 EXPLORATION_REPORT_SCHEMA: dict = {
     "type": "function",

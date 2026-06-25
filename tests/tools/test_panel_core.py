@@ -210,12 +210,14 @@ sys.modules.pop("rikugan.ui.panel_core", None)
 # after a panel-core test in the same pytest invocation.
 import pytest  # noqa: E402
 
-from rikugan.ui.panel_core import (  # noqa: E402
+from rikugan.ui.export_formatting import (  # noqa: E402
     _TOOL_RESULT_TRUNCATE_CHARS,
-    RikuganPanelCore,
     _export_detect_lang,
     _export_format_tool_args,
     _export_format_tool_result,
+)
+from rikugan.ui.panel_core import (  # noqa: E402
+    RikuganPanelCore,
 )
 
 

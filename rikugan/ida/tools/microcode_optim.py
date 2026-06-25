@@ -122,6 +122,12 @@ def compile_optimizer(name: str, python_code: str) -> Callable[..., Any]:
     """Compile user-provided optimizer code and extract the optimize function.
 
     Returns the callable, or raises with an error message string.
+
+    Security note: the ``exec`` here compiles user-supplied optimizer code,
+    but the namespace is built by :func:`build_optimizer_namespace` using
+    ``safe_builtins()`` (restricted builtins) plus only the ``ida_hexrays``
+    opcode/operand constants. This is an intentional, sandboxed use of exec
+    analogous to the ``execute_python`` tool — not arbitrary code execution.
     """
     namespace = build_optimizer_namespace()
     code = textwrap.dedent(python_code)

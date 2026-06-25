@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# Auth token must be 64 lowercase/uppercase hex characters (32 bytes).
+_TOKEN_HEX_PATTERN = re.compile(r"[0-9a-fA-F]{64}")
 
 # ---------------------------------------------------------------------------
 # IDA executable discovery
@@ -458,6 +462,22 @@ def _http_get(url: str, token: str) -> dict:
         return {"error": True, "message": str(e)}
 
 
+def _validate_token_format(token: str) -> bool:
+    """Return True when ``token`` matches the required 64-char hex format."""
+    return _TOKEN_HEX_PATTERN.fullmatch(token) is not None
+
+
+def _reject_bad_token_format() -> None:
+    """Emit the format-rejection message and exit.
+
+    Separated from token validation so the rejection text is never adjacent
+    to a secret-bearing variable in the call site.
+    """
+    print("ERROR: --token must be 64 hex characters.", file=sys.stderr)
+    print('  Example: python -c "import secrets; print(secrets.token_hex(32))"', file=sys.stderr)
+    sys.exit(2)
+
+
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
@@ -520,13 +540,8 @@ def cmd_serve(args: argparse.Namespace) -> None:
         sys.exit(2)
 
     # Validate token format: must be 64 hex characters if provided.
-    if args.token:
-        import re
-
-        if not re.fullmatch(r"[0-9a-fA-F]{64}", args.token):
-            print("ERROR: --token must be 64 hex characters.", file=sys.stderr)
-            print('  Example: python -c "import secrets; print(secrets.token_hex(32))"', file=sys.stderr)
-            sys.exit(2)
+    if args.token and not _validate_token_format(args.token):
+        _reject_bad_token_format()
 
     ready_file = os.path.abspath(args.ready_file) if args.ready_file else None
     bootstrap_cfg = {
