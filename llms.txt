@@ -65,9 +65,7 @@ rikugan_plugin.py           # IDA Pro entry point
 | `/driver-analysis` | Windows kernel drivers, DispatchTable, IOCTL |
 | `/ctf` | CTF challenge solving |
 | `/generic-re` | General-purpose binary analysis |
-| `/ida-scripting` | IDAPython API reference |
-| `/ida-docs` | Search and browse official IDA Pro documentation |
-| `/ida-pro-mcp` | IDAPython scripting reference — disassembly, decompilation, types, xrefs |
+| `/ida-scripting` | IDAPython scripting — fetch official hex-rays.com docs first, verified snippets for stable tasks, offline reference fallback |
 | `/modify` | Exploration mode skill for binary modification |
 | `/smart-patch-ida` | IDA-specific binary patching workflow |
 

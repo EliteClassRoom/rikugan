@@ -66,6 +66,10 @@ def _parse_frontmatter(text: str) -> dict[str, Any]:
             j = i + 1
             while j < len(lines):
                 bline = lines[j]
+                # Skip comments inside a block (consistent with top-level parsing)
+                if bline.strip().startswith("#"):
+                    j += 1
+                    continue
                 # Block list item
                 bm = re.match(r"^\s+-\s+(.*)", bline)
                 if bm:

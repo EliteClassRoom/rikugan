@@ -1,287 +1,249 @@
 ---
 name: IDA Scripting
-description: Write and execute IDAPython scripts — full API reference included
-tags: [scripting, ida, python, automation]
+description: Write IDAPython scripts. Compact inline reference for common tasks, verified for IDA 9.x. Deep offline reference (ctree, microcode, types) appended below; fetch a module doc only when you need exhaustive detail.
+tags: [scripting, ida, python, automation, idapython, documentation]
 author: Rikugan
-version: 1.0
+version: 3.0
+triggers:
+  - idapython
+  - ida python
+  - write ida script
+  - ida script
+  - ida api
+  - ida_bytes
+  - ida_funcs
+  - ida_hexrays
+  - ida_typeinf
+  - ida_name
+  - ida_segment
+  - ida_xref
+  - ida_kernwin
+  - idautils
+  - idc module
+  - ida documentation
+  - idapython documentation
+  - ida docs
+  - how do i read bytes
+  - how to iterate functions
+  - how to use decompiler
+  - how to find xrefs
+  - how to create structure
+  - how to rename
+  - domain api
+  - ida_domain
+  - ida 9.1
+  - ida 9.
+  - ida release notes
+  - microcode
+  - ctree
+allowed_tools:
+  - web_fetch
+  - execute_python
+  - decompile_function
+  - get_decompiler_variables
+  - get_pseudocode
+  - list_functions
+  - search_functions
+  - get_function_info
+  - list_strings
+  - search_strings
+  - get_string_at
+  - read_bytes
+  - read_disassembly
+  - read_function_disassembly
+  - get_instruction_info
+  - set_comment
+  - set_function_comment
+  - set_type
+  - rename_function
+  - rename_address
+  - rename_variable
+  - xrefs_to
+  - xrefs_from
+  - function_xrefs
 ---
-Task: Help the user write IDAPython scripts. You have `execute_python` which runs code with all `ida_*` modules, `idaapi`, `idautils`, and `idc` pre-loaded.
 
-## Guidelines
-
-- Use `print()` for all output — it's captured and returned to you.
-- Prefer the IDAPython API over raw tool calls when the task requires iteration, filtering, or complex logic that a single tool can't express.
-- Always handle `None` / `BADADDR` returns (e.g., `ida_funcs.get_func()` returns `None` if no function).
-- Use `ida_auto.auto_wait()` after bulk modifications to let auto-analysis settle.
-- For large outputs, summarize or paginate — don't dump thousands of lines.
-- Call `ida_hexrays.mark_cfunc_dirty(ea)` before re-decompiling a function you've modified.
-- IDA 9+ removed `ida_struct` and `ida_enum` — use `ida_typeinf` for all type operations.
+Task: Write IDAPython scripts with `execute_python`. Use modern `ida_*` modules;
+avoid the legacy `idc` module where a direct `ida_*` call exists.
 
 ## Environment
 
-The `execute_python` tool provides:
-- `idaapi`, `idautils`, `idc` — high-level wrappers
-- `ida_funcs`, `ida_name`, `ida_bytes`, `ida_segment`, `ida_typeinf`, `ida_nalt`, `ida_xref`, `ida_kernwin`, `ida_hexrays`, `ida_lines`, `ida_search`, `ida_ida`, `ida_entry`, `ida_frame`, `ida_auto`, `ida_gdl`, `ida_netnode` — low-level modules
-- Full Python stdlib (except subprocess/os.exec — blocked for safety)
-- `BADADDR` is available via `idaapi.BADADDR`
+`execute_python` pre-imports: `idaapi`, `idautils`, `idc`, `ida_funcs`, `ida_name`,
+`ida_bytes`, `ida_segment`, `ida_typeinf`, `ida_nalt`, `ida_xref`, `ida_kernwin`,
+`ida_domain` (when installed, IDA 9.1+). Note: `ida_struct`/`ida_enum` are NOT
+available (removed in IDA 9) — use `ida_typeinf`. Full stdlib
+except process-execution modules (`subprocess`, `os.system`, `os.exec*` — blocked).
+`print()` output is captured and returned.
 
-## Quick Reference
+## Module Router
 
-### Reading Data
+| Task | Module | Key items |
+|------|--------|-----------|
+| Bytes/memory | `ida_bytes` | `get_bytes`, `patch_bytes`, `get_byte/word/dword/qword`, `get_strlit_contents`, `get_full_flags`, `is_code`, `is_data` |
+| Functions | `ida_funcs` | `func_t`, `get_func`, `add_func`, `get_func_name`, `get_next_func` |
+| Names | `ida_name` | `set_name`, `get_name`, `demangle_name`, `get_name_ea`, `SN_CHECK` |
+| Types | `ida_typeinf` | `tinfo_t`, `udt_type_data_t`, `udm_t`, `apply_tinfo`, `apply_cdecl`, `parse_decl` |
+| Decompiler | `ida_hexrays` | `decompile`, `cfunc_t`, `lvar_t`, `ctree_visitor_t`, `mba_t` |
+| Segments | `ida_segment` | `segment_t`, `getseg`, `get_segm_by_name` |
+| Xrefs | `ida_xref` | `xrefblk_t`, `add_cref`, `add_dref`, `XREF_ALL` |
+| Instructions | `ida_ua` | `insn_t`, `op_t`, `decode_insn` |
+| Stack frames | `ida_frame` | `get_func_frame`, `define_stkvar` |
+| Iteration | `idautils` | `Functions`, `Heads`, `XrefsTo`, `XrefsFrom`, `CodeRefsTo`, `DataRefsTo`, `Strings`, `Names`, `Segments` |
+| UI/dialogs | `ida_kernwin` | `msg`, `ask_str`, `ask_yn`, `jumpto`, `get_screen_ea`, `Choose` |
+| Database info | `ida_ida` | `inf_get_procname`, `inf_is_64bit`, `inf_get_min_ea`, `inf_get_max_ea` |
+| Analysis | `ida_auto` | `auto_wait`, `plan_and_wait` |
+| Flow graphs | `ida_gdl` | `FlowChart`, `BasicBlock` |
+| Register tracking | `ida_regfinder` | `find_reg_value`, `reg_value_info_t` |
+| Persistent storage | `ida_netnode` | `netnode`, `hashset`, `hashstr`, `altset`, `setblob` |
+
+## Core Patterns (verified for IDA 9.x)
+
 ```python
-val = ida_bytes.get_byte(ea)            # uint8
-val = ida_bytes.get_dword(ea)           # uint32
-val = ida_bytes.get_qword(ea)           # uint64
-raw = ida_bytes.get_bytes(ea, size)     # bytes
-s = ida_bytes.get_strlit_contents(ea, -1, ida_nalt.STRTYPE_C)
-```
+# Iterate functions
+for ea in idautils.Functions():
+    name = ida_funcs.get_func_name(ea)
+    func = ida_funcs.get_func(ea)        # func_t or None — check before .start_ea
+    # func.start_ea, func.end_ea, func.flags
 
-### Functions
-```python
-for func_ea in idautils.Functions():
-    name = idc.get_func_name(func_ea)
+# Iterate instructions in a function
+for head in idautils.FuncItems(func_ea):
+    insn = ida_ua.insn_t()
+    if ida_ua.decode_insn(insn, head):
+        print(f"{head:#x}: itype={insn.itype}")
 
-func = ida_funcs.get_func(ea)           # func_t or None
-# func.start_ea, func.end_ea, func.flags
-idc.add_func(ea)                        # create function
+# Cross-references
+for xref in idautils.XrefsTo(ea, ida_xref.XREF_ALL):
+    print(f"{xref.frm:#x} -> {xref.to:#x} type={xref.type}")
+for ref in idautils.CodeRefsTo(ea, False):   # False = no flow
+    ...
+for ref in idautils.DataRefsTo(ea):
+    ...
+
+# Read / write bytes
+data = ida_bytes.get_bytes(ea, size)
+val = ida_bytes.get_qword(ea)
+s = ida_bytes.get_strlit_contents(ea, -1, ida_nalt.STRTYPE_C)  # returns bytes
+ida_bytes.patch_bytes(ea, b"\x90\x90")
+
+# Names
+name = ida_name.get_name(ea)
 ida_name.set_name(ea, "new_name", ida_name.SN_CHECK)
-```
 
-### Decompiler (Hex-Rays)
-```python
-cfunc = ida_hexrays.decompile(ea)       # cfuncptr_t
-pseudocode = cfunc.get_pseudocode()     # simpleline_t vector
-for line in pseudocode:
-    print(ida_lines.tag_remove(line.line))
+# Decompile (ALWAYS wrap — raises DecompilationFailure)
+try:
+    cfunc = ida_hexrays.decompile(ea)
+    print(cfunc)
+    for lvar in cfunc.lvars:
+        print(f"{lvar.name}: {lvar.type()}")
+except ida_hexrays.DecompilationFailure:
+    pass
 
-# Local variables
-for lvar in cfunc.get_lvars():
-    print(f"{lvar.name}: {lvar.type()}")
-
-# CTree visitor
-class MyVisitor(ida_hexrays.ctree_visitor_t):
+# Walk the ctree (decompiled AST)
+class CallVisitor(ida_hexrays.ctree_visitor_t):
     def __init__(self):
         super().__init__(ida_hexrays.CV_FAST)
-    def visit_expr(self, expr):
-        if expr.op == ida_hexrays.cot_call:
-            print(f"Call at {hex(expr.ea)}")
+    def visit_expr(self, e):
+        if e.op == ida_hexrays.cot_call:
+            print(f"Call at {e.ea:#x}")
         return 0
+cfunc = ida_hexrays.decompile(ea)
+CallVisitor().apply_to(cfunc.body, None)
 
-visitor = MyVisitor()
-visitor.apply_to(cfunc.body, None)
-```
+# Wait for auto-analysis before reading bulk results
+ida_auto.auto_wait()
 
-### Cross-References
-```python
-for xref in idautils.XrefsTo(ea):
-    print(f"from {hex(xref.frm)}, type={xref.type}")
-for xref in idautils.XrefsFrom(ea):
-    print(f"to {hex(xref.to)}")
-for ref in idautils.CodeRefsTo(ea, False):   # False = no flow
-    print(hex(ref))
-for ref in idautils.DataRefsTo(ea):
-    print(hex(ref))
-```
-
-### Types (IDA 9+)
-
-**Critical: `udm_t.offset` is in BITS, not bytes. `udm_t.size` is also in BITS.**
-
-```python
-import ida_typeinf
-
-# Helper: make a simple integer tinfo_t
-def make_int_type(byte_size: int, signed: bool = False) -> ida_typeinf.tinfo_t:
-    bt_map = {
-        (1, False): ida_typeinf.BT_INT8,
-        (1, True):  ida_typeinf.BT_INT8,
-        (2, False): ida_typeinf.BT_INT16,
-        (2, True):  ida_typeinf.BT_INT16,
-        (4, False): ida_typeinf.BT_INT32,
-        (4, True):  ida_typeinf.BT_INT32,
-        (8, False): ida_typeinf.BT_INT64,
-        (8, True):  ida_typeinf.BT_INT64,
-    }
-    t = ida_typeinf.tinfo_t()
-    t.create_simple_type(bt_map[(byte_size, signed)])
-    return t
-
-# Helper: make a pointer type
-def make_ptr_type(inner: ida_typeinf.tinfo_t) -> ida_typeinf.tinfo_t:
-    pd = ida_typeinf.ptr_type_data_t()
-    pd.obj_type = inner
-    t = ida_typeinf.tinfo_t()
-    t.create_ptr(pd)
-    return t
-
-# Helper: make an array type
-def make_array_type(elem: ida_typeinf.tinfo_t, count: int) -> ida_typeinf.tinfo_t:
-    ad = ida_typeinf.array_type_data_t()
-    ad.elem_type = elem
-    ad.nelems = count
-    t = ida_typeinf.tinfo_t()
-    t.create_array(ad)
-    return t
-
-# Build struct — offsets in BITS
-def make_struct(name: str, fields: list) -> ida_typeinf.tinfo_t:
-    """fields = [(name, tinfo_t, byte_offset), ...]"""
-    udt = ida_typeinf.udt_type_data_t()
-    for fname, ftype, byte_off in fields:
-        udm = ida_typeinf.udm_t()
-        udm.name = fname
-        udm.type = ftype
-        udm.offset = byte_off * 8   # ← BITS, not bytes
-        udt.push_back(udm)
-    tif = ida_typeinf.tinfo_t()
-    tif.create_udt(udt, ida_typeinf.BTF_STRUCT)
-    tif.set_named_type(None, name, ida_typeinf.NTF_REPLACE)
-    return tif
-
-# Example: struct Elf32_auxv_entry { uint32_t a_type; uint32_t a_val; }
-auxv_tif = make_struct("Elf32_auxv_entry", [
-    ("a_type", make_int_type(4, False), 0),
-    ("a_val",  make_int_type(4, False), 4),
-])
-
-# Example: struct with pointer and array fields
-char_ptr = make_ptr_type(make_int_type(1))          # char*
-char_pp  = make_ptr_type(char_ptr)                  # char**
-u8_arr   = make_array_type(make_int_type(1), 16)    # uint8_t[16]
-make_struct("StartupInfo", [
-    ("argv",  char_pp, 0),
-    ("buf",   u8_arr,  8),
-])
-
-# Reference a previously defined struct by name
-def get_named_type(name: str) -> ida_typeinf.tinfo_t:
-    t = ida_typeinf.tinfo_t()
-    if not t.get_named_type(None, name):
-        raise ValueError(f"Type '{name}' not found in type library")
-    return t
-
-# Apply type to address
-ida_typeinf.apply_tinfo(ea, auxv_tif, ida_typeinf.TINFO_DEFINITE)
-
-# Validate after creation
-t = ida_typeinf.tinfo_t()
-if t.get_named_type(None, "Elf32_auxv_entry"):
-    print(f"OK: {t.dstr()}, size={t.get_size()} bytes")
-else:
-    print("ERROR: type not registered")
-
-# Simpler alternative for well-known C types: parse C declaration directly
-# Works well for types IDA already knows; avoid for custom typedefs
-ida_typeinf.apply_cdecl(None, ea, "int __cdecl func(int a, char *b)")
-
-# Create enum
-edt = ida_typeinf.enum_type_data_t()
-for vname, vval in [("VAL_A", 0), ("VAL_B", 1)]:
-    edm = ida_typeinf.edm_t()
-    edm.name = vname; edm.value = vval
-    edt.push_back(edm)
-tif_enum = ida_typeinf.tinfo_t()
-tif_enum.create_enum(edt)
-tif_enum.set_named_type(None, "MyEnum", ida_typeinf.NTF_REPLACE)
-```
-
-### Segments & Strings
-```python
-for seg_ea in idautils.Segments():
-    seg = ida_segment.getseg(seg_ea)
-    print(f"{ida_segment.get_segm_name(seg)}: {hex(seg.start_ea)}-{hex(seg.end_ea)}")
-
+# Strings
 for s in idautils.Strings():
-    refs = list(idautils.DataRefsTo(s.ea))
-    print(f"'{s}' @ {hex(s.ea)}, refs={len(refs)}")
-```
+    print(f"{s.ea:#x}: {str(s)}")
 
-### Names & Comments
-```python
-for ea, name in idautils.Names():
-    print(f"{hex(ea)}: {name}")
-
-ida_name.set_name(ea, "my_label", ida_name.SN_CHECK)
-idc.set_cmt(ea, "note", 0)              # 0=regular, 1=repeatable
-idc.set_func_cmt(ea, "description", 0)
-```
-
-### Search
-```python
-# IDA 9+
-ea = ida_bytes.find_bytes(start_ea, "48 8B ?? ?? 90", 0)
-
-# Pattern search loop
-ea = start_ea
-while ea != idaapi.BADADDR:
-    ea = ida_search.find_binary(ea, idaapi.BADADDR, "E8 ?? ?? ?? ??", 16,
-                                 ida_search.SEARCH_DOWN | ida_search.SEARCH_NEXT)
-    if ea != idaapi.BADADDR:
-        print(hex(ea))
-```
-
-### Patching
-```python
-ida_bytes.patch_byte(ea, 0x90)           # NOP
-ida_bytes.patch_bytes(ea, b"\x90" * 5)   # NOP sled
-ida_bytes.patch_dword(ea, 0)
-```
-
-### UI
-```python
-ea = ida_kernwin.get_screen_ea()
-ida_kernwin.jumpto(target_ea)
-ida_kernwin.msg("Info message\n")
-name = ida_kernwin.ask_str("default", 0, "Enter name:")
-choice = ida_kernwin.ask_yn(1, "Sure?")
-ida_kernwin.show_wait_box("Processing...")
-# ... work ...
-ida_kernwin.hide_wait_box()
-```
-
-### Control Flow Graph
-```python
-func = ida_funcs.get_func(ea)
-fc = ida_gdl.FlowChart(func)
-for block in fc:
-    print(f"Block {hex(block.start_ea)}-{hex(block.end_ea)}")
-    for succ in block.succs():
-        print(f"  -> {hex(succ.start_ea)}")
-```
-
-### Common Patterns
-```python
-# Find all callers of a function
-target = ida_name.get_name_ea(idaapi.BADADDR, "malloc")
-if target != idaapi.BADADDR:
-    for ref in idautils.CodeRefsTo(target, False):
-        func = ida_funcs.get_func(ref)
-        if func:
-            print(f"Called from {idc.get_func_name(func.start_ea)} @ {hex(ref)}")
-
-# Batch decompile
-for func_ea in idautils.Functions():
-    try:
-        cfunc = ida_hexrays.decompile(func_ea)
-        text = "\n".join(ida_lines.tag_remove(l.line) for l in cfunc.get_pseudocode())
-    except ida_hexrays.DecompilationFailure:
-        pass
-
-# Persistent storage via netnodes
+# Persistent storage (netnodes)
 node = ida_netnode.netnode("$my_data", 0, True)
 node.hashset("key", "value")
-val = node.hashstr("key")
+print(node.hashstr("key"))
 ```
 
-## Important Notes
+## Types — IDA 9.x (CRITICAL: offsets/sizes in BITS)
 
-- `BADADDR` = `0xFFFFFFFF` (32-bit) or `0xFFFFFFFFFFFFFFFF` (64-bit) — always compare against it.
-- `ida_hexrays.decompile()` can raise `DecompilationFailure` — always wrap in try/except.
-- IDA 9 removed `ida_struct`/`ida_enum` — use `ida_typeinf` with `udt_type_data_t`/`udm_t`/`enum_type_data_t`/`edm_t`.
-- **`udm_t.offset` is in BITS, not bytes** — always multiply byte offset by 8.
-- **Never use `tinfo_t(BT_INT32)` constructor** — call `t.create_simple_type(BT_INT32)` explicitly; the single-arg constructor is unreliable across IDA versions.
-- **Always pass `NTF_REPLACE`** to `set_named_type()` when redefining a type; omitting it may silently fail on re-runs.
-- **Validate after creation** — call `t.get_named_type(None, name)` and `t.dstr()` to confirm the type registered correctly.
-- **Dependency order** — define inner struct types before outer ones; look them up with `get_named_type()` not by raw `tinfo_t`.
-- `ida_bytes.get_strlit_contents()` returns `bytes`, not `str` — decode with `.decode('utf-8', errors='replace')`.
-- Process execution (subprocess, os.system, etc.) is blocked. Static analysis only.
+`ida_struct` and `ida_enum` were **removed** in IDA 9. Use `ida_typeinf`.
+`udm_t.offset` and `udm_t.size` are in **BITS** — multiply byte values by 8.
+
+```python
+# Build a struct — concise way (IDA 9.x). add_udm's 'type' arg accepts a C
+# declaration string, sidestepping the BT_INT32/BTF_INT32 ambiguity entirely.
+# Offsets are in BITS — multiply byte values by 8.
+tif = ida_typeinf.tinfo_t()
+tif.create_udt(ida_typeinf.udt_type_data_t(), ida_typeinf.BTF_STRUCT)  # empty struct shell
+tif.add_udm("field1", "int", offset=0 * 8)        # byte 0 -> bit 0
+tif.add_udm("field2", "char *", offset=4 * 8)     # pointer field at byte 4
+tif.set_named_type(ida_typeinf.get_idati(), "MyStruct", ida_typeinf.NTF_REPLACE)
+
+# Build a struct — explicit way (full control over size/flags per member)
+udt = ida_typeinf.udt_type_data_t()
+m = ida_typeinf.udm_t()
+m.name = "field1"
+t = ida_typeinf.tinfo_t()
+t.create_simple_type(ida_typeinf.BT_INT32)   # NOT tinfo_t(BT_INT32) — unreliable
+m.type = t
+m.offset = 0 * 8    # byte 0 -> bit 0
+m.size = 4 * 8      # 4 bytes -> 32 bits
+udt.push_back(m)
+tif = ida_typeinf.tinfo_t()
+tif.create_udt(udt, ida_typeinf.BTF_STRUCT)
+tif.set_named_type(ida_typeinf.get_idati(), "MyStruct", ida_typeinf.NTF_REPLACE)
+
+# Iterate struct members
+for udm in tif.iter_struct():
+    print(f"  {udm.name}: {udm.type.dstr()} @ bit {udm.offset}")
+
+# Build a tinfo_t from a C declaration — avoids manual BT_*/BTF_* construction.
+# Constructor parses the declaration directly (til defaults to get_idati()).
+fnptr_t = ida_typeinf.tinfo_t("int (*)(void *, size_t)")   # function pointer
+# Or step-by-step via parse() (also takes til=None, pt_flags=0):
+arr_t = ida_typeinf.tinfo_t()
+arr_t.parse("char[16]")                                    # fixed array type
+
+# Apply a C declaration directly (for well-known C types)
+ida_typeinf.apply_cdecl(ida_typeinf.get_idati(), ea, "int __cdecl func(int a, char *b)")
+
+# Apply a tinfo_t
+ida_typeinf.apply_tinfo(ea, tif, ida_typeinf.TINFO_DEFINITE)
+```
+
+## Domain API (IDA 9.1+, optional)
+
+High-level, Pythonic layer on top of IDAPython. In the namespace when the
+`ida-domain` package is installed (`import ida_domain` succeeds); otherwise fall
+back to classic `ida_*` modules.
+
+```python
+from ida_domain import Database as db
+for f in db.functions: print(f.name)
+db.names[ea] = "new_name"          # rename
+for x in db.xrefs.to(ea): print(x)
+data = db.read(ea, size)
+cfunc = db.decompile(ea)
+```
+
+## Critical Rules
+
+- `ida_funcs.get_func()` returns `None` if no function — check before `.start_ea`.
+- `BADADDR` via `idaapi.BADADDR` — always compare against it.
+- `ida_hexrays.decompile()` raises `DecompilationFailure` — always wrap in try/except.
+- `ida_bytes.get_strlit_contents()` returns `bytes`, not `str` — decode if needed.
+- IDA 9 removed `ida_struct`/`ida_enum` → `ida_typeinf`. `get_inf_structure()` → `inf_get_*()`.
+- `udm_t.offset`/`udm_t.size` in BITS. Use `create_simple_type()`, never `tinfo_t(BT_*)`.
+- Pass `NTF_REPLACE` to `set_named_type()` when redefining.
+- Process execution blocked. Static analysis only.
+
+## When to fetch more
+
+The deep static reference below (`## Reference: api-reference.md`) covers ctree,
+microcode, types, xrefs, hooks, and netnodes exhaustively. For an exhaustive
+per-module reference, fetch the official page:
+
+```
+web_fetch(url="https://python.docs.hex-rays.com/ida_<module>/index.html", format="markdown")
+```
+
+For IDA 9.x migration details, fetch the porting guide:
+`https://docs.hex-rays.com/developer/idapython/idapython-porting-guide-ida-9`

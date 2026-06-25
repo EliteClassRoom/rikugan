@@ -130,10 +130,6 @@ class SubagentManager:
             from .agents.ida_disasm_reader import IDA_DISASM_READER_MAX_TURNS
 
             max_turns = max_turns or IDA_DISASM_READER_MAX_TURNS
-        elif agent_type == "ida_docs_searcher":
-            from .agents.ida_docs_searcher import IDA_DOCS_SEARCHER_MAX_TURNS
-
-            max_turns = max_turns or IDA_DOCS_SEARCHER_MAX_TURNS
 
         # Emit spawned event
         self._event_queue.put(
@@ -323,10 +319,6 @@ class SubagentManager:
             from .agents.ida_disasm_reader import build_ida_disasm_reader_addendum
 
             return build_ida_disasm_reader_addendum()
-        elif agent_type == "ida_docs_searcher":
-            from .agents.ida_docs_searcher import build_ida_docs_searcher_addendum
-
-            return build_ida_docs_searcher_addendum()
         else:
             from .agents.perks import build_perks_addendum
 

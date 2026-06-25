@@ -109,7 +109,7 @@ rikugan/
 │       ├── driver-analysis/
 │       ├── ctf/
 │       ├── generic-re/
-│       ├── ida-scripting/    # IDAPython API skill with full reference
+│       ├── ida-scripting/    # IDAPython scripting (fetch-first docs + offline reference)
 │       ├── modify/           # Exploration mode: autonomous binary modification
 │       └── smart-patch-ida/  # IDA-specific binary patching workflow
 │

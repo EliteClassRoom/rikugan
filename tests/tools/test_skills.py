@@ -9,6 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 from rikugan.skills.loader import (
@@ -34,9 +35,14 @@ class TestFrontmatterParser(unittest.TestCase):
     def test_block_list(self):
         text = "allowed_tools:\n  - decompile_function\n  - get_xrefs\n  - rename_function"
         result = _parse_frontmatter(text)
-        self.assertEqual(result["allowed_tools"], [
-            "decompile_function", "get_xrefs", "rename_function",
-        ])
+        self.assertEqual(
+            result["allowed_tools"],
+            [
+                "decompile_function",
+                "get_xrefs",
+                "rename_function",
+            ],
+        )
 
     def test_quoted_values(self):
         text = 'name: "My Quoted Skill"\nversion: "1.0"'
@@ -54,6 +60,25 @@ class TestFrontmatterParser(unittest.TestCase):
         result = _parse_frontmatter(text)
         self.assertEqual(result["name"], "Test")
         self.assertNotIn("#", result)
+
+    def test_block_list_with_leading_comment(self):
+        # Regression: a comment line at the start of a block list must NOT
+        # truncate parsing. The builtin ida-scripting SKILL.md relied on this
+        # when it had grouped comments (removed later), but the parser must
+        # stay robust to comments inside block lists.
+        text = "triggers:\n  # grouped keyword\n  - idapython\n  - write ida script\n"
+        result = _parse_frontmatter(text)
+        self.assertEqual(result["triggers"], ["idapython", "write ida script"])
+
+    def test_inline_list_no_trailing_comment_support(self):
+        # Inline lists do not strip trailing comments by design — the whole
+        # remainder after `key:` is treated as the scalar. This documents
+        # current behavior; use block lists for commented values.
+        text = "tags: [a, b]  # comment becomes part of value"
+        result = _parse_frontmatter(text)
+        # The `[a, b]  # ...` is not recognized as an inline list, so it is
+        # stored as the raw scalar string.
+        self.assertIsInstance(result["tags"], str)
 
 
 class TestSplitFrontmatter(unittest.TestCase):
@@ -82,7 +107,9 @@ class TestDiscoverSkills(unittest.TestCase):
             skill_dir = os.path.join(tmpdir, "vuln-audit")
             os.makedirs(skill_dir)
             with open(os.path.join(skill_dir, "SKILL.md"), "w") as f:
-                f.write("---\nname: Vulnerability Audit\ndescription: Find security bugs\ntags: [security]\n---\nYou are a security auditor.\nAnalyze the function for vulnerabilities.\n")
+                f.write(
+                    "---\nname: Vulnerability Audit\ndescription: Find security bugs\ntags: [security]\n---\nYou are a security auditor.\nAnalyze the function for vulnerabilities.\n"
+                )
 
             skills = discover_skills(tmpdir)
             self.assertEqual(len(skills), 1)
@@ -180,6 +207,58 @@ class TestSkillRegistry(unittest.TestCase):
         skill, remaining = reg.resolve_skill_invocation("/unknown-skill do something")
         self.assertIsNone(skill)
         self.assertEqual(remaining, "/unknown-skill do something")
+
+
+class TestBuiltinTriggerMatching(unittest.TestCase):
+    """Regression: ensure the merged ida-scripting skill wins IDAPython scripting
+    queries and the removed ida-docs / ida-pro-mcp skills no longer compete.
+
+    These tests load the real built-in skills directory, so they catch drift if
+    someone re-adds a competing skill or drops ida-scripting's triggers.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.reg = SkillRegistry()  # uses default builtins dir
+        cls.reg.discover()
+
+    def test_merged_skills_absent(self):
+        # ida-docs and ida-pro-mcp were merged into ida-scripting.
+        slugs = set(self.reg.list_slugs())
+        self.assertNotIn("ida-docs", slugs)
+        self.assertNotIn("ida-pro-mcp", slugs)
+        self.assertIn("ida-scripting", slugs)
+
+    def test_ida_scripting_has_triggers(self):
+        # Regression for the comment-in-block-list bug: if triggers parse to
+        # empty, every query below would return (none).
+        skill = self.reg.get("ida-scripting")
+        self.assertIsNotNone(skill)
+        self.assertGreater(len(skill.triggers), 10, "ida-scripting must carry its scripting triggers")
+
+    def test_scripting_queries_hit_ida_scripting(self):
+        for query in (
+            "write an idapython script to iterate all functions",
+            "use ida_bytes to read memory at an address",
+            "help me use ida_hexrays to decompile this function",
+            "walk the ctree to find all calls",
+            "install a microcode optimizer",
+        ):
+            with self.subTest(query=query):
+                skill = self.reg.match_triggers(query)
+                self.assertIsNotNone(skill, f"no match for: {query}")
+                self.assertEqual(skill.slug, "ida-scripting", f"expected ida-scripting for: {query}")
+
+    def test_unrelated_query_no_match(self):
+        # A non-scripting query should not trip the scripting skill.
+        skill = self.reg.match_triggers("analyze this binary for malware behavior")
+        self.assertIsNone(skill)
+
+    def test_vuln_audit_still_wins_own_queries(self):
+        # ida-scripting must not steal vuln-audit's territory.
+        skill = self.reg.match_triggers("scan for buffer overflow and format string bugs")
+        self.assertIsNotNone(skill)
+        self.assertEqual(skill.slug, "vuln-audit")
 
 
 if __name__ == "__main__":

@@ -69,9 +69,7 @@ The agent really ***lives*** and ***breathes*** reversing.
 | `/deobfuscation` | Remove control flow flattening, opaque predicates, MBA expressions, junk code |
 | `/driver-analysis` | Windows kernel driver analysis — DriverEntry, dispatch table, IOCTL handlers |
 | `/generic-re` | General-purpose binary analysis — understand functionality, architecture, and behavior |
-| `/ida-docs` | Search and browse official IDA Pro documentation — IDAPython, C++ SDK, Domain API |
-| `/ida-pro-mcp` | IDAPython scripting reference — disassembly, decompilation, types, xrefs |
-| `/ida-scripting` | Write and execute IDAPython scripts — full API reference included |
+| `/ida-scripting` | Write IDAPython scripts — fetches official hex-rays.com docs first for IDA 9.x / complex APIs, verified snippets for stable tasks, deep offline reference as fallback |
 | `/linux-malware` | Linux ELF malware analysis — packing, persistence, C2, rootkits, MITRE ATT&CK |
 | `/malware-analysis` | Windows PE malware analysis — kill chain, IOC extraction, MITRE ATT&CK |
 | `/modify` | Modify binary behavior using natural language — explore, plan, patch, save |
