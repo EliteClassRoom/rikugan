@@ -434,7 +434,13 @@ def _cache_key(text: str) -> tuple[str, int]:
     """Build a (text_hash, theme_token_id) cache key."""
     from .theme.manager import ThemeManager
 
-    text_hash = _hashlib.sha1(text.encode("utf-8", errors="replace")).hexdigest()
+    # SHA1 is fine here — this hash is a non-security HTML-cache key, not a
+    # cryptographic primitive. ``usedforsecurity=False`` documents that intent
+    # and silences the B324 false-positive.
+    text_hash = _hashlib.sha1(
+        text.encode("utf-8", errors="replace"),
+        usedforsecurity=False,
+    ).hexdigest()
     return (text_hash, id(ThemeManager.instance().tokens()))
 
 
