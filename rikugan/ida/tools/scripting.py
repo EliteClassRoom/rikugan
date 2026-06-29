@@ -5,9 +5,11 @@ from __future__ import annotations
 import importlib
 from typing import Annotated
 
+from ...core.errors import ToolError
 from ...core.logging import log_debug
 from ...tools.base import tool
 from ...tools.script_guard import run_guarded_script, safe_builtins
+from ...tools.validate_idapython import validate_idapython
 
 # Cached namespace of common IDA modules — populated once, reused across calls.
 _IDA_MODULE_NAMES = (
@@ -54,5 +56,38 @@ def execute_python(
 
     The code runs with full access to IDA's Python API (idaapi, idautils, idc, etc.).
     Use print() to produce output that will be returned.
+
+    A static validator (``rikugan.tools.validate_idapython``) runs before exec:
+    * Calls to known-hallucinated APIs (e.g. ``idaapi.get_operands()``) cause
+      execution to be REFUSED — the agent sees a ``ToolError`` with a fix
+      suggestion and must rewrite the script.
+    * Calls to legacy ``idc.*`` helpers produce a warning prefix in the output
+      but do not block execution.
+
+    See ``rikugan/skills/builtins/ida-scripting/SKILL.md`` for the full
+    anti-hallucination ruleset and how to keep them in sync.
     """
-    return run_guarded_script(code, _get_base_namespace)
+    # 1. Static hallucination check — block BEFORE execution if any BLOCK call.
+    validation = validate_idapython(code)
+    if validation.is_blocked:
+        report = validation.format_for_agent()
+        raise ToolError(
+            "Script blocked by IDAPython hallucination guard. "
+            "Rewrite using the suggested fix; see the ida-scripting skill "
+            "for the full DO NOT USE table.\n\n" + report,
+            tool_name="execute_python",
+        )
+
+    # 2. Run guarded execution.
+    output = run_guarded_script(code, _get_base_namespace)
+
+    # 3. If only warnings — surface them as a header so the agent self-corrects
+    #    next time without needing a failure to trigger reflection.
+    if validation.warnings:
+        header = (
+            "[validate_idapython] Legacy/discouraged APIs detected — "
+            "prefer modern ida_* equivalents:\n" + validation.format_for_agent() + "\n--- script output follows ---\n"
+        )
+        return header + output
+
+    return output

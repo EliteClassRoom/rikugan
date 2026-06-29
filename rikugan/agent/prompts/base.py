@@ -217,14 +217,27 @@ SHARED_CAPABILITIES_BULLETS = """\
 - Apply type information and propagate changes"""
 
 
-def assemble_system_prompt(intro: str, tool_usage: str, capabilities: str) -> str:
-    """Assemble a full system prompt from host-specific sections + shared sections."""
+def assemble_system_prompt(
+    intro: str,
+    tool_usage: str,
+    capabilities: str,
+    *extra_sections: str,
+) -> str:
+    """Assemble a full system prompt from host-specific sections + shared sections.
+
+    Extra ``*extra_sections`` are inserted between ``capabilities`` and the
+    shared discipline sections. This lets hosts inject host-specific
+    discipline rules (e.g. ``IDA_API_DISCIPLINE_SECTION``) without forking
+    the entire prompt layout.
+    """
     return (
         intro
         + "\n"
         + tool_usage
         + "\n"
         + capabilities
+        + "\n"
+        + "\n".join(extra_sections)
         + "\n"
         + DISCIPLINE_SECTION
         + "\n"
@@ -252,3 +265,40 @@ def assemble_system_prompt(intro: str, tool_usage: str, capabilities: str) -> st
         + "\n"
         + CLOSING_SECTION
     )
+
+
+# Host-specific discipline section for IDA Pro hosts. Loaded by ``ida.py``.
+# Mirrors the negative-knowledge table in
+# ``rikugan/skills/builtins/ida-scripting/SKILL.md`` and the static blocklist
+# in ``rikugan/tools/validate_idapython.py``. Keep all three in sync.
+IDA_API_DISCIPLINE_SECTION = """\
+## IDA API Discipline — Anti-Hallucination
+
+When writing IDAPython (anything passed to ``execute_python``), these rules are
+non-negotiable. The static validator will block execution if you violate them,
+and runtime errors cost user-visible tool rounds.
+
+**Verifiable APIs only.** Before calling any ``ida_*`` or ``idc`` function,
+confirm it actually exists in IDA 9.x. Use modern modules — never invent a
+convenience helper that "should" exist.
+
+**Known-hallucinated APIs (these DO NOT exist):**
+- ``idaapi.get_operands(ea)`` — use ``insn = ida_ua.insn_t(); ida_ua.decode_insn(insn, ea); insn.ops[i]``
+- ``idaapi.get_instruction_operands(...)`` / ``idaapi.get_insn_operands(...)`` / ``idautils.GetOperands(...)`` — same fix
+- ``idaapi.op_for_each(...)`` — use ``for op in insn.ops:``
+- ``ida_struct.add_struc(...)`` / ``ida_enum.add_enum(...)`` — removed in IDA 9.x, use ``ida_typeinf``
+- ``idc.AddStruc(...)`` / ``idc.AddEnum(...)`` — removed in IDA 9.x
+
+**Discouraged legacy APIs (still work, but modernize):**
+- ``idc.GetOperandValue`` / ``idc.GetOpnd`` / ``idc.GetOperandType`` → use ``insn.ops[i]``
+- ``idc.NextHead`` → use ``idautils.Heads(start, end)``
+- ``idc.ScreenEA`` → use ``ida_kernwin.get_screen_ea()``
+
+**Mandatory pre-write checklist** (mirror of skill):
+1. Is there a built-in tool? If yes, use it. ``execute_python`` is LAST RESORT.
+2. Have you confirmed the API exists in IDA 9.x? If not, fetch the skill.
+3. Never invent convenience wrappers — write the explicit allocate + iterate version.
+4. Prefer modern ``ida_*`` modules over ``idc``.
+5. After an ``AttributeError`` mentioning IDA APIs, FETCH the ida-scripting skill
+   before rewriting — do not retry the same broken pattern.
+"""

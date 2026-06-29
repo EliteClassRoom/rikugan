@@ -1,9 +1,9 @@
 ---
 name: IDA Scripting
-description: Write IDAPython scripts. Compact inline reference for common tasks, verified for IDA 9.x. Deep offline reference (ctree, microcode, types) appended below; fetch a module doc only when you need exhaustive detail.
+description: Write IDAPython scripts — verified for IDA 9.x only. Loads the negative-knowledge anti-hallucination table (DO NOT USE APIs) and the symptom→fix map. ALWAYS load this skill before calling `execute_python`.
 tags: [scripting, ida, python, automation, idapython, documentation]
 author: Rikugan
-version: 3.0
+version: 4.0
 triggers:
   - idapython
   - ida python
@@ -36,6 +36,11 @@ triggers:
   - ida release notes
   - microcode
   - ctree
+  - how do i get operands
+  - how to read operands
+  - how to decode instruction
+  - get_operands
+  - attributeerror ida
 allowed_tools:
   - web_fetch
   - execute_python
@@ -61,6 +66,74 @@ allowed_tools:
   - xrefs_to
   - xrefs_from
   - function_xrefs
+---
+
+## 🚨 Pre-Write Checklist — DO BEFORE CALLING `execute_python`
+
+Before you write any IDAPython code, walk this list. If you skip it, the
+static validator will block execution or the runtime will throw `AttributeError`.
+
+1. **Confirm a built-in tool can't do it.** 60+ purpose-built tools cover
+   rename, decompile, xrefs, strings, types. Check the tool list FIRST.
+   `execute_python` is the LAST resort.
+2. **Cite the API in your reasoning.** Before writing the call, say out loud:
+   "I am about to call `<module>.<name>` — this exists in IDA 9.x because…"
+   If you cannot cite the module's docs mentally, you don't actually know the API.
+3. **Never invent convenience helpers.** IDA Python does NOT provide
+   "get_all_operands()", "for_each_xref()", etc. If a one-liner you want
+   doesn't exist, write the explicit version (allocate + iterate).
+4. **Use modern modules over `idc`.** Prefer `ida_ua`, `ida_bytes`, `ida_funcs`,
+   `ida_typeinf`. The `idc` module is legacy wrappers — they still work but
+   smell of IDA 6.x.
+5. **If you must call `execute_python`, write code that survives validation.**
+   The static validator blocks known-bad APIs and warns on legacy ones. Use
+   the DO NOT USE table below as a deny-list.
+
+## 🚫 Hallucinated APIs — DO NOT USE
+
+These do NOT exist in any version of IDA Python. If your code calls them,
+it will fail with `AttributeError` at runtime. The static validator will
+**block** execution.
+
+| Hallucinated call | Use instead |
+|---|---|
+| `idaapi.get_operands(ea)` | `insn = ida_ua.insn_t(); ida_ua.decode_insn(insn, ea); insn.ops[i]` |
+| `idaapi.get_instruction_operands(ea)` | `insn.ops[]` (see above) |
+| `idaapi.get_insn_operands(ea)` | `insn.ops[]` |
+| `idautils.GetOperands(...)` | `insn.ops[]` |
+| `idaapi.op_for_each(...)` | Python `for op in insn.ops:` |
+| `ida_struct.add_struc(...)` | `ida_typeinf.tinfo_t.create_udt(...)` (removed in IDA 9.x) |
+| `ida_enum.add_enum(...)` | `ida_typeinf.tinfo_t` with `BTF_ENUM` (removed in IDA 9.x) |
+| `idaapi.get_struct(name)` | `ida_typeinf.get_named_type(...)` then parse |
+| `idc.AddStruc(...)` | `ida_typeinf.tinfo_t().create_udt(...)` |
+
+These DO exist but are **legacy/discouraged**. The validator will **warn**
+but not block — prefer the modern equivalent.
+
+| Legacy call | Modern equivalent |
+|---|---|
+| `idc.GetOperandValue(ea, n)` | `insn.ops[n].value` (after `decode_insn`) |
+| `idc.GetOpnd(ea, n)` | `ida_lines.generate_disasm_line(ea, 0)` |
+| `idc.GetOperandType(ea, n)` | `insn.ops[n].type` |
+| `idc.NextHead(ea)` | `idautils.Heads(start, end)` generator |
+| `idc.ScreenEA()` | `ida_kernwin.get_screen_ea()` |
+
+## 🩺 Symptom → Fix Map
+
+When the tool result is an `AttributeError` or your code doesn't import, look
+up the symptom here. **Do not retry the same broken code** — rewrite using the
+Fix column.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `AttributeError: module 'idaapi' has no attribute 'get_operands'` | AI hallucinated convenience function | Use `ida_ua.insn_t()` + `decode_insn` + iterate `insn.ops` |
+| `AttributeError: module 'idaapi' has no attribute 'get_instruction_operands'` | Same family of hallucination | Same fix |
+| `ImportError: No module named 'ida_struct'` | IDA 9.x removed it | Use `ida_typeinf` UDT API |
+| `ImportError: No module named 'ida_enum'` | IDA 9.x removed it | Use `ida_typeinf` enum API |
+| `AttributeError: 'NoneType' object has no attribute 'start_ea'` | `ida_funcs.get_func(ea)` returned `None` | Always check `if func is None: return` |
+| `ida_hexrays.DecompilationFailure` | Decompiler can't handle this function | Wrap in `try/except`, fall back to disassembly |
+| `NameError: name 'BADADDR' is not defined` | Constant scope issue | Use `idaapi.BADADDR` (already pre-imported in the namespace) |
+
 ---
 
 Task: Write IDAPython scripts with `execute_python`. Use modern `ida_*` modules;

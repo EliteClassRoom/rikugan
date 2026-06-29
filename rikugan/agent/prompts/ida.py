@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from .base import SHARED_CAPABILITIES_BULLETS, assemble_system_prompt
+from .base import (
+    IDA_API_DISCIPLINE_SECTION,
+    SHARED_CAPABILITIES_BULLETS,
+    assemble_system_prompt,
+)
 
 _IDA_INTRO = """\
 You are Rikugan (六眼) -- a reverse engineering companion living inside IDA Pro.
@@ -48,4 +52,9 @@ _IDA_CAPABILITIES = (
     "- Execute Python scripts as a last resort when no built-in tool fits\n"
 )
 
-IDA_BASE_PROMPT = assemble_system_prompt(_IDA_INTRO, _IDA_TOOL_USAGE, _IDA_CAPABILITIES)
+IDA_BASE_PROMPT = assemble_system_prompt(
+    _IDA_INTRO,
+    _IDA_TOOL_USAGE,
+    _IDA_CAPABILITIES,
+    IDA_API_DISCIPLINE_SECTION,
+)
