@@ -463,9 +463,21 @@ class RikuganPanel(idaapi.PluginForm):
         down (set to None) does not dereference a stale core.
         """
         try:
+            import warnings
+
             from rikugan.ui.theme.manager import ThemeManager
 
-            ThemeManager.instance().themeChanged.disconnect(self._on_theme_changed)
+            # PySide6 emits a RuntimeWarning (NOT an exception) when
+            # disconnecting a slot that was never connected. Suppress
+            # just that case to keep test output clean; the call itself
+            # is idempotent at the Qt level.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    category=RuntimeWarning,
+                    message=".*Failed to disconnect.*",
+                )
+                ThemeManager.instance().themeChanged.disconnect(self._on_theme_changed)
         except Exception:
             pass  # best-effort; Qt removes connections on widget destruction anyway.
 

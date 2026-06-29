@@ -204,9 +204,9 @@ class _A2ASession:
                     response_data = json.loads(resp.read().decode("utf-8"))
 
                 if "result" in response_data:
-                    result = response_data["result"]
+                    result: Any = response_data["result"]
                     if isinstance(result, dict):
-                        self.task.result = result.get("text", result.get("result", ""))
+                        self.task.result = str(result.get("text", result.get("result", "")))
                         self.task.status = A2ATaskStatus.COMPLETED
                     else:
                         self.task.result = str(result)

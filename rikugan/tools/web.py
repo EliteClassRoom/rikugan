@@ -5,6 +5,15 @@ when the active LLM provider is MiniMax — no MCP dependency.
 
 ``requests`` is only imported when the tool actually makes an HTTP request,
 not at module import time.
+
+SSRF protection: ``understand_image`` accepts an image URL that the LLM
+provides. To prevent the tool from being tricked into fetching
+``http://169.254.169.254/latest/meta-data/`` (cloud metadata) or
+internal-network URLs, URL downloads are validated through the same
+``_is_safe_url`` / ``_resolve_hostsafe`` helpers used by ``web_fetch``:
+HTTPS-only, reject private/loopback/link-local/multicast/reserved IPs at
+both the hostname level (literal IP) and after DNS resolution. Any unsafe
+URL is rejected with ``ToolError`` before the request is made.
 """
 
 from __future__ import annotations
@@ -25,6 +34,16 @@ WEB_SEARCH_TIMEOUT = 30.0
 UNDERSTAND_IMAGE_TIMEOUT = 60.0
 DEFAULT_API_HOST = "https://api.minimax.io"
 _runtime_config: RikuganConfig | None = None
+
+
+def _safe_url_host(url: str) -> str:
+    """Extract the hostname from *url* for SSRF DNS checks.
+
+    Tiny local helper — re-uses urllib.parse so we don't import it twice.
+    """
+    import urllib.parse
+
+    return (urllib.parse.urlparse(url).hostname or "").lower()
 
 
 def set_runtime_config(config: RikuganConfig | None) -> None:
@@ -175,9 +194,28 @@ def _process_image_source(image_source: str) -> str:
     if image_source.startswith("data:"):
         return image_source
 
-    # HTTP/HTTPS URL — download and convert
+    # HTTP/HTTPS URL — download and convert (with SSRF guard)
     if image_source.startswith(("http://", "https://")):
         import requests
+
+        # Reject URLs targeting private/internal networks before making
+        # the request.  This blocks SSRF attempts where the LLM is
+        # prompt-injected into fetching cloud metadata endpoints
+        # (169.254.169.254) or internal services on 127.0.0.1 / 10.x.
+        from .web_fetch import _is_safe_url, _resolve_hostsafe
+
+        safe, err = _is_safe_url(image_source)
+        if not safe:
+            raise ToolError(
+                f"Image URL rejected (SSRF guard): {err}",
+                tool_name="understand_image",
+            )
+        host_safe, host_err = _resolve_hostsafe(_safe_url_host(image_source))
+        if not host_safe:
+            raise ToolError(
+                f"Image URL rejected (SSRF guard): {host_err}",
+                tool_name="understand_image",
+            )
 
         try:
             img_response = requests.get(image_source, timeout=30)

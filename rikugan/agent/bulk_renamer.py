@@ -495,8 +495,10 @@ class BulkRenamerEngine:
                         "read_disassembly",
                         {"address": f"0x{job.address:x}", "count": 100},
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Best-effort disassembly fetch — render proceeds without it.
+                    disasm = ""
+                    log_debug(f"bulk_renamer read_disassembly 0x{job.address:x} failed: {e}")
 
                 decompiled.append((job, self._quick_render_part(job, decomp, disasm)))
             except Exception as e:

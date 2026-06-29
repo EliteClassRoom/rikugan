@@ -230,6 +230,112 @@ class TestRunGuardedScript(unittest.TestCase):
         run_guarded_script("y = 2", factory)
         assert len(calls) == 2
 
+    # --- Reflective bypass defenses -------------------------------------
+    # These close the sandbox-escape chains documented in the module:
+    #   - getattr/setattr/delattr reach blocked attrs by string name.
+    #   - globals()/locals()/vars()/dir() return the live builtins dict.
+    #   - input()/breakpoint() pause for interactive I/O.
+    #   - Class-hierarchy walks via __class__/__bases__/__subclasses__.
+    #   - Function-introspection walks via __globals__/__code__/__dict__.
+    #   - __builtins__ dict-method restoration of removed builtins.
+
+    def test_blocks_getattr_call(self):
+        assert _check_ast("getattr(x, 'y')") is not None
+
+    def test_blocks_setattr_call(self):
+        assert _check_ast("setattr(x, 'y', 1)") is not None
+
+    def test_blocks_delattr_call(self):
+        assert _check_ast("delattr(x, 'y')") is not None
+
+    def test_blocks_globals_call(self):
+        assert _check_ast("globals()") is not None
+
+    def test_blocks_locals_call(self):
+        assert _check_ast("locals()") is not None
+
+    def test_blocks_vars_call(self):
+        assert _check_ast("vars()") is not None
+
+    def test_blocks_dir_call(self):
+        assert _check_ast("dir()") is not None
+
+    def test_blocks_input_call(self):
+        assert _check_ast("input('prompt')") is not None
+
+    def test_blocks_breakpoint_call(self):
+        assert _check_ast("breakpoint()") is not None
+
+    def test_blocks_getattr_to_reach_blocked_method(self):
+        # Realistic exploit: get os.system via getattr, bypassing the
+        # (os, system) attribute pair check.
+        assert _check_ast("getattr(os, 'system')('cmd')") is not None
+
+    def test_blocks_setattr_on_builtins(self):
+        assert _check_ast("setattr(__builtins__, 'exec', exec)") is not None
+
+    def test_blocks_builtins_get_dict_method(self):
+        # __builtins__.get('exec') would restore the removed built-in.
+        assert _check_ast("__builtins__.get('exec')") is not None
+
+    def test_blocks_builtins_pop_dict_method(self):
+        assert _check_ast("__builtins__.pop('exec')") is not None
+
+    def test_blocks_builtins_update_dict_method(self):
+        assert _check_ast("__builtins__.update({'exec': exec})") is not None
+
+    def test_blocks_builtins_setdefault(self):
+        assert _check_ast("__builtins__.setdefault('exec', exec)") is not None
+
+    def test_blocks_builtins_clear(self):
+        assert _check_ast("__builtins__.clear()") is not None
+
+    def test_blocks_class_hierarchy_walk(self):
+        # The classic Python sandbox escape: tuple -> __class__ -> __bases__
+        # -> __subclasses__ -> loaded classes (Popen, file IO, etc.).
+        attack = "().__class__.__bases__[0].__subclasses__()"
+        assert _check_ast(attack) is not None
+
+    def test_blocks_dunder_class_attr(self):
+        assert _check_ast("x.__class__") is not None
+
+    def test_blocks_dunder_bases_attr(self):
+        assert _check_ast("x.__bases__") is not None
+
+    def test_blocks_dunder_mro_attr(self):
+        assert _check_ast("x.__mro__") is not None
+
+    def test_blocks_dunder_subclasses_call(self):
+        assert _check_ast("object.__subclasses__()") is not None
+
+    def test_blocks_dunder_dict_attr(self):
+        assert _check_ast("x.__dict__") is not None
+
+    def test_blocks_function_globals_via_dunder(self):
+        # Inside a real exploit, a function defined in a "safe" module
+        # exposes its globals dict via __globals__, which contains the real
+        # builtins.
+        assert _check_ast("fn.__globals__") is not None
+
+    def test_blocks_function_code_via_dunder(self):
+        assert _check_ast("fn.__code__") is not None
+
+    def test_blocks_dunder_builtins_attr(self):
+        assert _check_ast("x.__builtins__") is not None
+
+    def test_blocks_via_getattr_then_call(self):
+        # The chained-call form: getattr(os, "system")("cmd").
+        attack = "imp = __import__\nos = imp('os')\nsystem = getattr(os, 'system')\nsystem('echo pwned')"
+        assert _check_ast(attack) is not None
+
+    def test_blocks_vars_to_reach_builtins(self):
+        attack = "v = vars()\nv['__builtins__']['exec'] = exec\nexec('print(1)')"
+        assert _check_ast(attack) is not None
+
+    def test_blocks_globals_to_reach_builtins(self):
+        attack = "g = globals()\ng['__builtins__'].update({'exec': exec})\nexec('print(1)')"
+        assert _check_ast(attack) is not None
+
     # --- Runtime verification of the new allowlist ----------------------
     # These prove that the policy change actually delivers what the user
     # asked for: import statements for safe modules execute at runtime,

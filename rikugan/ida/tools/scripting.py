@@ -18,12 +18,13 @@ _IDA_MODULE_NAMES = (
     "ida_name",
     "ida_bytes",
     "ida_segment",
-    "ida_struct",
-    "ida_enum",
+    # ida_struct/ida_enum were removed in IDA 9.x — use ida_typeinf instead.
     "ida_typeinf",
     "ida_nalt",
     "ida_xref",
     "ida_kernwin",
+    # Domain API (IDA 9.1+) — optional; absent on older IDA, see _get_base_namespace
+    "ida_domain",
 )
 _cached_namespace: dict | None = None
 

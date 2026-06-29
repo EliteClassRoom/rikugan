@@ -1,4 +1,18 @@
-"""Rikugan configuration with JSON persistence."""
+"""Rikugan configuration with JSON persistence.
+
+Mutable-state contract: ``RikuganConfig`` instances are created and owned by
+the host entry point (``rikugan_plugin.py`` for IDA, ``cli/headless.py`` for
+headless). They are passed explicitly to the agent loop and UI rather than
+read from a process-global singleton. The dataclass fields (``providers``,
+``custom_providers``, ``extra``, ``a2a_agents``) are intentionally mutable so
+that the settings dialog can edit them in place before ``save()``.
+
+Import-time side effects: this module reads only ``os.environ`` for the user
+config base directory (via ``host.get_user_config_base_dir``) at
+``field(default_factory=...)`` evaluation time — no network, no IDA, no file
+I/O at import. The config file is loaded lazily via ``load()`` / ``load_or_create()``
+after the host has bootstrapped.
+"""
 
 from __future__ import annotations
 

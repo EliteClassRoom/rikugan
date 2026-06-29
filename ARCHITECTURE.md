@@ -378,7 +378,7 @@ When a user types `/<slug>`, `_resolve_skill()` in `loop.py`:
 | `/driver-analysis` | Windows kernel driver analysis |
 | `/ctf` | CTF challenge solving |
 | `/generic-re` | General reverse engineering |
-| `/ida-scripting` | IDAPython API reference |
+| `/ida-scripting` | IDAPython scripting — fetch official docs first, verified snippets, offline reference fallback |
 | `/modify` | Exploration mode: autonomous binary modification |
 | `/smart-patch-ida` | IDA-specific binary patching |
 

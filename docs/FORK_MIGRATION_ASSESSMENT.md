@@ -25,7 +25,7 @@
 |----------|--------------------|--------------------------------|------------|
 | **C.1** Port theme/watcher.py | ⏳ Pending | ✅ **ĐÃ XONG** | commit `9eb6486`, file `ui/theme/watcher.py` đã có (4375 bytes), wired vào `ida/ui/panel.py:429 _maybe_start_theme_watcher` |
 | **D.2** Subprocess injection a2a | ⏳ Pending | ✅ **ĐÃ XONG** | commit `57caf5e`, `_build_command()` có `_validate_task()` + `--` separator |
-| **B.1-B.4** Provider porting | ✅ Done | ✅ Confirmed | codex_provider, auth_compat, pseudo_tool_schemas đã có |
+| **B.1-B.4** Provider porting | ✅ Done | ✅ Confirmed | codex_provider, pseudo_tool_schemas đã có (auth_compat đã xóa — port chết, zero callers) |
 | **D.1** Path traversal research | ✅ Done | ✅ Confirmed | `_safe_note_path` trong research.py |
 | **A.1-A.5** Quick wins | ✅ Done | ✅ Confirmed | 3 archives xóa, .gitignore mở rộng, README skills, debug_test.py xóa |
 | **C.4** Extract loop.py schemas | ⏳ Pending | ⏳ **VẪN PENDING** | `pseudo_tool_schemas.py` đã có nhưng **không import ở đâu**; loop.py vẫn 32 inline schemas (FORK chỉ 2) |

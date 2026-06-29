@@ -503,5 +503,71 @@ class TestMutationRecord(unittest.TestCase):
         self.assertFalse(rec.reversible)
 
 
+class TestMutationContractConsistency(unittest.TestCase):
+    """Every mutating tool must have BOTH a reverse builder and a capture_pre_state branch.
+
+    This is the /undo correctness contract mandated by CLAUDE.md: a mutating tool
+    that has one handler but not the other breaks undo replay.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # Inspect the module internals to enumerate both handler sets.
+        import inspect
+
+        from rikugan.agent import mutation
+
+        cls._reverse_tools = set(mutation._REVERSE_BUILDERS.keys())
+
+        # Extract tool names from capture_pre_state's if/elif branches by
+        # parsing the source — the function is a flat dispatch.
+        source = inspect.getsource(mutation.capture_pre_state)
+        cls._capture_tools = {line.split('"')[1] for line in source.splitlines() if 'tool_name == "' in line}
+
+    def test_reverse_builder_tools_have_capture_branch(self):
+        """Every tool with a reverse builder must capture pre-state.
+
+        Exception: tools whose reverse record can be built entirely from the
+        call arguments (e.g. rename_variable carries old_name as an explicit
+        parameter) do not need a pre-state branch.
+        """
+        self_sufficient = {"rename_variable"}
+        missing = (self._reverse_tools - self._capture_tools) - self_sufficient
+        self.assertEqual(
+            missing,
+            set(),
+            f"Tools with reverse builders but no capture_pre_state branch: {missing}. "
+            "These tools cannot replay undo because their pre-state is never captured.",
+        )
+
+    def test_capture_tools_have_reverse_builder(self):
+        """Every tool that captures pre-state must have a reverse builder."""
+        missing = self._capture_tools - self._reverse_tools
+        self.assertEqual(
+            missing,
+            set(),
+            f"Tools with capture_pre_state branches but no reverse builder: {missing}. "
+            "These tools capture state that is never used for undo.",
+        )
+
+    def test_unknown_tool_is_non_reversible(self):
+        """Unknown mutating tools fall back to a non-reversible record, never crash."""
+        rec = build_reverse_record("unknown_tool_xyz", {"address": "0x1000"}, {})
+        self.assertFalse(rec.reversible)
+        self.assertEqual(rec.tool_name, "unknown_tool_xyz")
+
+    def test_capture_pre_state_handles_unknown_tool_gracefully(self):
+        """capture_pre_state returns empty dict for unknown tools (no crash)."""
+        executor = lambda name, args: {"unused": True}  # noqa: E731
+        pre = capture_pre_state("unknown_tool_xyz", {"address": "0x1000"}, executor)
+        self.assertEqual(pre, {})
+
+    def test_capture_pre_state_swallows_executor_failures(self):
+        """capture_pre_state logs and returns empty dict if a getter fails (best-effort)."""
+        executor = lambda name, args: (_ for _ in ()).throw(RuntimeError("boom"))  # noqa: E731
+        pre = capture_pre_state("rename_function", {"address": "0x1000"}, executor)
+        self.assertEqual(pre, {})
+
+
 if __name__ == "__main__":
     unittest.main()

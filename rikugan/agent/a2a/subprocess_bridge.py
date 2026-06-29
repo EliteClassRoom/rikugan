@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import shutil
 import subprocess
@@ -12,6 +13,53 @@ from collections.abc import Generator
 from dataclasses import dataclass
 
 from .types import A2AEvent, ExternalAgentConfig
+
+
+def _curate_subprocess_env(agent_env: dict[str, str]) -> dict[str, str]:
+    """Build the env dict passed to the subprocess for external CLIs.
+
+    We deliberately do NOT inherit the parent's full ``os.environ``,
+    because it typically contains Rikugan-internal secrets
+    (ANTHROPIC_API_KEY, OPENAI_API_KEY, RIKUGAN_*, …) that an
+    external CLI agent has no legitimate need for and which would
+    otherwise leak to a third-party process.
+
+    We pass only:
+      * ``PATH`` / ``Path`` / ``PATHEXT``  — required to locate the CLI
+      * ``HOME`` / ``USERPROFILE``         — config lookup
+      * ``LANG`` / ``LC_ALL`` / ``LC_CTYPE`` — locale
+      * ``TMP`` / ``TMPDIR`` / ``TEMP``    — temp dir
+      * ``SSL_CERT_FILE`` / ``SSL_CERT_DIR`` if set — TLS verification
+      * ``HTTP_PROXY`` / ``HTTPS_PROXY`` / ``NO_PROXY`` — networking
+      * Anything in ``agent_env`` (caller-supplied overrides)
+    """
+    passthrough_keys = (
+        "PATH",
+        "Path",  # Windows
+        "PATHEXT",
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMP",
+        "TMPDIR",
+        "TEMP",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+    )
+    curated: dict[str, str] = {k: os.environ[k] for k in passthrough_keys if k in os.environ}
+    curated.update(agent_env)
+    return curated
+
 
 _SUBPROCESS_AGENTS = {
     "claude": ["claude"],
@@ -97,7 +145,7 @@ class SubprocessBridge:
         cmd = self._build_command(agent, task)
         if cmd is None:
             yield A2AEvent(type="error", text=f"No known command for agent: {agent.name}")
-            return
+            return ""
 
         proc: subprocess.Popen[str] | None = None
         result_lines: list[str] = []
@@ -131,7 +179,7 @@ class SubprocessBridge:
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env={**__import__("os").environ, **agent.env},
+                env=_curate_subprocess_env(agent.env),
                 text=True,
                 encoding="utf-8",
             )
@@ -179,7 +227,7 @@ class SubprocessBridge:
                     proc.kill()
         except Exception as e:
             yield A2AEvent(type="error", text=str(e))
-            return
+            return ""
         finally:
             if proc and proc.poll() is None:
                 proc.kill()
@@ -206,6 +254,7 @@ class SubprocessBridge:
                 result = line
 
         yield A2AEvent(type="completed", text=result, done=True)
+        return result
 
     def _build_command(self, agent: ExternalAgentConfig, task: str) -> list[str] | None:
         name = agent.name.lower()

@@ -9,6 +9,9 @@ from typing import Any
 # JSON-RPC 2.0 standard error codes
 _JSONRPC_PARSE_ERROR = -32700
 
+# Truncate parse-error previews so error messages stay bounded.
+_PARSE_ERROR_PREVIEW_BYTES = 200
+
 
 @dataclass
 class MCPToolSchema:
@@ -42,7 +45,7 @@ def decode_jsonrpc_response(data: str) -> dict[str, Any]:
         return {
             "error": {
                 "code": _JSONRPC_PARSE_ERROR,
-                "message": f"Parse error: {data[:200]}",
+                "message": f"Parse error: {data[:_PARSE_ERROR_PREVIEW_BYTES]}",
             }
         }
 

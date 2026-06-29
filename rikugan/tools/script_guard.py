@@ -79,15 +79,55 @@ _BLOCKED_MODULES = frozenset(
     }
 )
 
-# Built-in calls that must never appear. `__import__` is included because
-# even though we restore it to the builtins (so users can write
-# `import Crypto.Cipher`), calling it directly is the canonical reflective
-# bypass — agents have no reason to call it themselves.
-_BLOCKED_CALLS = frozenset({"exec", "eval", "compile", "__import__"})
+# Built-in calls that must never appear.
+#
+# `__import__` is blocked because even though we restore it to builtins (so
+# `import Crypto.Cipher` works), calling it directly is the canonical
+# reflective bypass — agents have no reason to call it themselves.
+#
+# The reflective introspection primitives (`getattr`, `globals`, `vars`, …)
+# are blocked because they enable sandbox escapes:
+#   - `getattr(os, "system")` reaches os.system() through a name the
+#     attribute-blocklist doesn't recognise.
+#   - `vars()` / `globals()` / `locals()` return the actual builtins dict;
+#     combined with dict mutation this restores removed builtins.
+#   - `dir()` leaks attribute names that the agent then targets.
+#   - `input()` blocks indefinitely and may exfiltrate via the prompt.
+#   - `breakpoint()` drops into pdb in the host process.
+_BLOCKED_CALLS = frozenset(
+    {
+        # Code execution
+        "exec",
+        "eval",
+        "compile",
+        # Module import (called as function)
+        "__import__",
+        # Reflective attribute access — used to bypass the attribute blocklist
+        # (e.g. `getattr(os, "system")`, `getattr(__builtins__, "exec")`).
+        "getattr",
+        "setattr",
+        "delattr",
+        # Namespace introspection — return the live builtins dict or globals,
+        # letting attackers restore removed builtins or walk the namespace.
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        # Interactive I/O — `input()` blocks, `breakpoint()` drops into pdb.
+        "input",
+        "breakpoint",
+    }
+)
 
 # Attribute calls that must never appear (module.func patterns).
+#
+# `__builtins__` pairs block dict methods that could restore removed
+# builtins (`__builtins__.get("exec")`, `__builtins__.update({...})`,
+# `__builtins__.__getitem__("exec")`). The subscript form
+# (`__builtins__["exec"]`) is caught separately at ast.Subscript.
 _BLOCKED_ATTRS = frozenset(
     {
+        # os.* — process / file / env access
         ("os", "system"),
         ("os", "popen"),
         ("os", "execl"),
@@ -106,6 +146,35 @@ _BLOCKED_ATTRS = frozenset(
         ("os", "spawnve"),
         ("os", "spawnvp"),
         ("os", "spawnvpe"),
+        # __builtins__.* — restore removed builtins via dict methods
+        ("__builtins__", "get"),
+        ("__builtins__", "pop"),
+        ("__builtins__", "setdefault"),
+        ("__builtins__", "update"),
+        ("__builtins__", "__getitem__"),
+        ("__builtins__", "__setitem__"),
+        ("__builtins__", "__delitem__"),
+        ("__builtins__", "clear"),
+    }
+)
+
+# Dunder attributes that enable class-hierarchy / code-object walks for
+# sandbox escape. The classic example is:
+#     ().__class__.__bases__[0].__subclasses__()
+# which reaches every loaded class (including subprocess.Popen, file IO,
+# etc.) without ever naming a blocked module. `__globals__` and `__code__`
+# similarly let attackers reach the real `exec`/`os` from inside a function
+# defined in a "safe" module.
+_BLOCKED_DUNDER_ATTRS = frozenset(
+    {
+        "__class__",
+        "__bases__",
+        "__mro__",
+        "__subclasses__",
+        "__dict__",
+        "__globals__",
+        "__code__",
+        "__builtins__",
     }
 )
 
@@ -149,37 +218,55 @@ def _check_ast(code: str) -> str | None:
                 root = alias.name.split(".")[0]
                 if root in _BLOCKED_MODULES:
                     return f"Blocked — import of disallowed module '{alias.name}'"
+            continue
 
-        elif isinstance(node, ast.ImportFrom):
+        if isinstance(node, ast.ImportFrom):
             if node.module:
                 root = node.module.split(".")[0]
                 if root in _BLOCKED_MODULES:
                     return f"Blocked — import from disallowed module '{node.module}'"
+            continue
 
-        # Block: exec(), eval(), compile(), __import__()
-        elif isinstance(node, ast.Call):
+        # Block: subscript access to __builtins__ (e.g. __builtins__['__import__'])
+        if isinstance(node, ast.Subscript):
+            if isinstance(node.value, ast.Name) and node.value.id == "__builtins__":
+                return "Blocked — direct subscript access to __builtins__"
+            continue
+
+        # Block: dunder attribute access on any value
+        # (e.g. `os.__class__`, `().__class__.__bases__`,
+        #        `fn.__globals__`, `fn.__code__`)
+        # This covers the class-hierarchy walk escape:
+        #     ().__class__.__bases__[0].__subclasses__()
+        if isinstance(node, ast.Attribute):
+            if node.attr in _BLOCKED_DUNDER_ATTRS:
+                return f"Blocked — access to disallowed dunder '{node.attr}'"
+            # Don't continue — the Call-handling branch below may also apply
+            # if this Attribute is the function of a Call.
+
+        # Block: Call to disallowed built-ins and disallowed module.func pairs
+        if isinstance(node, ast.Call):
             func = node.func
+
+            # Call to disallowed built-in: exec(), getattr(), vars(), …
             if isinstance(func, ast.Name) and func.id in _BLOCKED_CALLS:
                 return f"Blocked — call to disallowed built-in '{func.id}()'"
 
-            # Block: os.system(), os.popen(), os.exec*(), os.spawn*()
-            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-                pair = (func.value.id, func.attr)
-                if pair in _BLOCKED_ATTRS:
-                    return f"Blocked — call to disallowed '{pair[0]}.{pair[1]}()'"
-                # Catch os.exec*/os.spawn* variants not explicitly listed
-                if func.value.id == "os" and (func.attr.startswith("exec") or func.attr.startswith("spawn")):
-                    return f"Blocked — call to disallowed 'os.{func.attr}()'"
+            if isinstance(func, ast.Attribute):
+                # Call to disallowed module.func pair
+                if isinstance(func.value, ast.Name):
+                    pair = (func.value.id, func.attr)
+                    if pair in _BLOCKED_ATTRS:
+                        return f"Blocked — call to disallowed '{pair[0]}.{pair[1]}()'"
+                    # Catch os.exec*/os.spawn* variants not explicitly listed
+                    if func.value.id == "os" and (func.attr.startswith("exec") or func.attr.startswith("spawn")):
+                        return f"Blocked — call to disallowed 'os.{func.attr}()'"
 
-        # Block: subscript access to __builtins__ (e.g. __builtins__['__import__'])
-        elif isinstance(node, ast.Subscript):
-            if isinstance(node.value, ast.Name) and node.value.id == "__builtins__":
-                return "Blocked — direct subscript access to __builtins__"
-
-        # Block: getattr used to access blocked names reflectively
-        elif isinstance(node, ast.Call):
-            # Already handled above, but also catch getattr(os, 'system') patterns
-            pass
+                # Call on a dunder attribute (e.g. obj.__class__(),
+                # ().__class__.__bases__[0].__subclasses__()). This is the
+                # primary class-hierarchy walk attack surface.
+                if func.attr in _BLOCKED_DUNDER_ATTRS:
+                    return f"Blocked — call to disallowed dunder '{func.attr}()'"
 
     return None
 

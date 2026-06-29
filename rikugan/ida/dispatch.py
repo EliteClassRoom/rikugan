@@ -213,6 +213,7 @@ class IdaHeadlessDispatcher:
                     raise job.exception
                 return job.result
 
+            assert job.exception is not None
             raise job.exception  # timeout error
 
         return wrapper  # type: ignore[return-value]

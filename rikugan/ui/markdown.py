@@ -289,17 +289,41 @@ def _legacy_inline(text: str, theme: dict[str, str]) -> str:
     return text
 
 
+# URL schemes permitted in markdown links rendered to Qt rich-text.
+# ``javascript:`` (and other executable schemes) are deliberately excluded to
+# prevent XSS when a user clicks a link in the chat panel.
+_SAFE_URL_SCHEMES = frozenset({"http", "https", "mailto", "ftp", "file", "data", ""})
+_UNSAFE_HREF_RE = _re.compile(r"href=(['\"]?)\s*([a-zA-Z][a-zA-Z0-9+.\-]*):", _re.IGNORECASE)
+
+
+def _render_link(link_style: str, label: str, url: str) -> str:
+    """Render a markdown link as an ``<a>`` tag, dropping unsafe URL schemes.
+
+    Qt's rich-text engine honours ``javascript:`` (and similar) hrefs when a
+    user clicks a link, so any executable scheme is stripped before rendering.
+    """
+    scheme = ""
+    match = _re.match(r"\s*([a-zA-Z][a-zA-Z0-9+.\-]*):", url)
+    if match:
+        scheme = match.group(1).lower()
+    elif url.lstrip().startswith("#"):
+        scheme = ""  # fragment — safe
+    if scheme not in _SAFE_URL_SCHEMES:
+        return label  # unsafe scheme — render as plain text, no anchor
+    return f'<a style="{link_style}" href="{url}">{label}</a>'
+
+
 def _legacy_inline_formatting(text: str, link_style: str | None = None) -> str:
     link_style = link_style or _legacy_theme_styles()["link_style"]
     text = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = _re.sub(r"__(.+?)__", r"<b>\1</b>", text)
     text = _re.sub(r"(?<!\w)\*(.+?)\*(?!\w)", r"<i>\1</i>", text)
     text = _re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"<i>\1</i>", text)
-    text = _re.sub(
-        r"\[([^\]]+)\]\(([^)]+)\)",
-        rf'<a style="{link_style}" href="\2">\1</a>',
-        text,
-    )
+
+    def _link_sub(match: _re.Match) -> str:
+        return _render_link(link_style, match.group(1), match.group(2))
+
+    text = _re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _link_sub, text)
     return text
 
 
@@ -410,7 +434,13 @@ def _cache_key(text: str) -> tuple[str, int]:
     """Build a (text_hash, theme_token_id) cache key."""
     from .theme.manager import ThemeManager
 
-    text_hash = _hashlib.sha1(text.encode("utf-8", errors="replace")).hexdigest()
+    # SHA1 is fine here — this hash is a non-security HTML-cache key, not a
+    # cryptographic primitive. ``usedforsecurity=False`` documents that intent
+    # and silences the B324 false-positive.
+    text_hash = _hashlib.sha1(
+        text.encode("utf-8", errors="replace"),
+        usedforsecurity=False,
+    ).hexdigest()
     return (text_hash, id(ThemeManager.instance().tokens()))
 
 

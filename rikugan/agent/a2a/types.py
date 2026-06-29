@@ -60,9 +60,17 @@ class A2AEventType(str, Enum):
 
 @dataclass
 class A2AEvent:
-    """Event emitted during A2A communication."""
+    """Event emitted during A2A communication.
 
-    type: A2AEventType
+    ``type`` is typed as ``str`` (not ``A2AEventType``) because the
+    ``SubprocessBridge`` transport yields informal values
+    (``"stdout"``, ``"completed"``, ``"error"``, ``"cancelled"``)
+    while the ``A2AClient`` transport yields ``A2AEventType`` enum
+    members (which are also ``str`` since the enum subclasses ``str``).
+    Both paths flow through the same dispatcher and ``type`` field.
+    """
+
+    type: str
     task_id: str = ""
     agent_name: str = ""
     text: str = ""

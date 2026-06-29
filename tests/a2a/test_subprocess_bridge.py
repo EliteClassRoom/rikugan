@@ -15,9 +15,11 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 from rikugan.agent.a2a.subprocess_bridge import SubprocessBridge
@@ -142,14 +144,12 @@ class TestSubprocessBridgeTaskValidation(unittest.TestCase):
         Rationale: a legitimate user task should never begin with '--'.
         If it does, it's almost certainly a prompt-injection attempt.
         """
-        from rikugan.core.errors import ToolError
         with self.assertRaises(Exception) as cm:
             self.bridge._build_command(_make_claude_agent(), "--help")
         # Either ValueError or ToolError are acceptable
         self.assertIn(type(cm.exception).__name__, ("ValueError", "ToolError"))
 
     def test_task_starting_with_single_dash_raises_value_error(self):
-        from rikugan.core.errors import ToolError
         with self.assertRaises(Exception) as cm:
             self.bridge._build_command(_make_codex_agent(), "-h")
         self.assertIn(type(cm.exception).__name__, ("ValueError", "ToolError"))
@@ -163,6 +163,68 @@ class TestSubprocessBridgeTaskValidation(unittest.TestCase):
         cmd = self.bridge._build_command(_make_claude_agent(), "do something")
         self.assertIsNotNone(cmd)
 
+
+
+class TestCurateSubprocessEnv(unittest.TestCase):
+    """The subprocess bridge must not leak the parent's full os.environ
+    (which typically contains API keys and Rikugan-internal state) to
+    the external CLI agent.
+    """
+
+    def setUp(self):
+        from rikugan.agent.a2a.subprocess_bridge import _curate_subprocess_env
+        self._curate = _curate_subprocess_env
+
+    def test_excludes_secret_api_keys(self):
+        # Pretend the parent process has API keys in env
+        with mock.patch.dict(
+            os.environ,
+            {
+                "ANTHROPIC_API_KEY": "sk-ant-secret",
+                "OPENAI_API_KEY": "sk-openai-secret",
+                "GOOGLE_API_KEY": "google-secret",
+                "RIKUGAN_AUTH_TOKEN": "rikugan-internal",
+            },
+            clear=False,
+        ):
+            curated = self._curate({})
+            assert "ANTHROPIC_API_KEY" not in curated
+            assert "OPENAI_API_KEY" not in curated
+            assert "GOOGLE_API_KEY" not in curated
+            assert "RIKUGAN_AUTH_TOKEN" not in curated
+
+    def test_passes_path_for_cli_discovery(self):
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=False):
+            curated = self._curate({})
+            assert curated.get("PATH") == "/usr/bin:/bin"
+
+    def test_passes_locale(self):
+        with mock.patch.dict(os.environ, {"LANG": "en_US.UTF-8", "LC_ALL": "C"}, clear=False):
+            curated = self._curate({})
+            assert curated.get("LANG") == "en_US.UTF-8"
+            assert curated.get("LC_ALL") == "C"
+
+    def test_passes_proxy_settings(self):
+        with mock.patch.dict(
+            os.environ,
+            {"HTTP_PROXY": "http://proxy:8080", "NO_PROXY": "localhost,127.0.0.1"},
+            clear=False,
+        ):
+            curated = self._curate({})
+            assert curated.get("HTTP_PROXY") == "http://proxy:8080"
+            assert curated.get("NO_PROXY") == "localhost,127.0.0.1"
+
+    def test_agent_env_overrides_curated(self):
+        with mock.patch.dict(os.environ, {"PATH": "/parent/path"}, clear=False):
+            curated = self._curate({"PATH": "/override/path"})
+            assert curated["PATH"] == "/override/path"
+
+    def test_empty_parent_env_yields_minimal_dict(self):
+        # Only agent.env should be present when parent env is empty.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            curated = self._curate({"MY_VAR": "hello"})
+            # Only MY_VAR should be in curated (all passthrough keys absent).
+            assert curated == {"MY_VAR": "hello"}
 
 if __name__ == "__main__":
     unittest.main()
