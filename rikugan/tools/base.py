@@ -200,7 +200,30 @@ def tool(
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         tool_name = name or func.__name__
-        tool_desc = description or (func.__doc__ or "").strip().split("\n")[0]
+        # Use the full docstring as description, not just the first line. A
+        # single-line description like "List all imported functions" gives
+        # the LLM no signal about output format, pagination, sibling tools,
+        # or when NOT to use this tool. Multi-line docstrings are how we
+        # give the model the context it needs to choose correctly.
+        if description is not None:
+            tool_desc = description
+        else:
+            doc = (func.__doc__ or "").strip()
+            # Normalize internal whitespace: collapse runs of blank lines and
+            # strip per-line indents so docstrings written with arbitrary
+            # indentation render cleanly in the prompt.
+            lines = [line.strip() for line in doc.splitlines()]
+            paragraphs: list[str] = []
+            current: list[str] = []
+            for line in lines:
+                if line:
+                    current.append(line)
+                elif current:
+                    paragraphs.append(" ".join(current))
+                    current = []
+            if current:
+                paragraphs.append(" ".join(current))
+            tool_desc = "\n\n".join(paragraphs)
         params = _build_parameters(func)
 
         # Build requires list — merge explicit requires with requires_decompiler compat

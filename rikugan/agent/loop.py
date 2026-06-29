@@ -69,7 +69,7 @@ from .pseudo_tool_schemas import (
     SPAWN_SUBAGENT_SCHEMA,
 )
 from .subagent import SubagentRunner
-from .system_prompt import build_system_prompt
+from .system_prompt import build_system_prompt, format_tools_catalog
 from .turn import TurnEvent, TurnEventType
 
 _MIN_CONTEXT_WINDOW_TOKENS = 8_000
@@ -410,6 +410,7 @@ class AgentLoop:
             skill_summary=skill_summary,
             idb_dir=idb_dir,
             profile=profile,
+            tools_table=format_tools_catalog(self.tools.list_available_tools()),
         )
 
     def _resolve_skill(self, user_message: str) -> tuple:

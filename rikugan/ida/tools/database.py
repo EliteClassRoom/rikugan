@@ -23,7 +23,19 @@ except ImportError as e:
 
 @tool(category="database")
 def list_segments() -> str:
-    """List all segments in the binary."""
+    """List every segment defined in the IDB with its address range, size, and permissions.
+
+    Output format is one line per segment:
+    `  <name>  <start>-<end>  (<size> bytes)  <perms>` where perms is a
+    concatenated R/W/X string derived from the segment permission bits.
+
+    Use this for binary layout reconnaissance — identifying packed or
+    non-standard sections (e.g. .UPX0, .idata, .rsrc), or filtering on
+    RWX/RE/WE permissions to find executable data or writable code.
+    For raw bytes inside a specific segment, follow up with read_bytes
+    on the segment's start address; for symbols inside a segment, use
+    search_functions with a substring query.
+    """
 
     lines = ["Segments:"]
     for seg_ea in idautils.Segments():
@@ -46,7 +58,20 @@ def list_segments() -> str:
 
 @tool(category="database")
 def list_imports() -> str:
-    """List all imported functions."""
+    """List every imported function, grouped by source module (DLL).
+
+    Output format groups imports under `[module_name]` headers with
+    per-module counts, then `0xADDR  <name>` (or `ordinal #N` for
+    ordinal-only entries). Each module shows up to 50 entries; larger
+    modules are truncated with a `... and N more` line.
+
+    This is the canonical first-recon tool for capability mapping
+    (network, crypto, file, process APIs). If you need a filtered view
+    — e.g. only crypto-related imports, or only imports from a single
+    DLL — prefer search_imports or imports_by_module instead of writing
+    a script with ida_nalt.enum_import_names. The dedicated tools avoid
+    the user-approval round-trip that execute_python requires.
+    """
 
     lines = ["Imports:"]
     nimps = ida_nalt.get_import_module_qty()
@@ -70,8 +95,116 @@ def list_imports() -> str:
 
 
 @tool(category="database")
+def search_imports(
+    query: Annotated[str, "Substring to search for in import names (case-insensitive)"],
+    limit: Annotated[int, "Max number of matches to return"] = 20,
+) -> str:
+    """Search every imported function across all modules for a name containing *query*.
+
+    Use this when you need a filtered subset of imports — for example
+    "show me every crypto-related API", or "find CreateFile". The
+    search is a case-insensitive substring match on the import name.
+
+    Output format: a header line with the match count, followed by
+    `0xADDR  [module]  <name>` lines (capped at *limit*). Returns a
+    clear "No imports matching ..." message when nothing matches, so
+    the LLM does not silently treat an empty list as a hit.
+    """
+
+    q = query.lower()
+    matches: list[tuple[str, int, str]] = []  # (module, ea, display)
+
+    def _cb(ea: int, name: str | None, ordinal: int) -> bool:
+        if not name:
+            return True
+        if q in name.lower():
+            matches.append((mod_name, ea, name))
+        return True
+
+    nimps = ida_nalt.get_import_module_qty()
+    for i in range(nimps):
+        mod_name = ida_nalt.get_import_module_name(i) or f"module_{i}"
+        ida_nalt.enum_import_names(i, _cb)
+
+    if not matches:
+        return f"No imports matching '{query}'"
+
+    lines = [f"Found {len(matches)} import(s) matching '{query}':"]
+    for mod_name, ea, name in matches[:limit]:
+        lines.append(f"  0x{ea:x}  [{mod_name}]  {name}")
+    if len(matches) > limit:
+        lines.append(f"  ... and {len(matches) - limit} more")
+    return "\n".join(lines)
+
+
+@tool(category="database")
+def imports_by_module(
+    module_name: Annotated[str, "Module (DLL) name to filter by, e.g. 'kernel32' or 'kernel32.dll'"],
+    limit: Annotated[int, "Max number of imports to return"] = 50,
+) -> str:
+    """Return imports from a single module (DLL).
+
+    *module_name* is matched as a case-insensitive substring against the
+    DLL name in the import table, so both 'kernel32' and 'kernel32.dll'
+    work. If multiple modules match, the first one wins; the response
+    includes the resolved name so the LLM can disambiguate.
+
+    When the requested module is not present, the response lists every
+    available module so the LLM can recover and pick a different one
+    instead of looping with the same query.
+    """
+
+    target = module_name.lower()
+    nimps = ida_nalt.get_import_module_qty()
+
+    available: list[str] = []
+    found_idx = -1
+    found_name = ""
+    for i in range(nimps):
+        name = ida_nalt.get_import_module_name(i) or f"module_{i}"
+        available.append(name)
+        if target in name.lower() and found_idx < 0:
+            found_idx = i
+            found_name = name
+
+    if found_idx < 0:
+        avail = ", ".join(available) if available else "(no modules)"
+        return f"Module '{module_name}' not found. Available modules: {avail}"
+
+    entries: list[str] = []
+    found_idx_ref = found_idx
+
+    def _cb(ea: int, name: str | None, ordinal: int) -> bool:
+        if name:
+            entries.append(f"    0x{ea:x}  {name}")
+        else:
+            entries.append(f"    0x{ea:x}  ordinal #{ordinal}")
+        return True
+
+    ida_nalt.enum_import_names(found_idx_ref, _cb)
+
+    if not entries:
+        return f"Module '{found_name}' has no imports"
+
+    lines = [f"Imports from {found_name} ({len(entries)} entries):"]
+    lines.extend(entries[:limit])
+    if len(entries) > limit:
+        lines.append(f"    ... and {len(entries) - limit} more")
+    return "\n".join(lines)
+
+
+@tool(category="database")
 def list_exports() -> str:
-    """List all exported functions/symbols."""
+    """List exported functions and symbols, ordered by their export-table index.
+
+    Output format is one line per entry: `0xADDR  <name>`. Up to 200
+    entries are returned; the rest are silently truncated.
+
+    Use this when reviewing the binary's public surface area (PE exports,
+    ELF dynamic symbols). If you need a filtered list — by name
+    substring or by prefix — use search_exports instead of writing a
+    script with idautils.Entries().
+    """
 
     lines = ["Exports:"]
     for i, (_, _, ea, name) in enumerate(idautils.Entries()):
@@ -84,7 +217,19 @@ def list_exports() -> str:
 
 @tool(category="database")
 def get_binary_info() -> str:
-    """Get general information about the loaded binary."""
+    """Return high-level metadata about the loaded binary (file name, processor, bitness, entry point, address range, file type, total function count).
+
+    Output is plain text, one fact per line:
+    `File:`, `Processor:`, `Bits:`, `Entry point:`, `Min/Max address:`,
+    `File type:`, `Functions: <N>`.
+
+    This is the right tool for the first turn of any new analysis —
+    it gives you the binary's identity and overall scale in one call.
+    For per-function details, follow up with list_functions (paginated)
+    or search_functions (substring match). For strings, use
+    list_strings; for imports/exports, use list_imports/list_exports.
+    Never reimplement these with execute_python.
+    """
 
     lines = [f"File: {ida_nalt.get_root_filename()}"]
 
@@ -128,7 +273,18 @@ def read_bytes(
     address: Annotated[str, "Start address (hex string)"],
     size: Annotated[int, "Number of bytes to read"] = 64,
 ) -> str:
-    """Read raw bytes at an address and return as hex dump."""
+    """Read raw bytes from the IDB at the given address and return a hex + ASCII dump.
+
+    Output format is the standard hexdump with 16 bytes per row:
+    `  0xADDR  HH HH HH ...  HH HH  |ascii|` (note the double-space gap
+    that splits each row into two 8-byte groups for readability).
+
+    The `size` parameter is capped at 1024 bytes per call; for larger
+    ranges, make multiple calls with progressively advancing addresses.
+    For interpreting a known global value with a type hint (pointer,
+    string, integer), prefer read_global_value — it formats the data
+    for you instead of returning raw hex.
+    """
 
     _MAX_READ_BYTES = 1024
     ea = parse_addr(address)
@@ -201,7 +357,20 @@ def read_global_value(
     ] = "auto",
     size: Annotated[int, "Bytes to inspect for auto/string/bytes; 0 selects a sensible default"] = 0,
 ) -> str:
-    """Read and interpret a global variable or data value."""
+    """Read and interpret a global variable or data value with a type-aware formatter.
+
+    Accepts either a hex address (`0x401000`) or a symbol name
+    (`g_pConfigStart`). The `type_hint` controls how the bytes are
+    interpreted:
+      - `auto` — infer from context (default; size 0 picks a sensible width)
+      - `u8/i8/u16/i16/u32/i32/u64/i64` — fixed-width integer
+      - `ptr` — pointer with auto-resolved target symbol
+      - `string` / `utf16` — null-terminated string of the given encoding
+      - `bytes` — raw hex bytes
+
+    Use this when you need to read a single global with structure; for
+    raw byte ranges without interpretation, use read_bytes instead.
+    """
 
     ea = _resolve_addr_or_name(address)
     pointer_size = _pointer_size()

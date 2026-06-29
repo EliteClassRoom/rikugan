@@ -14,10 +14,20 @@ _BASE_PROMPT = IDA_BASE_PROMPT  # backward compat alias
 
 if TYPE_CHECKING:
     from ..core.profile import AnalysisProfile
+    from ..tools.base import ToolDefinition
 
 
 # Maximum number of lines to load from RIKUGAN.md
 _MAX_MEMORY_LINES = 200
+
+# Cap the per-tool description so the catalog table does not bloat the
+# system prompt. The full description is still available via the
+# provider tool schema; the catalog is for at-a-glance recall.
+_CATALOG_DESC_MAX = 120
+# Sentinel for tools whose description did not survive parsing (no
+# docstring, decorator edge cases). Tells the LLM "this exists" without
+# inventing a hint that may be wrong.
+_UNKNOWN_DESC = "(no description)"
 
 
 def _load_persistent_memory(idb_dir: str = "") -> str | None:
@@ -50,6 +60,49 @@ def _load_persistent_memory(idb_dir: str = "") -> str | None:
     return None
 
 
+def format_tools_catalog(tools: list[ToolDefinition]) -> str:
+    """Render a categorized, markdown-formatted catalog of available tools.
+
+    The output groups tools by ``ToolDefinition.category`` (sorted
+    alphabetically for stability) and lists each tool with a truncated
+    one-line description. This is what we want in the system prompt's
+    ``## Available Tools`` section — a comma-separated list of bare names
+    gives the model no signal about which tool to reach for.
+
+    Returns an empty string when *tools* is empty so callers can
+    unconditionally include the result without a length check.
+    """
+    if not tools:
+        return ""
+
+    # Group by category. Sort categories and tool names within each
+    # category for stable output (avoids spurious diffs in golden-file
+    # tests and keeps the LLM's mental model consistent across runs).
+    by_category: dict[str, list[ToolDefinition]] = {}
+    for t in tools:
+        by_category.setdefault(t.category, []).append(t)
+
+    lines = ["## Available Tools", ""]
+    for category in sorted(by_category):
+        lines.append(f"### {category}")
+        lines.append("")
+        lines.append("| Tool | Description |")
+        lines.append("| --- | --- |")
+        for t in sorted(by_category[category], key=lambda x: x.name):
+            desc = t.description.strip() if t.description else ""
+            # Collapse internal newlines so each row stays a single Markdown line.
+            desc = " ".join(desc.split())
+            if len(desc) > _CATALOG_DESC_MAX:
+                desc = desc[: _CATALOG_DESC_MAX - 1].rstrip() + "…"
+            if not desc:
+                desc = _UNKNOWN_DESC
+            # Escape pipe characters so they do not break the table.
+            safe_desc = desc.replace("|", "\\|")
+            lines.append(f"| `{t.name}` | {safe_desc} |")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def build_system_prompt(
     host_name: str = "IDA Pro",
     binary_info: str | None = None,
@@ -61,6 +114,7 @@ def build_system_prompt(
     skill_summary: str | None = None,
     idb_dir: str | None = None,
     profile: AnalysisProfile | None = None,
+    tools_table: str | None = None,
 ) -> str:
     """Build the full system prompt with optional binary context."""
     base_prompt = IDA_BASE_PROMPT
@@ -95,7 +149,14 @@ def build_system_prompt(
             if current_function:
                 parts.append(f"Function: {sanitize_binary_context(current_function, 'cursor_function')}")
 
-    if tool_names:
+    if tools_table:
+        # Prefer the categorized catalog — it gives the LLM category
+        # grouping + one-line description hints so it can pick the right
+        # tool without scanning the full provider schema.
+        parts.append(f"\n{tools_table}")
+    elif tool_names:
+        # Fallback: comma-separated names only. Less useful but still
+        # better than nothing for hosts that do not pre-compute a table.
         parts.append(f"\n## Available Tools\n{', '.join(tool_names)}")
 
     if skill_summary:

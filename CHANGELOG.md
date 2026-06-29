@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-06-29
+
+### Added
+- **Tool substitution guard** (`rikugan.tools.tool_substitution`): when the agent
+  calls `execute_python` with a script that re-implements an existing dedicated
+  tool, the tool now emits a non-blocking suggestion pointing at the dedicated
+  alternative. Suggest-only — the script still runs, but the LLM sees the
+  hint and learns the pattern for future turns. Mapping table covers
+  imports/exports/strings/functions/xrefs/segments plus contributed entries
+  for annotations, decompiler, disassembly/IL, and type/struct APIs.
+- **`search_imports` and `imports_by_module` tools**: fill the capability gap
+  where `list_imports` could only return the full set. The LLM no longer
+  needs to script a custom filter to find imports by name or by DLL.
+- **Categorized tool catalog in the system prompt** (`format_tools_catalog`):
+  the `## Available Tools` section is now a per-category markdown table
+  with one-line description hints, replacing the bare comma-separated list.
+  The LLM can scan it to find the right tool without reading the full
+  provider schema.
+
+### Changed
+- **Tool descriptions use the full docstring**, not just the first line.
+  Each `database` tool now documents its output format, capacity limits,
+  and sibling tools (search/filter variants) so the LLM has enough
+  context to choose correctly instead of falling through to `execute_python`.
+- `list_imports`, `list_exports`, `list_segments`, `get_binary_info`,
+  `read_bytes`, and `read_global_value` got multi-line docstrings
+  covering output format and "use the search variant when filtering".
+
+### Security
+- Tool-substitution layer is suggest-only; no new auto-approval path.
+  `execute_python` still requires explicit user approval for every call
+  regardless of suggestion presence.
+
 ## [1.4.0] — 2026-06-26
 
 ### Changed

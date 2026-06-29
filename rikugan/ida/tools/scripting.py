@@ -9,6 +9,7 @@ from ...core.errors import ToolError
 from ...core.logging import log_debug
 from ...tools.base import tool
 from ...tools.script_guard import run_guarded_script, safe_builtins
+from ...tools.tool_substitution import format_suggestions_for_agent, suggest_substitutions
 from ...tools.validate_idapython import validate_idapython
 
 # Cached namespace of common IDA modules — populated once, reused across calls.
@@ -78,16 +79,25 @@ def execute_python(
             tool_name="execute_python",
         )
 
-    # 2. Run guarded execution.
+    # 2. Tool-substitution hint — runs AFTER the hallucination check so we
+    #    do not spend tokens suggesting a tool for a script that should be
+    #    rewritten anyway. Suggest-only: we never block, the agent may
+    #    have a legitimate reason to script (filtering, batch ops, etc.).
+    suggestions = suggest_substitutions(code)
+    preamble = format_suggestions_for_agent(suggestions)
+
+    # 3. Run guarded execution.
     output = run_guarded_script(code, _get_base_namespace)
 
-    # 3. If only warnings — surface them as a header so the agent self-corrects
-    #    next time without needing a failure to trigger reflection.
+    # 4. Compose the visible output: warnings + substitution hints come
+    #    first so the LLM sees them before its own script's stdout.
+    parts: list[str] = []
+    if preamble:
+        parts.append(preamble)
     if validation.warnings:
-        header = (
+        parts.append(
             "[validate_idapython] Legacy/discouraged APIs detected — "
-            "prefer modern ida_* equivalents:\n" + validation.format_for_agent() + "\n--- script output follows ---\n"
+            "prefer modern ida_* equivalents:\n" + validation.format_for_agent() + "\n--- script output follows ---"
         )
-        return header + output
-
-    return output
+    parts.append(output)
+    return "\n\n".join(parts)
