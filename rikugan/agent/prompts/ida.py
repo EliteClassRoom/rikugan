@@ -25,6 +25,11 @@ _IDA_TOOL_USAGE = """\
 You have 60+ purpose-built tools for IDA analysis. ALWAYS prefer these
 built-in tools over execute_python (IDAPython scripting).
 
+The full categorized catalog (every tool grouped by category with a
+one-line description) is rendered as a markdown table elsewhere in
+this prompt. Scan it before reaching for execute_python — the right
+tool is almost always already there.
+
 **execute_python is a LAST RESORT.** Only use it when:
 - No built-in tool exists for the task
 - You need to automate a bulk operation across hundreds of items
@@ -38,8 +43,18 @@ built-in tools over execute_python (IDAPython scripting).
 - Renaming anything (use rename_function, rename_variable, rename_address)
 - Setting types (use set_type, set_function_prototype, create_struct)
 - Reading strings (use list_strings, search_strings, get_string_at)
-- Getting binary info (use get_binary_info, list_segments, list_imports)
+- Listing imports (use list_imports)
+- Searching/filtering imports (use search_imports, imports_by_module)
+- Listing exports (use list_exports)
+- Listing segments (use list_segments)
+- Getting binary info (use get_binary_info)
 - Microcode operations (use get_microcode, nop_microcode, install_microcode_optimizer)
+
+If you ever do call execute_python and the result starts with a
+``[rikugan]`` block, that is Rikugan's tool substitution guard telling
+you a dedicated tool would have done the same job. Acknowledge it and
+call the dedicated tool on your next turn instead of repeating the
+script.
 """
 
 _IDA_CAPABILITIES = (

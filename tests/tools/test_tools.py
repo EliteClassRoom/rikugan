@@ -98,6 +98,55 @@ nimps = ida_nalt.get_import_module_qty()
             for s in sugg:
                 self.assertIn(s.tool_name, rendered)
 
+    def test_format_suggestions_for_agent_mentions_guard(self):
+        """The preamble must identify itself as Rikugan's substitution guard.
+
+        Without this context, the LLM has no way to know that the
+        ``[rikugan]`` block came from a built-in guard layer (vs. a
+        stale system message or a malformed script output) and may
+        ignore it as noise.
+        """
+        from rikugan.tools.tool_substitution import Suggestion, format_suggestions_for_agent
+
+        sugg = [
+            Suggestion(
+                tool_name="list_imports",
+                matched_apis=("ida_nalt.get_import_module_qty",),
+                hint="Enumerating imports is what list_imports does.",
+            )
+        ]
+        rendered = format_suggestions_for_agent(sugg)
+        # Identity markers — the LLM should be able to tell this came
+        # from Rikugan's guard, not from a user message.
+        self.assertIn("[rikugan]", rendered)
+        self.assertIn("guard", rendered.lower())
+
+
+class TestPromptMentionsNewTools(unittest.TestCase):
+    """The system prompt's tool-usage guidance must stay in sync with the
+    tools actually registered. When new dedicated tools are added
+    (search_imports, imports_by_module), the prompt must (1) mention them
+    so the LLM considers them, and (2) acknowledge the substitution
+    guard layer so the [rikugan] preamble is not treated as noise."""
+
+    def test_ida_tool_usage_mentions_search_variants(self):
+        from rikugan.agent.prompts.ida import _IDA_TOOL_USAGE
+
+        text = _IDA_TOOL_USAGE.lower()
+        # Both new dedicated tools must be reachable from the prompt.
+        self.assertIn("search_imports", text)
+        self.assertIn("imports_by_module", text)
+
+    def test_ida_api_discipline_acknowledges_substitution_guard(self):
+        from rikugan.agent.prompts.base import IDA_API_DISCIPLINE_SECTION
+
+        text = IDA_API_DISCIPLINE_SECTION.lower()
+        # The discipline section is the right home for "what to do when
+        # you see the [rikugan] substitution hint" because it already
+        # owns the "is there a built-in tool?" pre-write checklist.
+        self.assertIn("[rikugan]", text)
+        self.assertIn("substitution", text)
+
     def test_contributed_mappings_recognize_wrapper_scripts(self):
         """Each contributed mapping entry must trigger when its API is called.
 

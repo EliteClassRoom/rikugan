@@ -301,4 +301,15 @@ convenience helper that "should" exist.
 4. Prefer modern ``ida_*`` modules over ``idc``.
 5. After an ``AttributeError`` mentioning IDA APIs, FETCH the ida-scripting skill
    before rewriting — do not retry the same broken pattern.
+
+**Tool substitution guard.** Rikugan scans every ``execute_python``
+script for IDAPython API patterns that re-implement an existing
+dedicated tool. When it finds one, the script still runs (you may
+have a legitimate reason) but the output is prefixed with a
+``[rikugan] Prefer these dedicated tools`` block. Treat that preamble
+as feedback: the dedicated tool would have done the same work without
+the user-approval round-trip. Call the dedicated tool on your next
+turn instead of repeating the script. The mapping covers
+imports/exports/strings/functions/xrefs/segments plus common
+annotations, decompiler, disassembly, and type/struct APIs.
 """

@@ -309,20 +309,25 @@ def format_suggestions_for_agent(suggestions: list[Suggestion]) -> str:
     prepended to the script's stdout/stderr result so the LLM sees the
     hint *and* the original script output, then can choose to retry
     with the dedicated tool on a future turn.
+
+    The preamble explicitly identifies itself as Rikugan's tool
+    substitution guard so the LLM can tell the block apart from
+    malformed script output, stale context, or user messages.
     """
     if not suggestions:
         return ""
     lines = [
-        "[rikugan] Prefer these dedicated tools instead of executing this script:",
+        "[rikugan] Tool substitution guard — prefer these dedicated tools over this script:",
         "",
     ]
     for s in suggestions:
         lines.append(f"- `{s.tool_name}` — {s.hint}")
     lines.append("")
     lines.append(
-        "If your goal can be expressed as one of these tool calls, "
-        "call the tool instead on your next turn and cancel/avoid "
-        "future scripts that reimplement the same operation."
+        "Call the dedicated tool on your next turn instead of repeating "
+        "this script. The guard is suggest-only — this script ran to "
+        "completion, but the dedicated tool would skip the user-approval "
+        "round-trip and use the cached/paginated result."
     )
     return "\n".join(lines)
 
