@@ -35,9 +35,9 @@ from .theme.manager import ThemeManager, _blend_hex
 # ---------------------------------------------------------------------------
 _EMOJI_RE = _re.compile(
     "["
-    "⃣"
-    "️"
-    "‍"
+    "\u20e3"
+    "\ufe0f"
+    "\u200d"
     "\U0001f1e6-\U0001f1ff"
     "☀-➿"
     "\U0001f300-\U0001f5ff"

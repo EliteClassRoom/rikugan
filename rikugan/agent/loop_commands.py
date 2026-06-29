@@ -25,6 +25,21 @@ if TYPE_CHECKING:
 
 
 _MAX_GOAL_CHARS = 1000
+ACTIVE_GOAL_METADATA_KEY = "active_goal"
+
+
+def normalize_goal(raw_goal: str) -> str:
+    """Sanitize, trim, and cap a raw goal string.
+
+    Used by both the state-only `/goal` direct command and the parser
+    branch that converts `/goal <objective>` into a normal run. Strips
+    injection markers and caps length so the active goal is safe to
+    inject into the system prompt via ``quote_untrusted`` later.
+    """
+    goal = strip_injection_markers(raw_goal.strip())
+    if len(goal) > _MAX_GOAL_CHARS:
+        goal = goal[:_MAX_GOAL_CHARS].rstrip() + "..."
+    return goal
 
 
 def _handle_memory_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
@@ -57,9 +72,9 @@ def _handle_memory_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
 
 
 def _handle_goal_command(loop: AgentLoop, raw_goal: str) -> Generator[TurnEvent, None, None]:
-    goal = strip_injection_markers(raw_goal.strip())
+    goal = normalize_goal(raw_goal)
     if not goal:
-        current = loop.session.metadata.get("active_goal", "").strip()
+        current = loop.session.metadata.get(ACTIVE_GOAL_METADATA_KEY, "").strip()
         if current:
             yield TurnEvent.text_done(f"**Active Goal**\n\n{current}")
         else:
@@ -67,14 +82,11 @@ def _handle_goal_command(loop: AgentLoop, raw_goal: str) -> Generator[TurnEvent,
         return
 
     if goal.lower() in {"clear", "reset", "unset"}:
-        loop.session.metadata.pop("active_goal", None)
+        loop.session.metadata.pop(ACTIVE_GOAL_METADATA_KEY, None)
         yield TurnEvent.text_done("Active goal cleared.")
         return
 
-    if len(goal) > _MAX_GOAL_CHARS:
-        goal = goal[:_MAX_GOAL_CHARS].rstrip() + "..."
-
-    loop.session.metadata["active_goal"] = goal
+    loop.session.metadata[ACTIVE_GOAL_METADATA_KEY] = goal
     yield TurnEvent.text_done(f"Active goal set:\n\n{goal}")
 
 
