@@ -807,27 +807,48 @@ class ChatView(QScrollArea):
 
             self._scroll_to_bottom()
         else:  # TEXT_DONE
+            thinking_text = _extract_thinking_text(event.text)
+            visible_text = _extract_visible_text(event.text)
+            has_visible = bool(visible_text)
+            has_thinking = bool(thinking_text)
+
             if self._current_assistant is not None:
                 # Final render - extract and handle thinking if any.
                 # The visible is taken from the unstripped helper so
                 # the boundary spaces preserved during streaming are
                 # not clobbered here.  The thinking extraction stays
                 # the same (always stripped).
-                thinking_text = _extract_thinking_text(event.text)
-                visible_text = _extract_visible_text(event.text)
-
-                if thinking_text:
+                if has_thinking:
                     # Finalize thinking block
                     if self._message_thinking is None:
                         self._message_thinking = _ThinkingBlock()
                         self._insert_widget(self._message_thinking)
                     self._message_thinking.set_thinking(thinking_text, in_progress=False)
 
-                if visible_text:
+                if has_visible:
                     self._current_assistant.set_text(visible_text)
-                elif not thinking_text:
+                elif not has_thinking:
                     # No visible text at all, just render normally
                     self._current_assistant.set_text(event.text)
+            elif has_visible or has_thinking:
+                # Standalone TEXT_DONE with no prior streaming — typical
+                # for direct commands like `/goal`, `/memory`, `/mcp`,
+                # `/doctor`, etc. that emit a single confirmation event.
+                # Without this branch the command acknowledgement would
+                # be silently dropped because _current_assistant is
+                # only set by TEXT_DELTA handlers.
+                if has_thinking:
+                    if self._message_thinking is None:
+                        self._message_thinking = _ThinkingBlock()
+                        self._insert_widget(self._message_thinking)
+                    self._message_thinking.set_thinking(thinking_text, in_progress=False)
+                if has_visible:
+                    self._current_assistant = AssistantMessageWidget()
+                    self._insert_widget(self._current_assistant)
+                    self._current_assistant.set_text(visible_text)
+                # If only thinking is present, skip rendering — we
+                # don't want a blank bubble. The user will see the
+                # thinking panel alone.
 
             self._current_assistant = None
             self._message_thinking = None

@@ -42,13 +42,18 @@ class TestIdaSessionController(unittest.TestCase):
         self.ctrl.queue_message("first")
         self.ctrl.queue_message("second")
 
-        # on_agent_finished discards all pending messages
+        # on_agent_finished now returns the head of the pending queue
+        # so the UI layer can drain one queued message per run completion
+        # instead of silently discarding user input.
         next_msg = self.ctrl.on_agent_finished()
-        self.assertIsNone(next_msg)
+        self.assertEqual(next_msg, "first")
 
-        # Subsequent calls also return None (queue was cleared)
+        # The second queued message is returned on the next finish.
         next_msg = self.ctrl.on_agent_finished()
-        self.assertIsNone(next_msg)
+        self.assertEqual(next_msg, "second")
+
+        # Subsequent calls return None once the queue is empty.
+        self.assertIsNone(self.ctrl.on_agent_finished())
 
     def test_cancel_clears_pending_messages(self):
         self.ctrl.queue_message("will be cancelled")

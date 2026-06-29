@@ -501,11 +501,23 @@ class SessionControllerBase:
         self._pending_messages.append(text)
         log_debug(f"Message queued, {len(self._pending_messages)} pending")
 
-    def on_agent_finished(self) -> None:
+    def on_agent_finished(self) -> str | None:
+        """Handle end-of-run cleanup and return the next queued message.
+
+        Previously this cleared the pending queue unconditionally. That
+        silently dropped any message the user typed while a run was
+        active. We now keep the queue and return its head so the UI
+        layer can drain one message per run completion. Cancellation
+        paths (``cancel``, ``new_chat``, ``shutdown``, tab switch)
+        continue to clear the queue to avoid leaking stale-context
+        requests across runs.
+
+        Returns
+        -------
+        str | None
+            The first pending message if any remain, otherwise ``None``.
+        """
         self._runner = None
-        # Discard queued messages — context may have changed (error, cancel,
-        # model switch).  The user can re-send if still relevant.
-        self._pending_messages.clear()
 
         # Re-persist the instance ID in the database so a freshly created
         # IDB still gets one recorded before the next checkpoint cycle.
@@ -519,6 +531,12 @@ class SessionControllerBase:
                 log_debug(f"Session auto-saved: {path}")
             except (OSError, ValueError) as e:
                 log_error(f"Failed to auto-save session: {e}")
+
+        if not self._pending_messages:
+            return None
+        next_message = self._pending_messages.pop(0)
+        log_debug(f"Draining queue after run: {len(self._pending_messages)} remaining")
+        return next_message
 
     def new_chat(self) -> None:
         """Reset the active tab to a fresh session."""

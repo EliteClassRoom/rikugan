@@ -1347,9 +1347,26 @@ class RikuganPanelCore(QWidget):
         self._pending_answer = False
         self._awaiting_button_approval = False
 
-        self._ctrl.on_agent_finished()
-        # Remove any [queued] widgets since the queue was cleared.
+        # The controller now keeps the pending queue and returns the
+        # next message to drain (if any). Cancellation paths still
+        # clear the queue via ``cancel()``.
+        next_message = self._ctrl.on_agent_finished()
         chat_view = self._active_chat_view()
+
+        if next_message and chat_view is not None:
+            # Replace the first queued placeholder with a real user
+            # bubble and start the next run.  ``_start_agent`` calls
+            # ``add_user_message`` which inserts the normal bubble, so
+            # we pop the queued widget first to avoid two visible
+            # user entries for the same text.  Remaining queued
+            # widgets stay in place; the next finish will pop them
+            # one at a time in order.
+            chat_view.pop_first_queued_message()
+            self._start_agent(next_message)
+            return
+
+        # No more pending messages — drop any stale [queued] widgets
+        # and mark the run as no longer active.
         if chat_view is not None:
             chat_view.remove_queued_messages()
         self._set_running(False)

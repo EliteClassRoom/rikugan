@@ -43,11 +43,13 @@ from .exploration_mode import (
     PatchRecord,
 )
 from .loop_commands import (
+    ACTIVE_GOAL_METADATA_KEY,
     _handle_doctor_command,
     _handle_goal_command,
     _handle_mcp_command,
     _handle_memory_command,
     _handle_undo_command,
+    normalize_goal,
 )
 from .minify import minify_messages, minify_text
 from .modes.a2a import run_a2a_mode
@@ -78,7 +80,10 @@ _MEMORY_HEADER = (
     "The agent reads the first 200 lines into its system prompt.\n\n"
 )
 
-_GOAL_METADATA_KEY = "active_goal"
+# Backward-compat alias — the canonical key now lives in loop_commands
+# so the parser, the state-only handler, and the prompt builder all
+# share one source of truth.
+_GOAL_METADATA_KEY = ACTIVE_GOAL_METADATA_KEY
 
 # High-confidence mutating tools for which post-state verification runs.
 _VERIFY_MUTATION_TOOLS: frozenset[str] = frozenset(
@@ -151,6 +156,11 @@ class _ParsedCommand:
     use_a2a_mode: bool = False  # /a2a <agent> <message...> direct delegation
     direct_command: str = ""
     direct_arg: str = ""  # remainder after the direct command token
+    # When set, the run loop should store this goal in
+    # ``session.metadata[ACTIVE_GOAL_METADATA_KEY]`` BEFORE building
+    # the system prompt so the freshly constructed prompt includes the
+    # `## Active Goal` section. Used by ``/goal <objective>``.
+    goal_to_set: str = ""
 
 
 def _parse_user_command(user_message: str) -> _ParsedCommand:
@@ -175,10 +185,21 @@ def _parse_user_command(user_message: str) -> _ParsedCommand:
     if lower.startswith("/research "):
         return _ParsedCommand(message=stripped[10:].strip(), use_research_mode=True)
     if lower == "/goal" or lower.startswith("/goal "):
+        arg = stripped[5:].strip()
+        # `/goal <objective>` (anything that is not the state-only
+        # clear/reset/unset commands) becomes a normal run for the
+        # objective text, with the parsed goal recorded so the loop
+        # updates ``session.metadata`` before the system prompt is
+        # built. State-only forms keep the direct-command path so they
+        # stay as immediate UI acknowledgements.
+        if arg and arg.lower() not in {"clear", "reset", "unset"}:
+            goal = normalize_goal(arg)
+            if goal:
+                return _ParsedCommand(message=goal, goal_to_set=goal)
         return _ParsedCommand(
             message=stripped,
             direct_command="/goal",
-            direct_arg=stripped[5:].strip(),
+            direct_arg=arg,
         )
     if lower == "/memory":
         return _ParsedCommand(message=stripped, direct_command="/memory")
@@ -1619,6 +1640,15 @@ class AgentLoop:
             use_exploration_mode = cmd.use_exploration_mode
             explore_only = cmd.explore_only
             use_research_mode = cmd.use_research_mode
+
+            # Persist any goal the parser picked up (e.g. `/goal
+            # <objective>`) BEFORE the system prompt is built so the
+            # freshly constructed prompt includes the `## Active Goal`
+            # section for this very run. ``cmd.message`` already
+            # contains only the objective text, so the model never sees
+            # the `/goal ...` prefix.
+            if cmd.goal_to_set:
+                self.session.metadata[_GOAL_METADATA_KEY] = cmd.goal_to_set
 
             user_message, active_skill = self._resolve_skill(user_message)
             if active_skill and active_skill.mode == "exploration":
