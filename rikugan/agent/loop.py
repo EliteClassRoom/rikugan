@@ -701,52 +701,94 @@ class AgentLoop:
         )
 
         chunk_count = 0
-        for chunk in stream:
-            self._check_cancelled()
-            chunk_count += 1
+        # Last finish_reason seen from the provider (e.g. "stop", "length",
+        # "content_filter").  ``None`` means the stream ended without one.
+        # Truncation reasons ("length", "content_filter") are surfaced to the
+        # user after the stream so they know the response is incomplete —
+        # without this the chat appears to end normally mid-sentence.
+        finish_reason: str | None = None
+        # ``stream_broke`` is set when the provider stream raised mid-flight.
+        # We then keep whatever partial text/tool_calls were collected and
+        # surface a warning instead of discarding them — otherwise the user
+        # sees streamed text vanish and the session gains a silent gap (the
+        # "chat bị ngắt đột ngột" symptom).
+        stream_broke: bool = False
+        try:
+            for chunk in stream:
+                self._check_cancelled()
+                chunk_count += 1
 
-            if chunk.text:
-                assistant_text_parts.append(chunk.text)
-                yield TurnEvent.text_delta(chunk.text)
+                if chunk.text:
+                    assistant_text_parts.append(chunk.text)
+                    yield TurnEvent.text_delta(chunk.text)
 
-            if chunk.is_tool_call_start and chunk.tool_call_id:
-                current_tool_arg_parts[chunk.tool_call_id] = []
-                current_tool_names[chunk.tool_call_id] = chunk.tool_name or ""
-                yield TurnEvent.tool_call_start(chunk.tool_call_id, chunk.tool_name or "")
+                if chunk.is_tool_call_start and chunk.tool_call_id:
+                    current_tool_arg_parts[chunk.tool_call_id] = []
+                    current_tool_names[chunk.tool_call_id] = chunk.tool_name or ""
+                    yield TurnEvent.tool_call_start(chunk.tool_call_id, chunk.tool_name or "")
 
-            if chunk.tool_args_delta and chunk.tool_call_id:
-                if not chunk.is_tool_call_end:
-                    current_tool_arg_parts.setdefault(chunk.tool_call_id, []).append(chunk.tool_args_delta)
-                    yield TurnEvent.tool_call_args_delta(chunk.tool_call_id, chunk.tool_args_delta)
+                if chunk.tool_args_delta and chunk.tool_call_id:
+                    if not chunk.is_tool_call_end:
+                        current_tool_arg_parts.setdefault(chunk.tool_call_id, []).append(chunk.tool_args_delta)
+                        yield TurnEvent.tool_call_args_delta(chunk.tool_call_id, chunk.tool_args_delta)
 
-            if chunk.is_tool_call_end and chunk.tool_call_id:
-                tc_id = chunk.tool_call_id
-                if AgentLoop._is_duplicate_tool_call_end(tc_id, completed_tool_call_ids):
-                    log_debug(f"AgentLoop: ignoring duplicate tool_call_end for {tc_id!r}")
-                    continue
-                completed_tool_call_ids.add(tc_id)
-                tc_name = current_tool_names.get(tc_id, chunk.tool_name or "")
-                raw_args = "".join(current_tool_arg_parts.get(tc_id, []))
-                try:
-                    args = json.loads(raw_args) if raw_args else {}
-                except json.JSONDecodeError as je:
-                    log_error(f"Malformed tool arguments for {tc_name} (id={tc_id}): {je}. Raw: {raw_args[:200]}")
-                    args = {}
-                    yield TurnEvent.error_event(
-                        f"Warning: malformed arguments for tool '{tc_name}'. "
-                        "The tool call will proceed with empty arguments."
-                    )
-                tool_calls.append(ToolCall(id=tc_id, name=tc_name, arguments=args))
-                completed_tool_call_ids.add(tc_id)
-                yield TurnEvent.tool_call_done(tc_id, tc_name, raw_args)
+                if chunk.is_tool_call_end and chunk.tool_call_id:
+                    tc_id = chunk.tool_call_id
+                    if AgentLoop._is_duplicate_tool_call_end(tc_id, completed_tool_call_ids):
+                        log_debug(f"AgentLoop: ignoring duplicate tool_call_end for {tc_id!r}")
+                        continue
+                    completed_tool_call_ids.add(tc_id)
+                    tc_name = current_tool_names.get(tc_id, chunk.tool_name or "")
+                    raw_args = "".join(current_tool_arg_parts.get(tc_id, []))
+                    try:
+                        args = json.loads(raw_args) if raw_args else {}
+                    except json.JSONDecodeError as je:
+                        log_error(f"Malformed tool arguments for {tc_name} (id={tc_id}): {je}. Raw: {raw_args[:200]}")
+                        args = {}
+                        yield TurnEvent.error_event(
+                            f"Warning: malformed arguments for tool '{tc_name}'. "
+                            "The tool call will proceed with empty arguments."
+                        )
+                    tool_calls.append(ToolCall(id=tc_id, name=tc_name, arguments=args))
+                    completed_tool_call_ids.add(tc_id)
+                    yield TurnEvent.tool_call_done(tc_id, tc_name, raw_args)
 
-            if chunk.usage:
-                last_usage = self._accumulate_chunk_usage(last_usage, chunk.usage)
-                self._context_manager.update_usage(last_usage)
-                # Do not yield per-chunk updates — emit one final update after the stream
+                if chunk.usage:
+                    last_usage = self._accumulate_chunk_usage(last_usage, chunk.usage)
+                    self._context_manager.update_usage(last_usage)
+                    # Do not yield per-chunk updates — emit one final update after the stream
 
-            if chunk.raw_parts is not None:
-                raw_parts = chunk.raw_parts
+                if chunk.raw_parts is not None:
+                    raw_parts = chunk.raw_parts
+
+                # Capture the last non-empty finish_reason.  Providers may emit
+                # it on the final SSE chunk (OpenAI) or in a message_delta event
+                # (Anthropic stop_reason).  We only act on it once, after the
+                # stream is fully consumed.
+                if chunk.finish_reason:
+                    finish_reason = chunk.finish_reason
+        except CancellationError:
+            # Cancellation must propagate unchanged so the outer try/except
+            # in run() converts it into a CANCELLED event.
+            raise
+        except (RateLimitError, ProviderError) as e:
+            # If the stream broke AFTER the user already saw partial output,
+            # do not retry the whole request (that would duplicate the
+            # streamed text in the UI and waste tokens).  Instead keep the
+            # partial result and warn.  If nothing was streamed yet, re-raise
+            # so _stream_llm_turn's retry layer can handle it as before.
+            has_partial = bool(assistant_text_parts) or bool(tool_calls)
+            if not has_partial:
+                raise
+            stream_broke = True
+            log_error(
+                f"Provider stream broke after {chunk_count} chunks with partial output: {e}. "
+                "Keeping partial response and warning the user."
+            )
+            yield TurnEvent.error_event(
+                f"{self._format_provider_error_for_user(e)} "
+                "The response above is incomplete — it was cut off mid-stream."
+            )
 
         last_usage, need_usage_update = self._finalize_stream_usage(
             last_usage, estimated_usage, estimated_prompt_tokens
@@ -756,9 +798,64 @@ class AgentLoop:
                 self._context_manager.update_usage(last_usage)
             yield TurnEvent.usage_update(last_usage)
 
+        # Surface truncation reasons to the user.  A normal "stop" / "tool_calls"
+        # means the model finished deliberately; "length" means max_tokens cut
+        # the output mid-generation, and "content_filter" means content was
+        # suppressed.  Both leave the user looking at an incomplete response
+        # with no explanation — exactly the "chat bị ngắt đột ngột" symptom.
+        # Skip this when the stream already broke with a mid-stream warning
+        # above — finish_reason is almost certainly None in that case anyway.
+        if not stream_broke:
+            warning = self._finish_reason_warning(finish_reason)
+            if warning is not None:
+                yield TurnEvent.error_event(warning)
+
         assistant_text = "".join(assistant_text_parts)
-        log_debug(f"Stream done: {chunk_count} chunks, {len(assistant_text)} chars, {len(tool_calls)} tool calls")
+        broke_tag = " (stream broke — partial)" if stream_broke else ""
+        log_debug(
+            f"Stream done: {chunk_count} chunks, {len(assistant_text)} chars, {len(tool_calls)} tool calls{broke_tag}"
+        )
         return (assistant_text, tool_calls, last_usage, raw_parts)
+
+    @staticmethod
+    def _finish_reason_warning(finish_reason: str | None) -> str | None:
+        """Return a user-facing warning when the stream ended prematurely.
+
+        Returns ``None`` for deliberate stop reasons ("stop", "tool_calls",
+        end_turn) so normal turns produce no warning.  "length" and
+        "content_filter" (and their provider-specific spellings) return a
+        short explanation the UI renders as an error message.
+        """
+        if not finish_reason:
+            return None
+        reason = finish_reason.lower().strip()
+        # Anthropic uses stop_reason values like "end_turn", "max_tokens",
+        # "stop_sequence", "tool_use"; OpenAI uses finish_reason "stop",
+        # "length", "tool_calls", "content_filter".  "tool_use" (Anthropic)
+        # is a deliberate, complete turn — the model is handing off to a tool,
+        # not truncated — so it belongs in the no-warning set alongside
+        # OpenAI's "tool_calls".
+        if reason in (
+            "stop",
+            "tool_calls",
+            "end_turn",
+            "stop_sequence",
+            "tool_use",
+        ):
+            return None
+        if reason in ("length", "max_tokens"):
+            return (
+                "⚠️ The response was cut off because it reached the max output "
+                "token limit (finish_reason=length). Increase max_tokens in "
+                "Settings or continue the conversation to get the rest."
+            )
+        if reason in ("content_filter",):
+            return (
+                "⚠️ The response was suppressed by the provider's content "
+                "filter (finish_reason=content_filter). Try rephrasing the request."
+            )
+        # Unknown reason — surface it rather than swallow it silently.
+        return f"⚠️ The response ended unexpectedly (finish_reason={finish_reason})."
 
     @staticmethod
     def _is_duplicate_tool_call_end(tc_id: str, completed_ids: set[str]) -> bool:

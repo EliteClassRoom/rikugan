@@ -291,6 +291,273 @@ class TestAgentLoop(unittest.TestCase):
         self.assertGreater(session.last_prompt_tokens, 0)
         self.assertGreater(session.total_usage.total_tokens, 0)
 
+    def test_truncated_output_finish_reason_length_warns_user(self):
+        """When finish_reason='length' (output cut by max_tokens), the loop
+        MUST surface a warning so the user knows the response is incomplete.
+
+        Without this, the chat appears to end normally mid-sentence — the
+        original "chat bị ngắt đột ngột" symptom. The provider already
+        streams the partial text via TEXT_DELTA; the loop must additionally
+        emit an ERROR event describing the truncation.
+        """
+        chunks = [
+            StreamChunk(text="The answer is partially"),
+            StreamChunk(finish_reason="length"),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Tell me"))
+        types = [e.type for e in events]
+
+        # Text still streams through so the partial answer is visible.
+        self.assertIn(TurnEventType.TEXT_DELTA, types)
+        # A warning event must be emitted — currently NONE exists, so this
+        # assertion fails until the loop handles finish_reason.
+        self.assertIn(TurnEventType.ERROR, types)
+        warn = next(e for e in events if e.type == TurnEventType.ERROR)
+        self.assertIn("length", (warn.error or "").lower())
+
+    def test_normal_stop_finish_reason_emits_no_warning(self):
+        """finish_reason='stop' is a deliberate, complete response — the loop
+        must NOT emit a spurious ERROR warning (false positives would train the
+        user to ignore real truncation warnings)."""
+        chunks = [
+            StreamChunk(text="All done."),
+            StreamChunk(finish_reason="stop"),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+        self.assertNotIn(TurnEventType.ERROR, types)
+
+    def test_finish_reason_tool_calls_emits_no_warning(self):
+        """finish_reason='tool_calls' ends a turn that hands control to tools —
+        not a truncation, so no warning."""
+        chunks = [
+            StreamChunk(text="Let me check."),
+            StreamChunk(finish_reason="tool_calls"),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+        self.assertNotIn(TurnEventType.ERROR, types)
+
+    def test_missing_finish_reason_emits_no_warning(self):
+        """Some OpenAI-compatible proxies never send a finish_reason. The loop
+        must not warn on a missing value (None) — otherwise every response from
+        such proxies would show a spurious warning."""
+        chunks = [StreamChunk(text="No finish reason here.")]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+        self.assertNotIn(TurnEventType.ERROR, types)
+
+    def test_anthropic_max_tokens_stop_reason_warns_user(self):
+        """Anthropic's stop_reason uses 'max_tokens' instead of OpenAI's
+        'length'. The normalization must map it to the same truncation warning
+        so Anthropic users also see why the response was cut."""
+        chunks = [
+            StreamChunk(text="Partial answer"),
+            StreamChunk(finish_reason="max_tokens"),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+        self.assertIn(TurnEventType.ERROR, types)
+        warn = next(e for e in events if e.type == TurnEventType.ERROR)
+        self.assertIn("length", (warn.error or "").lower())
+
+    def test_anthropic_end_turn_emits_no_warning(self):
+        """Anthropic's normal completion stop_reason is 'end_turn' — must be
+        treated like OpenAI's 'stop' (no warning)."""
+        chunks = [
+            StreamChunk(text="Complete answer"),
+            StreamChunk(finish_reason="end_turn"),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+        self.assertNotIn(TurnEventType.ERROR, types)
+
+    def test_anthropic_tool_use_stop_reason_emits_no_warning(self):
+        """Anthropic's stop_reason 'tool_use' means the model wants to invoke
+        a tool — this is a deliberate, complete turn (tool execution follows),
+        NOT a truncation.  Must not be treated as an unknown/unexpected reason.
+
+        Regression: ``tool_use`` was missing from the deliberate-completion
+        set, so Anthropic streams raised a spurious
+        '⚠️ The response ended unexpectedly (finish_reason=tool_use)' warning
+        on every tool-calling turn.
+        """
+        chunks = [
+            StreamChunk(text="Let me check."),
+            StreamChunk(finish_reason="tool_use"),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+        self.assertNotIn(TurnEventType.ERROR, types)
+
+    def test_content_filter_finish_reason_warns_user(self):
+        """finish_reason='content_filter' means the provider suppressed output;
+        the user must be told why the response is empty/odd."""
+        chunks = [
+            StreamChunk(text=""),
+            StreamChunk(finish_reason="content_filter"),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+        self.assertIn(TurnEventType.ERROR, types)
+        warn = next(e for e in events if e.type == TurnEventType.ERROR)
+        self.assertIn("content_filter", (warn.error or "").lower())
+
+    def test_broken_stream_after_partial_text_persists_assistant_message(self):
+        """When the SSE stream breaks mid-generation (after partial text),
+        the loop MUST:
+
+        1. emit the partial TEXT_DELTA / TEXT_DONE so the user keeps what
+           was already streamed,
+        2. emit an ERROR event explaining the failure,
+        3. persist the assistant message into the session so "continue"
+           works and history is not silently dropped.
+
+        Without this, a network drop mid-stream loses everything the user
+        already saw — the "chat bị ngắt đột ngột" symptom where text
+        disappears and history has a gap.
+        """
+        from rikugan.core.errors import ProviderError
+
+        class BrokenStreamProvider(MockProvider):
+            """Provider whose chat_stream yields partial text then raises a
+            non-retryable ProviderError, simulating an SSE stream that drops
+            mid-generation (e.g. httpx.RemoteProtocolError classified as a
+            generic, non-retryable ProviderError by _handle_api_error)."""
+
+            def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None):
+                yield StreamChunk(text="Partial answer that the user already ")
+                yield StreamChunk(text="saw stream by.")
+                raise ProviderError(
+                    "Connection reset mid-stream",
+                    provider="mock",
+                    retryable=False,
+                )
+
+        provider = BrokenStreamProvider()
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+
+        # Partial text still visible.
+        self.assertIn(TurnEventType.TEXT_DELTA, types)
+        self.assertIn(TurnEventType.TEXT_DONE, types)
+        # User is told why it stopped.
+        self.assertIn(TurnEventType.ERROR, types)
+        # Assistant message persisted with the partial text (not dropped).
+        assistant_msgs = [m for m in loop.session.messages if m.role == Role.ASSISTANT]
+        self.assertEqual(len(assistant_msgs), 1)
+        self.assertIn("Partial answer", assistant_msgs[0].content)
+
+    def test_broken_stream_before_any_output_still_raises_to_retry_layer(self):
+        """If the stream fails BEFORE any chunk was streamed, there is no
+        partial output to preserve — the error must propagate up so the
+        retry layer in _stream_llm_turn can handle it as before.  Catching
+        it here would silently turn every cold-connection failure into a
+        no-op turn."""
+        from rikugan.core.errors import ProviderError
+
+        class ColdFailProvider(MockProvider):
+            def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None):
+                raise ProviderError("Connection refused", provider="mock", retryable=False)
+
+        provider = ColdFailProvider()
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+
+        # No partial output → error surfaces as an ERROR event (from run()'s
+        # top-level try/except), no TEXT_DONE, and crucially NO assistant
+        # message persisted.
+        self.assertIn(TurnEventType.ERROR, types)
+        self.assertNotIn(TurnEventType.TEXT_DONE, types)
+        assistant_msgs = [m for m in loop.session.messages if m.role == Role.ASSISTANT]
+        self.assertEqual(len(assistant_msgs), 0)
+
+    def test_cancellation_during_stream_propagates_as_cancelled_event(self):
+        """A cancellation raised mid-stream must NOT be swallowed as a
+        'partial output' warning — it must become a CANCELLED event so the
+        UI's cancellation UX works.  This guards the CancellationError
+        re-raise branch in the new try/except."""
+        from rikugan.core.errors import CancellationError
+
+        class CancelMidStreamProvider(MockProvider):
+            def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None):
+                yield StreamChunk(text="Streaming")
+                raise CancellationError("Cancelled mid-stream")
+
+        provider = CancelMidStreamProvider()
+        loop = self._make_loop(provider)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+
+        self.assertIn(TurnEventType.CANCELLED, types)
+        # The partial-warning path must not have fired.
+        self.assertNotIn(TurnEventType.ERROR, types)
+
+    def test_broken_stream_with_partial_tool_call_keeps_completed_calls(self):
+        """If the stream breaks after some tool calls completed (is_tool_call_end
+        seen) but before the turn finished, completed tool calls are preserved
+        and executed; an incomplete tool call (only start, no end) is dropped."""
+        from rikugan.core.errors import ProviderError
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+
+        class MixedStreamProvider(MockProvider):
+            def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None):
+                # Completed tool call
+                yield StreamChunk(is_tool_call_start=True, tool_call_id="c1", tool_name="echo")
+                yield StreamChunk(tool_args_delta='{"text": "hi"}', tool_call_id="c1")
+                yield StreamChunk(is_tool_call_end=True, tool_call_id="c1", tool_name="echo")
+                # Then the stream breaks
+                raise ProviderError("dropped", provider="mock", retryable=False)
+
+        provider = MixedStreamProvider()
+        loop = self._make_loop(provider, tools=registry)
+
+        events = list(loop.run("Hi"))
+        types = [e.type for e in events]
+
+        # Completed tool call result is still emitted and the break is warned.
+        self.assertIn(TurnEventType.TOOL_RESULT, types)
+        self.assertIn(TurnEventType.ERROR, types)
+
     def test_execute_python_requires_approval_even_in_explore_only(self):
         provider = MockProvider()
         loop = self._make_loop(provider)
