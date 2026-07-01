@@ -55,7 +55,6 @@ ignore = ["E501", "B008", "UP042"]
 [tool.ruff.lint.per-file-ignores]
 "rikugan/ida/**" = ["F401"]
 "rikugan/core/sanitize.py" = ["RUF003"]
-"rikugan/tools/functions.py" = ["RUF001"]
 "rikugan/ui/plan_view.py" = ["RUF001"]
 
 [tool.mypy]

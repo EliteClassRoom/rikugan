@@ -3,7 +3,7 @@
 Host-specific tool implementations live in:
   - rikugan.ida.tools   (IDA Pro)
 
-Only the framework core (base and functions) is imported at module level.
+Only the framework core (base) is imported at module level.
 ``web`` and ``web_fetch`` are imported lazily via ``__getattr__`` — they are
 not resolved until an attribute access forces the import.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 import importlib
 from types import ModuleType
 
-from . import base, functions
+from . import base
 
 _LAZY_MODULES = {"web", "web_fetch"}
 
@@ -26,4 +26,4 @@ def __getattr__(name: str) -> ModuleType:
     raise AttributeError(name)
 
 
-__all__ = ["base", "functions", "web", "web_fetch"]
+__all__ = ["base", "web", "web_fetch"]
