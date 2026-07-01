@@ -33,7 +33,9 @@ from ..providers.base import LLMProvider
 from ..skills.registry import SkillRegistry
 from ..state.session import SessionState
 from ..tools.coercion import coerce_bool
+from ..tools.idapython_complexity import classify_idapython_script
 from ..tools.registry import ToolRegistry
+from ..tools.validate_idapython import validate_idapython
 from .context_window import ContextWindowManager
 from .exploration_mode import (
     ExplorationPhase,
@@ -968,6 +970,269 @@ class AgentLoop:
             return True
         return decision == "allow"
 
+    # ------------------------------------------------------------------
+    # IDAPython docs-review gate
+    # ------------------------------------------------------------------
+
+    #: Verdict prefix the docs reviewer must emit on its final message.
+    _DOCS_GATE_VERDICT_PREFIX = "VERDICT:"
+
+    def _review_complex_idapython_script(
+        self,
+        tc: ToolCall,
+        complexity,
+        validation,
+    ) -> Generator[TurnEvent, None, tuple[bool, str]]:
+        """Spawn a docs-reviewer subagent for a complex ``execute_python`` script.
+
+        Yields the reviewer's progress events (text deltas, subagent
+        lifecycle) so the UI can show them.  Returns
+        ``(approved, summary_text)`` where ``approved`` is True only when
+        the reviewer emitted ``VERDICT: APPROVED`` AND the script is
+        not blocked by the static validator.
+
+        This gate runs **before** the normal user approval prompt so the
+        user reviews a docs-checked script.
+        """
+        from .agents.ida_docs_reviewer import (
+            IDA_DOCS_REVIEWER_MAX_TURNS,
+            build_ida_docs_reviewer_addendum,
+        )
+
+        code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
+        goal = self.session.metadata.get(_GOAL_METADATA_KEY, "") or ""
+
+        # Build a structured task payload so the reviewer has everything
+        # it needs without having to mine conversation history.
+        reasons_block = "\n".join(f"- {r}" for r in complexity.reasons) or "- (no specific reasons)"
+        validation_block = validation.format_for_agent() or "(no validator issues)"
+
+        task_lines: list[str] = []
+        if goal:
+            task_lines.append(f"# User Goal\n\n{goal}\n")
+        task_lines.append(f"# Proposed IDAPython Script\n\n```python\n{code}\n```\n")
+        task_lines.append(f"# Complexity Classification\n\n{reasons_block}\n")
+        task_lines.append(f"# Static Validation Hints\n\n{validation_block}\n")
+        task_lines.append(
+            "# Your Task\n\n"
+            "Verify the script above against IDA Pro / IDAPython documentation "
+            "(use the `ida-scripting` skill, then official Hex-Rays docs). "
+            "Return the structured VERDICT block described in your system prompt.\n"
+            "Do NOT call execute_python — you are a reviewer, not an executor."
+        )
+        task = "\n".join(task_lines)
+
+        # Notify the chat that the gate is firing.
+        yield TurnEvent.text_delta(
+            "\n[IDA docs review] Gate fired for complex `execute_python` script. "
+            f"Reasons:\n{reasons_block}\nSpawning docs reviewer...\n"
+        )
+
+        runner = SubagentRunner(
+            provider=self.provider,
+            tool_registry=self.tools,
+            config=self.config,
+            host_name=self.host_name,
+            skill_registry=self.skills,
+            parent_loop=self,
+        )
+
+        summary = ""
+        try:
+            summary = yield from runner.run_task(
+                task,
+                max_turns=IDA_DOCS_REVIEWER_MAX_TURNS,
+                system_addendum=build_ida_docs_reviewer_addendum(),
+                silent=True,
+            )
+        except CancellationError:
+            # Re-raise so the outer loop cancels cleanly.  Do not let
+            # the docs reviewer consume a cancellation silently.
+            raise
+        except Exception as e:
+            log_error(f"docs reviewer failed: {e}")
+            msg = (
+                f"IDA docs review failed: {type(e).__name__}: {e}. "
+                "The script was NOT executed. Either retry, rewrite the script, "
+                "or disable `require_ida_docs_for_complex_scripts` in Settings."
+            )
+            yield TurnEvent.error_event(msg)
+            return (False, msg)
+
+        # Parse the verdict block.  Be lenient: the LLM may emit prose
+        # around it.  Look for the prefix anywhere in the final summary.
+        verdict = ""
+        verdict_text = (summary or "").strip()
+        for line in verdict_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(self._DOCS_GATE_VERDICT_PREFIX):
+                verdict = stripped[len(self._DOCS_GATE_VERDICT_PREFIX) :].strip().upper()
+                break
+        approved = verdict.startswith("APPROVED")
+
+        # Defense in depth: if the static validator blocked the script,
+        # never let the gate approve it.  The reviewer may have missed
+        # a hallucinated API; the blocklist is the source of truth.
+        if validation.is_blocked and approved:
+            approved = False
+            verdict = "REWRITE_REQUIRED"
+
+        if approved:
+            yield TurnEvent.text_delta("\n[IDA docs review] VERDICT: APPROVED. Proceeding to user approval.\n")
+            return (True, summary or "")
+
+        reason_msg = verdict or "REWRITE_REQUIRED"
+        msg = (
+            f"IDA docs review verdict: {reason_msg}. "
+            "The script was NOT executed. "
+            "Review the reviewer's REWRITE_GUIDANCE and resubmit a corrected script.\n\n"
+            f"--- Reviewer summary ---\n{summary or '(no summary returned)'}\n--- end ---"
+        )
+        yield TurnEvent.text_delta("\n[IDA docs review] " + reason_msg + " — script blocked.\n")
+        return (False, msg)
+
+    def _execute_single_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
+        """Handle approval gating, mutation tracking, and execution of a real tool."""
+        # Profile: block denied tools at execution time (defense-in-depth —
+        # the schema filter already hides them, but the LLM may still try)
+        profile = self.config.get_active_profile()
+        if profile.denied_tools and tc.name in profile.denied_tools:
+            content = f"Error: Tool '{tc.name}' is denied by the active profile."
+            log_debug(f"Blocked denied tool: {tc.name} (profile: {profile.name})")
+            tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+            yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+            return tr
+
+        # execute_python always requires explicit approval
+        if tc.name == "execute_python":
+            # Docs-review gate: for complex scripts, run a docs reviewer
+            # BEFORE the user approval prompt so the user sees a
+            # docs-checked script.  Configurable via
+            # `require_ida_docs_for_complex_scripts`.
+            code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
+            if (
+                getattr(self.config, "require_ida_docs_for_complex_scripts", True)
+                and isinstance(code, str)
+                and code.strip()
+            ):
+                try:
+                    validation = validate_idapython(code)
+                    complexity = classify_idapython_script(code, validation)
+                except Exception as e:  # pragma: no cover — defensive
+                    log_error(f"docs-gate classification failed: {e}")
+                    validation = None
+                    complexity = None
+
+                if complexity is not None and complexity.is_complex:
+                    approved, summary = yield from self._review_complex_idapython_script(tc, complexity, validation)
+                    if not approved:
+                        # Hard block — the script is not executed and the
+                        # main agent gets the reviewer summary as a tool
+                        # error so it can rewrite.
+                        tr = ToolResult(
+                            tool_call_id=tc.id,
+                            name=tc.name,
+                            content=summary,
+                            is_error=True,
+                        )
+                        yield TurnEvent.tool_result_event(tc.id, tc.name, summary, True)
+                        return tr
+                    # Approved — fall through to the normal approval path
+                    # so the user still gets to review the docs-checked
+                    # script before execution.
+
+            approved = yield from self._wait_for_approval(tc)
+            if not approved:
+                content = "Tool execution denied by user."
+                tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+                yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+                return tr
+
+        defn = self.tools.get(tc.name)
+        is_mutating = defn is not None and defn.mutating
+
+        if is_mutating and self.config.approve_mutations:
+            approved = yield from self._wait_for_approval(tc)
+            if not approved:
+                content = "Mutation denied by user."
+                tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=True)
+                yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
+                return tr
+
+        pre_state: dict[str, Any] = {}
+        exec_args: dict[str, Any] = dict(tc.arguments)
+        if is_mutating:
+            exec_args = self.tools.coerce_arguments_for(tc.name, tc.arguments)
+            pre_state = capture_pre_state(
+                tc.name,
+                exec_args,
+                lambda name, args: self.tools.execute(name, args),
+            )
+
+        log_debug(f"Executing tool {tc.name}")
+        try:
+            result = self.tools.execute(tc.name, exec_args)
+            is_error = False
+            # Hysteresis: decrement instead of resetting so a single success
+            # after several failures doesn't fully clear the counter.
+            self._consecutive_errors = max(0, self._consecutive_errors - 1)
+            if is_mutating:
+                record = build_reverse_record(tc.name, exec_args, pre_state)
+                verification = self._verify_mutation(tc.name, exec_args, result)
+                if not verification.ok:
+                    # Post-state verification failed — do not append to the
+                    # undo stack.  Log the reason so it is still available
+                    # for debugging but does not consume /undo slots.
+                    log_debug(f"mutation recording skipped for {tc.name}: {verification.reason}")
+                elif not record.reversible:
+                    # Successful mutation but non-reversible — emit a UI-only
+                    # diagnostic event but do NOT append to the undo stack.
+                    log_debug(f"mutation not added to undo stack because it is not reversible: {record.description}")
+                    yield TurnEvent.mutation_recorded(
+                        tool_name=record.tool_name,
+                        description=record.description,
+                        reversible=record.reversible,
+                        reverse_tool=record.reverse_tool,
+                        reverse_args=record.reverse_arguments,
+                    )
+                else:
+                    self._mutation_log.append(record)
+                    log_debug(f"Mutation recorded: {record.description}")
+                    yield TurnEvent.mutation_recorded(
+                        tool_name=record.tool_name,
+                        description=record.description,
+                        reversible=record.reversible,
+                        reverse_tool=record.reverse_tool,
+                        reverse_args=record.reverse_arguments,
+                    )
+        except ToolError as e:
+            result = f"Error: {e}"
+            is_error = True
+            self._consecutive_errors += 1
+            log_error(f"Tool {tc.name} error: {e}")
+        except Exception as e:
+            result = f"Unexpected error: {e}"
+            is_error = True
+            self._consecutive_errors += 1
+            log_error(f"Tool {tc.name} unexpected error: {e}\n{traceback.format_exc()}")
+
+        # Sanitize tool output before it enters the conversation.
+        # Error messages may contain attacker-controlled content (e.g. function
+        # names), so strip injection markers even though we skip full wrapping.
+        sanitized = sanitize_tool_result(result, tc.name) if not is_error else strip_injection_markers(result)
+
+        # Profile: strip IOCs from tool results when any IOC filter is enabled
+        profile = self.config.get_active_profile()
+        if profile.has_any_ioc_filter:
+            sanitized = strip_iocs(sanitized, profile.ioc_filters, profile.custom_filter_rules)
+
+        tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=sanitized, is_error=is_error)
+        # Use sanitized content for the UI event too — the raw `result`
+        # could contain injection strings (e.g. ANTHROPIC_MAGIC_STRING from
+        # a malicious binary) that must never reach the display layer.
+        yield TurnEvent.tool_result_event(tc.id, tc.name, sanitized, is_error)
+        return tr
+
     def _handle_exploration_report_tool(
         self,
         tc: ToolCall,
@@ -1405,6 +1670,42 @@ class AgentLoop:
 
         # execute_python always requires explicit approval
         if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
+            # Docs-review gate: for complex scripts, run a docs reviewer
+            # BEFORE the user approval prompt so the user sees a
+            # docs-checked script.  Configurable via
+            # `require_ida_docs_for_complex_scripts`.
+            code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
+            if (
+                getattr(self.config, "require_ida_docs_for_complex_scripts", True)
+                and isinstance(code, str)
+                and code.strip()
+            ):
+                try:
+                    validation = validate_idapython(code)
+                    complexity = classify_idapython_script(code, validation)
+                except Exception as e:  # pragma: no cover — defensive
+                    log_error(f"docs-gate classification failed: {e}")
+                    validation = None
+                    complexity = None
+
+                if complexity is not None and complexity.is_complex:
+                    approved, summary = yield from self._review_complex_idapython_script(tc, complexity, validation)
+                    if not approved:
+                        # Hard block — the script is not executed and the
+                        # main agent gets the reviewer summary as a tool
+                        # error so it can rewrite.
+                        tr = ToolResult(
+                            tool_call_id=tc.id,
+                            name=tc.name,
+                            content=summary,
+                            is_error=True,
+                        )
+                        yield TurnEvent.tool_result_event(tc.id, tc.name, summary, True)
+                        return tr
+                    # Approved — fall through to the normal approval path
+                    # so the user still gets to review the docs-checked
+                    # script before execution.
+
             approved = yield from self._wait_for_approval(tc)
             if not approved:
                 content = "Tool execution denied by user."

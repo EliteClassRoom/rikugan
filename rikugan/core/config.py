@@ -83,6 +83,7 @@ class RikuganConfig:
     exploration_turn_limit: int = 100  # max turns in exploration phase before forcing transition
     max_retries: int = 3  # max retries on rate-limit / transient API errors
     silent_retry_mode: bool = False  # show loading indicator instead of error messages on retry
+    require_ida_docs_for_complex_scripts: bool = True  # docs-gate complex execute_python scripts
     theme: str = "auto"  # "auto" follows host theme; "dark" / "light" force Rikugan palettes; "ida" forces IDA-native
     font_family: str = ""  # empty = inherit from host; set to override (e.g. "Consolas")
     font_size_override: int = 0  # 0 = inherit from host; set to override point size
@@ -252,6 +253,7 @@ class RikuganConfig:
             "exploration_turn_limit",
             "max_retries",
             "silent_retry_mode",
+            "require_ida_docs_for_complex_scripts",
             "theme",
             "font_family",
             "font_size_override",

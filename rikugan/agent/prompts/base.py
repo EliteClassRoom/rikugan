@@ -312,4 +312,16 @@ the user-approval round-trip. Call the dedicated tool on your next
 turn instead of repeating the script. The mapping covers
 imports/exports/strings/functions/xrefs/segments plus common
 annotations, decompiler, disassembly, and type/struct APIs.
+
+**Docs-review gate.** Complex IDAPython scripts (multi-module, mutating,
+visitor-based, or anything that touches Hex-Rays / types / frames / UI /
+domain APIs) are automatically routed through a docs-reviewer subagent
+before user approval. Write the script so it survives the review:
+- Every ``ida_*`` / ``idautils`` / ``idc`` / ``idaapi`` call must be a
+  real, verifiable API in IDA 9.x.
+- If you are unsure whether an API exists, call
+  ``activate_skill(slug="ida-scripting")`` and check BEFORE you write
+  the script. The reviewer will block on invented convenience helpers.
+- Scripts that fail the review are returned with the reviewer's
+  ``REWRITE_GUIDANCE`` so you can fix them and retry.
 """
