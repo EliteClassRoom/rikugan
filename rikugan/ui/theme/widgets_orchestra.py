@@ -231,16 +231,6 @@ def _profiles_header_style() -> str:
 # === Public getters (signatures unchanged) ==================================
 
 # Legacy dict shapes kept (empty) for re-export compatibility.
-ORCHESTRA_PANEL_STYLE = {"dark": "", "light": ""}
-ORCHESTRA_STATS_STYLE = {"dark": "", "light": ""}
-DELEGATION_DIALOG_STYLE = {"dark": "", "light": ""}
-DELEGATION_APPROVAL_WIDGET_STYLE = {"dark": "", "light": ""}
-DELEGATION_HEADER_STYLE = {"dark": "", "light": ""}
-DELEGATION_INFO_STYLE = {"dark": "", "light": ""}
-DELEGATION_PREVIEW_STYLE = {"dark": "", "light": ""}
-PROFILES_BTN_STYLE = {"dark": "", "light": ""}
-PROFILES_GROUP_STYLE = {"dark": "", "light": ""}
-PROFILES_HEADER_STYLE = {"dark": "", "light": ""}
 
 
 def get_orchestra_panel_style() -> str:

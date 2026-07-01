@@ -263,27 +263,6 @@ def _settings_btn_style() -> str:
 # === Public getters (signatures unchanged from the legacy dict version) =====
 
 
-SMALL_BTN_STYLE = {"dark": "", "light": ""}  # legacy shape kept for re-export
-CANCEL_BTN_STYLE = {"dark": "", "light": ""}  # legacy shape kept for re-export
-MODE_BAR_STYLE = {"dark": "", "light": ""}
-TAB_WIDGET_STYLE = {"dark": "", "light": ""}
-TOOLS_PANEL_HEADER_STYLE = {"dark": "", "light": ""}
-PLACEHOLDER_STYLE = {"dark": "", "light": ""}
-TOOLS_PANEL_BTN_STYLE = {"dark": "", "light": ""}
-TOOLS_PANEL_STYLE = {"dark": "", "light": ""}
-ADD_TAB_BTN_STYLE = {"dark": "", "light": ""}
-SPLITTER_HANDLE_STYLE = {"dark": "", "light": ""}
-MESSAGE_DIALOG_STYLE = {"dark": "", "light": ""}
-ERROR_LABEL_STYLE = {"dark": "", "light": ""}
-OK_STATUS_STYLE = {"dark": "", "light": ""}
-HINT_STATUS_STYLE = {"dark": "", "light": ""}
-ERR_STATUS_STYLE = {"dark": "", "light": ""}
-HISTORY_NAV_FRAME_STYLE = {"dark": "", "light": ""}
-HISTORY_NAV_BTN_STYLE = {"dark": "", "light": ""}
-HISTORY_NAV_LABEL_STYLE = {"dark": "", "light": ""}
-SETTINGS_BTN_STYLE = {"dark": "", "light": ""}
-
-
 def get_small_btn_style() -> str:
     return _small_btn_style()
 
