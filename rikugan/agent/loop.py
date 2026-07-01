@@ -772,7 +772,6 @@ class AgentLoop:
                             "The tool call will proceed with empty arguments."
                         )
                     tool_calls.append(ToolCall(id=tc_id, name=tc_name, arguments=args))
-                    completed_tool_call_ids.add(tc_id)
                     yield TurnEvent.tool_call_done(tc_id, tc_name, raw_args)
 
                 if chunk.usage:
