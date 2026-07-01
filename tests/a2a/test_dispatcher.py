@@ -29,7 +29,7 @@ from rikugan.agent.a2a.types import (
     A2ATaskStatus,
     ExternalAgentConfig,
 )
-from rikugan.agent.turn import TurnEvent, TurnEventType
+from rikugan.agent.turn import TurnEventType
 
 
 def _make_agent(name: str = "claude", transport: str = "subprocess") -> ExternalAgentConfig:

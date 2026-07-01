@@ -415,8 +415,8 @@ class SessionControllerBase:
             from ..providers.auth_cache import resolve_auth_cached
 
             resolve_auth_cached(self.config.provider.api_key or "")
-        except Exception:
-            pass
+        except Exception as exc:
+            log_debug(f"Session auth cache warm-up failed: {exc}")
         provider = self._provider_registry.get_or_create(
             self.config.provider.name,
             api_key=self.config.provider.api_key,
@@ -440,18 +440,16 @@ class SessionControllerBase:
         is active so the agent can branch on it.
         """
         try:
-            from ..providers import minimax_provider as _minimax_provider
+            from ..tools import web as _web
 
-            sync = getattr(_minimax_provider, "sync_runtime_config", None)
-            if callable(sync):
-                sync(self.config)
-        except Exception:
-            pass
+            _web.set_runtime_config(self.config)
+        except Exception as exc:
+            log_debug(f"web tool runtime config sync failed: {exc}")
         is_minimax = (self.config.provider.name or "").lower() == "minimax"
         try:
             self.tool_registry.set_capabilities({"minimax_provider": is_minimax})
-        except Exception:
-            pass
+        except Exception as exc:
+            log_debug(f"set_capabilities(minimax_provider) failed: {exc}")
 
     def start_agent(self, user_message: str) -> str | None:
         """Create provider + agent loop and start the background runner."""

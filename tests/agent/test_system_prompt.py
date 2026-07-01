@@ -8,9 +8,10 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
-from rikugan.agent.system_prompt import build_system_prompt, _BASE_PROMPT
+from rikugan.agent.system_prompt import _BASE_PROMPT, build_system_prompt
 
 
 class TestBuildSystemPrompt(unittest.TestCase):

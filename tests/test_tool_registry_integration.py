@@ -12,15 +12,18 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 # Reload tool modules so they pick up real stub base classes (optinsn_t,
 # Hexrays_Hooks, etc.) instead of MagicMock, which would leak fake
 # _tool_definition attributes into the registry.
 import importlib
+
+import rikugan.ida.tools.database as _db_mod
 import rikugan.ida.tools.microcode as _mc_mod
 import rikugan.ida.tools.microcode_optim as _mco_mod
-import rikugan.ida.tools.database as _db_mod
+
 importlib.reload(_mco_mod)
 importlib.reload(_mc_mod)
 importlib.reload(_db_mod)

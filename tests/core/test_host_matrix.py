@@ -10,7 +10,6 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # Host detection flags (rikugan.core.host)
 # ---------------------------------------------------------------------------
@@ -20,19 +19,19 @@ class TestHostDetectionFlags(unittest.TestCase):
 
     def test_flags_are_bool(self):
         """Host flags should be bool, regardless of host stubs."""
-        from rikugan.core.host import IDA_AVAILABLE, HAS_HEXRAYS
+        from rikugan.core.host import HAS_HEXRAYS, IDA_AVAILABLE
         self.assertIsInstance(IDA_AVAILABLE, bool)
         self.assertIsInstance(HAS_HEXRAYS, bool)
 
     def test_hexrays_requires_ida(self):
         """HAS_HEXRAYS should only be True if IDA_AVAILABLE is True."""
-        from rikugan.core.host import IDA_AVAILABLE, HAS_HEXRAYS
+        from rikugan.core.host import HAS_HEXRAYS, IDA_AVAILABLE
         if HAS_HEXRAYS:
             self.assertTrue(IDA_AVAILABLE)
 
     def test_mutual_exclusion(self):
         """host_kind returns a single valid value."""
-        from rikugan.core.host import host_kind, HOST_IDA, HOST_STANDALONE
+        from rikugan.core.host import HOST_IDA, HOST_STANDALONE, host_kind
         result = host_kind()
         self.assertIn(result, (HOST_IDA, HOST_STANDALONE))
 
@@ -202,8 +201,8 @@ class TestToolDecoratorHostAgnostic(unittest.TestCase):
 
     def test_tool_handler_no_thread_dispatch(self):
         """@tool handler should NOT wrap with idasync — dispatch is registry's job."""
-        from rikugan.tools.base import tool
         import rikugan.core.thread_safety as ts
+        from rikugan.tools.base import tool
 
         call_log = []
         original_idasync = ts.idasync

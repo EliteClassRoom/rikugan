@@ -303,7 +303,7 @@ class _BlockingAnthropicStream:
     def close(self) -> None:
         self.close_called.set()
 
-    def __enter__(self) -> "_BlockingAnthropicStream":
+    def __enter__(self) -> _BlockingAnthropicStream:
         return self
 
     def __exit__(self, *exc_info: object) -> bool:
@@ -339,7 +339,7 @@ class TestAnthropicCancelDuringStream(unittest.TestCase):
                         cancel_event=cancel,
                     )
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 consumer_exc.append(e)
 
         t = threading.Thread(target=consume, daemon=True)

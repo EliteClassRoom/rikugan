@@ -52,6 +52,12 @@ except ImportError:  # pragma: no cover
         return _logging.getLogger("Rikugan")
 
 
+# Module-level logger used for best-effort fallback diagnostics. Theme code
+# runs during early UI construction and Qt teardown where raising would
+# destabilize the host — failures are logged at debug instead of swallowed.
+logger = get_logger()
+
+
 # === Helpers (public) ===
 #
 # ``_hex_luminance`` lives in ``.tokens`` (re-exported above) so the
@@ -154,8 +160,8 @@ class _DummySignal:
         for listener in list(self._listeners):
             try:
                 listener(*args, **kwargs)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("theme signal listener raised", exc_info=exc)
 
 
 def _make_signal() -> Any:
@@ -210,7 +216,7 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
         # whose ``connect`` is a no-op, replaced per-instance in
         # ``__init__`` (see below) so that :func:`reset` produces
         # a clean listener list.
-        themeChanged: Any = None  # populated by _make_signal() in __init__
+        themeChanged: Any = None  # populated by _DummySignal() in __init__
 
     _instance: ThemeManager | None = None
 
@@ -294,8 +300,8 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
                 f"window={tokens.window}, text={tokens.text}, "
                 f"base={tokens.base}."
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("AUTO-derive diagnostic log failed", exc_info=exc)
 
     def _app_source(self) -> Any:
         """Return the object to read QPalette from."""
@@ -315,8 +321,8 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
             # QObject machinery, so the call is safe regardless of
             # which mode is active.
             self.themeChanged.emit(tokens)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("themeChanged.emit raised", exc_info=exc)
         self._pending_apply = None
 
     def _compute_tokens(self) -> ThemeTokens:
@@ -355,15 +361,15 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
                         tokens = derive_ida_tokens(app)
                         self._log_auto_derive_once(tokens)
                         return tokens
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("IDA AUTO derive failed; using DARK", exc_info=exc)
             return DARK_TOKENS
         if self._mode == ThemeMode.IDA_NATIVE:
             if not is_ida():
                 try:
                     log_warning("IDA Native theme requested on non-IDA host; falling back to Dark")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("log_warning stub raised", exc_info=exc)
                 return DARK_TOKENS
             try:
                 from .palette_ida import derive_ida_tokens
@@ -371,7 +377,7 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
                 app = self._app_source()
                 if app is not None:
                     return derive_ida_tokens(app)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("IDA Native derive failed; using DARK", exc_info=exc)
             return DARK_TOKENS
         return DARK_TOKENS

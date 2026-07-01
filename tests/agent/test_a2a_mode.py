@@ -20,8 +20,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 install_ida_mocks()
 
 from rikugan.agent.loop import _parse_user_command
-from rikugan.agent.turn import TurnEvent, TurnEventType
 from rikugan.agent.modes.a2a import run_a2a_mode
+from rikugan.agent.turn import TurnEventType
 
 
 def _drain(gen) -> tuple[list, str]:

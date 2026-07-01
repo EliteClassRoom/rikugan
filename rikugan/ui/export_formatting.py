@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 
+from .. import constants
 from ..core.types import Role
 
 # Truncate exported tool-result previews so the exported transcript stays bounded.
@@ -26,7 +27,7 @@ _SANITIZER_WRAP_RE = re.compile(
 )
 
 _TOOL_LANG_MAP = {
-    "execute_python": "python",
+    constants.EXECUTE_PYTHON_TOOL_NAME: "python",
     "decompile_function": "c",
     "get_il": "c",
     "declare_c_type": "c",

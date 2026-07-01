@@ -80,17 +80,26 @@ class RikuganPlugmod(idaapi.plugmod_t):
         # disconnectNotify -> PyErr_Occurred on a dead interpreter -> crash.
         try:
             from PySide6.QtWidgets import QApplication
+
             QApplication.processEvents()
-        except Exception:
-            pass
+        except Exception as exc:
+            import sys
+
+            sys.stderr.write(f"[Rikugan] QApplication.processEvents failed: {exc}\n")
 
     def _toggle_panel(self) -> None:
         # Lazily import startup_timing within toggle_panel so that the
         # plugin module itself does NOT import rikugan.* at load time.
         from rikugan.core.startup_timing import (
             complete as _complete_timing,
+        )
+        from rikugan.core.startup_timing import (
             end as _end_phase,
+        )
+        from rikugan.core.startup_timing import (
             flush as _flush_timing,
+        )
+        from rikugan.core.startup_timing import (
             start as _start_phase,
         )
 
@@ -112,6 +121,7 @@ class RikuganPlugmod(idaapi.plugmod_t):
 
                 t_bulk = _start_phase("toggle.bulk_import_all")
                 import pkgutil
+
                 import rikugan
 
                 _imported = 0
@@ -119,9 +129,7 @@ class RikuganPlugmod(idaapi.plugmod_t):
 
                 def _load_submodules(pkg):
                     nonlocal _imported, _skipped
-                    for _finder, modname, ispkg in pkgutil.iter_modules(
-                        pkg.__path__, prefix=pkg.__name__ + "."
-                    ):
+                    for _finder, modname, ispkg in pkgutil.iter_modules(pkg.__path__, prefix=pkg.__name__ + "."):
                         try:
                             mod = importlib.import_module(modname)
                             _imported += 1
@@ -130,6 +138,7 @@ class RikuganPlugmod(idaapi.plugmod_t):
                         except Exception as e:
                             _skipped += 1
                             import sys
+
                             sys.stderr.write(f"[Rikugan] Skipping {modname}: {e}\n")
 
                 saved_import = builtins.__import__
@@ -166,17 +175,18 @@ class RikuganPlugmod(idaapi.plugmod_t):
             try:
                 _complete_timing()
                 _flush_timing()
-            except Exception:
-                pass
+            except Exception as exc:
+                import sys
+
+                sys.stderr.write(f"[Rikugan] timing flush failed: {exc}\n")
         except Exception as e:
             import sys
             import traceback
+
             tb_str = traceback.format_exc()
             idaapi.msg(f"[Rikugan] Failed to open panel: {e}\n{tb_str}\n")
             try:
-                importlib.import_module("rikugan.core.logging").log_error(
-                    f"Failed to open panel: {e}\n{tb_str}"
-                )
+                importlib.import_module("rikugan.core.logging").log_error(f"Failed to open panel: {e}\n{tb_str}")
             except Exception:
                 try:
                     log_path = os.path.join(os.path.expanduser("~"), ".idapro", "rikugan", "rikugan_debug.log")
@@ -217,6 +227,7 @@ def _log(msg: str) -> None:
             cached(msg)
         except Exception as e:
             import sys
+
             sys.stderr.write(f"[Rikugan] cached log_trace failed during bootstrap: {e}\n")
         return
     try:
@@ -225,8 +236,9 @@ def _log(msg: str) -> None:
         log_func(msg)
     except Exception as e:
         import sys
+
         sys.stderr.write(f"[Rikugan] log_trace unavailable during bootstrap: {e}\n")
 
 
-def PLUGIN_ENTRY():  # noqa: N802
+def PLUGIN_ENTRY():
     return RikuganPlugin()

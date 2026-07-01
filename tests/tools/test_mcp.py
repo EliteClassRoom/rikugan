@@ -10,17 +10,18 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
-from rikugan.mcp.config import MCPServerConfig, load_mcp_config, save_mcp_config
-from rikugan.mcp.protocol import (
-    MCPToolSchema,
-    encode_jsonrpc_request,
-    decode_jsonrpc_response,
-)
 from rikugan.mcp.bridge import _mcp_schema_to_parameters, register_mcp_tools
 from rikugan.mcp.client import MCPClient
+from rikugan.mcp.config import MCPServerConfig, load_mcp_config, save_mcp_config
 from rikugan.mcp.manager import MCPManager
+from rikugan.mcp.protocol import (
+    MCPToolSchema,
+    decode_jsonrpc_response,
+    encode_jsonrpc_request,
+)
 from rikugan.tools.registry import ToolRegistry
 
 

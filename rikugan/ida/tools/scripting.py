@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import Annotated
 
+from ... import constants
 from ...core.errors import ToolError
 from ...core.logging import log_debug
 from ...tools.base import tool
@@ -76,7 +77,7 @@ def execute_python(
             "Script blocked by IDAPython hallucination guard. "
             "Rewrite using the suggested fix; see the ida-scripting skill "
             "for the full DO NOT USE table.\n\n" + report,
-            tool_name="execute_python",
+            tool_name=constants.EXECUTE_PYTHON_TOOL_NAME,
         )
 
     # 2. Tool-substitution hint — runs AFTER the hallucination check so we

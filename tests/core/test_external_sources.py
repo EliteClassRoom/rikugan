@@ -12,20 +12,21 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 from rikugan.core.external_sources import (
-    get_claude_code_base,
-    get_codex_base,
+    _get_claude_managed_mcp_path,
+    _load_codex_mcp_toml,
+    _load_mcp_json,
+    discover_all_external_mcp,
+    discover_all_external_skills,
     discover_claude_skills,
     discover_codex_skills,
-    discover_all_external_skills,
+    get_claude_code_base,
+    get_codex_base,
     load_claude_mcp,
     load_codex_mcp,
-    discover_all_external_mcp,
-    _load_mcp_json,
-    _load_codex_mcp_toml,
-    _get_claude_managed_mcp_path,
 )
 
 

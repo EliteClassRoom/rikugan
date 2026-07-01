@@ -8,6 +8,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from ..agent.turn import TurnEventType
+from ..core.logging import log_debug
 
 if TYPE_CHECKING:
     from ..ida.headless_controller import HeadlessSessionController
@@ -187,15 +188,15 @@ def _auto_deny_approval(runner: Any, event_type: TurnEventType) -> None:
     if event_type == TurnEventType.TOOL_APPROVAL_REQUEST:
         try:
             agent_loop.submit_tool_approval("deny")
-        except Exception:
-            pass
+        except Exception as exc:
+            log_debug(f"Headless auto-deny tool_approval failed: {exc}")
     elif event_type in (TurnEventType.PLAN_GENERATED, TurnEventType.SAVE_APPROVAL_REQUEST):
         try:
             agent_loop.submit_approval("deny")
-        except Exception:
-            pass
+        except Exception as exc:
+            log_debug(f"Headless auto-deny approval failed: {exc}")
     elif event_type == TurnEventType.USER_QUESTION:
         try:
             agent_loop.submit_user_answer("")
-        except Exception:
-            pass
+        except Exception as exc:
+            log_debug(f"Headless auto-answer user_question failed: {exc}")

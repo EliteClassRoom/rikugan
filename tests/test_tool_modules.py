@@ -13,11 +13,14 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 # Force-reload tool modules so they pick up all IDA mocks (including ida_ida).
 import importlib
+
 import rikugan.ida.tools.database as _db_mod
+
 importlib.reload(_db_mod)
 
 

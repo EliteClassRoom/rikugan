@@ -9,12 +9,15 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 # Force-reload the module so it picks up the real stub base classes
 # from our updated ida_mock (optinsn_t, optblock_t as real classes).
 import importlib
+
 import rikugan.ida.tools.microcode_optim as _mod
+
 importlib.reload(_mod)
 
 # Import from the reloaded module object (not the old cached names)

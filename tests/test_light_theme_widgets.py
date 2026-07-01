@@ -54,11 +54,11 @@ class TestBuildSettingsDialogStylesheetLight(unittest.TestCase):
     """SettingsDialog's explicit-light QSS must use LIGHT_TOKENS."""
 
     def setUp(self) -> None:
+        import rikugan.ui.styles as _styles
         from rikugan.ui.styles import build_settings_dialog_stylesheet
         from rikugan.ui.theme.manager import ThemeManager
         from rikugan.ui.theme.palette_light import LIGHT_TOKENS
         from rikugan.ui.theme.tokens import ThemeMode
-        import rikugan.ui.styles as _styles
 
         self.build_settings_dialog_stylesheet = build_settings_dialog_stylesheet
         self.LIGHT_TOKENS = LIGHT_TOKENS
@@ -134,9 +134,9 @@ class TestBuildInputAreaStylesheetLight(unittest.TestCase):
     """InputArea's explicit-light QSS must use LIGHT_TOKENS."""
 
     def setUp(self) -> None:
+        import rikugan.ui.styles as _styles
         from rikugan.ui.styles import build_input_area_stylesheet
         from rikugan.ui.theme.palette_light import LIGHT_TOKENS
-        import rikugan.ui.styles as _styles
 
         self.build_input_area_stylesheet = build_input_area_stylesheet
         self.LIGHT_TOKENS = LIGHT_TOKENS
@@ -174,9 +174,9 @@ class TestBuildSkillPopupStylesheetLight(unittest.TestCase):
     """The skill-autocomplete popup QSS must also be light-theme aware."""
 
     def setUp(self) -> None:
+        import rikugan.ui.styles as _styles
         from rikugan.ui.styles import build_skill_popup_stylesheet
         from rikugan.ui.theme.palette_light import LIGHT_TOKENS
-        import rikugan.ui.styles as _styles
 
         self.build_skill_popup_stylesheet = build_skill_popup_stylesheet
         self.LIGHT_TOKENS = LIGHT_TOKENS
@@ -213,8 +213,8 @@ class TestHostThemeReturnsEmptyStylesheet(unittest.TestCase):
         # helper is called*.  Setting the attribute on the same
         # module object the helper reads is the only safe way to
         # influence the result.
-        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
         import rikugan.ui.styles as _styles
+        from rikugan.ui.theme.palette_light import LIGHT_TOKENS
 
         self.LIGHT_TOKENS = LIGHT_TOKENS
         self._styles = _styles
@@ -267,11 +267,11 @@ class TestSettingsDialogAppliesThemeOnShow(unittest.TestCase):
 
     def test_settings_dialog_applies_light_qss_on_show(self) -> None:
         from rikugan.core.config import RikuganConfig
+        from rikugan.ui import styles as _styles
         from rikugan.ui.settings_dialog import SettingsDialog
         from rikugan.ui.theme.manager import ThemeManager
         from rikugan.ui.theme.palette_light import LIGHT_TOKENS
         from rikugan.ui.theme.tokens import ThemeMode
-        from rikugan.ui import styles as _styles
 
         # Pin the manager to LIGHT.
         ThemeManager.reset()
@@ -304,12 +304,12 @@ class TestSettingsDialogAppliesThemeOnShow(unittest.TestCase):
         the QSS so a stale dark QSS doesn't remain after the user
         switches to light mode (or vice versa)."""
         from rikugan.core.config import RikuganConfig
+        from rikugan.ui import styles as _styles
         from rikugan.ui.settings_dialog import SettingsDialog
         from rikugan.ui.theme.manager import ThemeManager
         from rikugan.ui.theme.palette_dark import DARK_TOKENS
         from rikugan.ui.theme.palette_light import LIGHT_TOKENS
         from rikugan.ui.theme.tokens import ThemeMode
-        from rikugan.ui import styles as _styles
 
         ThemeManager.reset()
         tm = ThemeManager.instance()

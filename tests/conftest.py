@@ -19,7 +19,7 @@ from __future__ import annotations
 from tests import purge_rikugan_stubs
 
 
-def pytest_runtest_setup(item):  # noqa: ARG001
+def pytest_runtest_setup(item):
     """Purge ``_StubModule`` entries from :data:`sys.modules`
     immediately before each test runs.
 

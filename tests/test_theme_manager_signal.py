@@ -61,7 +61,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         # install stubs in ``sys.modules``; force a re-import.
         sys.modules.pop("PySide6", None)
         sys.modules.pop("PySide6.QtCore", None)
-        import PySide6  # type: ignore[import-not-found]  # noqa: F401
+        import PySide6  # type: ignore[import-not-found]
         import PySide6.QtWidgets  # type: ignore[import-not-found]  # noqa: F401
 
         # Re-import the manager fresh.

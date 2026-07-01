@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import sys
 
-
 _RIKUGAN_STUB_NAMES = (
     "rikugan.ui.styles",
     "rikugan.ui.chat_view",

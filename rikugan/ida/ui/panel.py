@@ -21,6 +21,19 @@ idaapi = importlib.import_module("idaapi")
 ida_kernwin = importlib.import_module("ida_kernwin")
 
 
+def _log_teardown(context: str, exc: BaseException) -> None:
+    """Best-effort log for swallowed teardown exceptions.
+
+    Qt widget destruction and theme teardown run during IDA shutdown where
+    raising would destabilize the host. Failures are surfaced via IDA's
+    message log instead of being silently swallowed.
+    """
+    try:
+        ida_kernwin.msg(f"[Rikugan] {context}: {type(exc).__name__}: {exc}\n")
+    except Exception:
+        pass  # IDA message log itself unavailable — nothing more to do.
+
+
 def _get_ida_theme_colors() -> dict[str, tuple[int, int, int] | bool]:
     """Extract current IDA Pro theme colors.
 
@@ -453,8 +466,8 @@ class RikuganPanel(idaapi.PluginForm):
                 import ida_kernwin
 
                 ida_kernwin.msg(f"[Rikugan] themeChanged subscribe failed: {type(e).__name__}: {e}\n")
-            except Exception:
-                pass  # best-effort; never block panel creation on the subscription.
+            except Exception as msg_exc:
+                _log_teardown("themeChanged subscribe fallback log", msg_exc)
 
     def _unsubscribe_theme_changes(self) -> None:
         """Disconnect _on_theme_changed from ThemeManager.themeChanged.
@@ -478,8 +491,8 @@ class RikuganPanel(idaapi.PluginForm):
                     message=".*Failed to disconnect.*",
                 )
                 ThemeManager.instance().themeChanged.disconnect(self._on_theme_changed)
-        except Exception:
-            pass  # best-effort; Qt removes connections on widget destruction anyway.
+        except Exception as exc:
+            _log_teardown("themeChanged disconnect", exc)
 
     def _on_theme_changed(self, _tokens) -> None:
         """Adapter slot for ThemeManager.themeChanged (carries new tokens).
@@ -578,8 +591,8 @@ class RikuganPanel(idaapi.PluginForm):
         if _watcher is not None:
             try:
                 _watcher.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log_teardown("theme watcher stop", exc)
             self._theme_watcher = None
         # Disconnect the theme-changed slot so an emit during/after teardown
         # does not dereference _core (set to None below).

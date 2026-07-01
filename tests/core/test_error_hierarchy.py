@@ -14,10 +14,10 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 from rikugan.core.errors import (
-    RikuganError,
     AgentError,
     AuthenticationError,
     CancellationError,
@@ -28,6 +28,7 @@ from rikugan.core.errors import (
     MCPTimeoutError,
     ProviderError,
     RateLimitError,
+    RikuganError,
     SessionError,
     SkillError,
     ToolError,
@@ -124,6 +125,7 @@ class TestProviderErrorConsistency(unittest.TestCase):
     def test_anthropic_sdk_auth_error(self):
         """Anthropic maps anthropic.AuthenticationError → AuthenticationError."""
         import anthropic
+
         from rikugan.providers.anthropic_provider import AnthropicProvider
         p = AnthropicProvider(api_key="test", model="test")
         resp = self._mock_httpx_response(401)
@@ -137,6 +139,7 @@ class TestProviderErrorConsistency(unittest.TestCase):
     def test_openai_sdk_auth_error(self):
         """OpenAI maps openai.AuthenticationError → AuthenticationError."""
         import openai
+
         from rikugan.providers.openai_provider import OpenAIProvider
         p = OpenAIProvider(api_key="test", model="test")
         resp = self._mock_httpx_response(401)
@@ -161,8 +164,8 @@ class TestProviderErrorConsistency(unittest.TestCase):
     def test_all_providers_generic_fallback(self):
         """All providers map unknown errors → ProviderError."""
         from rikugan.providers.anthropic_provider import AnthropicProvider
-        from rikugan.providers.openai_provider import OpenAIProvider
         from rikugan.providers.gemini_provider import GeminiProvider
+        from rikugan.providers.openai_provider import OpenAIProvider
         for cls, kwargs in (
             (AnthropicProvider, {"api_key": "t", "model": "t"}),
             (OpenAIProvider, {"api_key": "t", "model": "t"}),

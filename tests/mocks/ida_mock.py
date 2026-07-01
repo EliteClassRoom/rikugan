@@ -6,7 +6,6 @@ import sys
 from types import ModuleType
 from unittest.mock import MagicMock
 
-
 # Constants
 BADADDR = 0xFFFFFFFFFFFFFFFF
 

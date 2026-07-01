@@ -9,7 +9,7 @@ from collections.abc import Generator
 from typing import Any
 
 from ...core.config import RikuganConfig
-from ...core.logging import log_error, log_info
+from ...core.logging import log_debug, log_error, log_info
 from ...core.types import Message, Role
 from ...providers.base import LLMProvider
 from ...skills.registry import SkillRegistry
@@ -130,13 +130,13 @@ class OrchestraMainAgent:
         if self.config.auto_context and not profile.hide_binary_metadata:
             try:
                 binary_info = self.tools.execute("get_binary_info", {})
-            except Exception:
-                pass
+            except Exception as exc:
+                log_debug(f"Orchestra auto_context get_binary_info failed: {exc}")
             try:
                 current_address = self.tools.execute("get_cursor_position", {})
                 current_function = self.tools.execute("get_current_function", {})
-            except Exception:
-                pass
+            except Exception as exc:
+                log_debug(f"Orchestra auto_context cursor/function failed: {exc}")
 
         idb_dir = ""
         if self.session.idb_path:

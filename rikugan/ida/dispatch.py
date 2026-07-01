@@ -213,7 +213,12 @@ class IdaHeadlessDispatcher:
                     raise job.exception
                 return job.result
 
-            assert job.exception is not None
+            # Invariant: the timeout branch above always sets job.exception to a
+            # DispatcherTimeoutError. Use an explicit guard instead of assert so
+            # the check survives `python -O` and produces a clear error if a race
+            # ever leaves job.exception unset.
+            if job.exception is None:
+                raise DispatcherTimeoutError("IDA dispatcher job timed out but no exception was recorded")
             raise job.exception  # timeout error
 
         return wrapper  # type: ignore[return-value]

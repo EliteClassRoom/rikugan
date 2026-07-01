@@ -7,6 +7,7 @@ import re as _re
 from collections.abc import Callable
 from typing import ClassVar
 
+from .. import constants
 from .qt_compat import (
     QColor,
     QFont,
@@ -144,7 +145,7 @@ for _t in ("exploration_report", "phase_transition"):
     _TOOL_COLORS[_t] = "#d7ba7d"
 
 # Scripting -> green
-for _t in ("execute_python",):
+for _t in (constants.EXECUTE_PYTHON_TOOL_NAME,):
     _TOOL_COLORS[_t] = "#6a9955"
 
 _DEFAULT_TOOL_COLOR = "#569cd6"  # blue
@@ -317,7 +318,7 @@ _TOOL_SUMMARY_FORMATTERS: dict[str, Callable[[Callable[..., str]], str]] = {
     "define_types": _fmt_define_types,
     "declare_c_type": _fmt_define_types,
     "create_struct": _fmt_struct_name,
-    "execute_python": _fmt_execute_python,
+    constants.EXECUTE_PYTHON_TOOL_NAME: _fmt_execute_python,
     "read_disassembly": _fmt_read_disassembly,
     "read_function_disassembly": _fmt_read_disassembly,
     "hexdump_address": _fmt_hexdump,

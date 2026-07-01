@@ -164,18 +164,6 @@ MUTATION_INDICATOR_STYLE: dict = {
     "dark": {"reversible": "", "irreversible": ""},
     "light": {"reversible": "", "irreversible": ""},
 }
-MUTATION_DESC_STYLE = {"dark": "", "light": ""}
-MUTATION_BADGE_STYLE = {"dark": "", "light": ""}
-MUTATION_UNDO_BTN_STYLE = {"dark": "", "light": ""}
-MUTATION_TITLE_STYLE = {"dark": "", "light": ""}
-MUTATION_COUNT_STYLE = {"dark": "", "light": ""}
-TOOL_APPROVAL_FRAME_STYLE = {"dark": "", "light": ""}
-TOOL_APPROVAL_HEADER_STYLE = {"dark": "", "light": ""}
-TOOL_APPROVAL_CODE_EDITOR_STYLE = {"dark": "", "light": ""}
-TOOL_APPROVAL_ALLOW_BTN_STYLE = {"dark": "", "light": ""}
-TOOL_APPROVAL_ALWAYS_BTN_STYLE = {"dark": "", "light": ""}
-TOOL_APPROVAL_DENY_BTN_STYLE = {"dark": "", "light": ""}
-TOOL_APPROVAL_DISABLED_BTN_STYLE = {"dark": "", "light": ""}
 
 
 def get_mutation_indicator_style(reversible: bool) -> str:

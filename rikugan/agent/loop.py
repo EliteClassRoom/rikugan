@@ -12,6 +12,7 @@ import traceback
 from collections.abc import Generator
 from typing import Any
 
+from .. import constants
 from ..core.config import RikuganConfig
 from ..core.errors import (
     CancellationError,
@@ -772,7 +773,6 @@ class AgentLoop:
                             "The tool call will proceed with empty arguments."
                         )
                     tool_calls.append(ToolCall(id=tc_id, name=tc_name, arguments=args))
-                    completed_tool_call_ids.add(tc_id)
                     yield TurnEvent.tool_call_done(tc_id, tc_name, raw_args)
 
                 if chunk.usage:
@@ -914,7 +914,7 @@ class AgentLoop:
     @staticmethod
     def _describe_tool_call(name: str, args: dict[str, Any]) -> str:
         """Generate a brief human-readable description of what a tool will do."""
-        if name == "execute_python":
+        if name == constants.EXECUTE_PYTHON_TOOL_NAME:
             code = args.get("code", args.get("script", ""))
             lines = code.strip().splitlines()
             if len(lines) <= 3:
@@ -1097,7 +1097,10 @@ class AgentLoop:
         from .modes.research import write_and_review_note
 
         state = self._research_state
-        assert state is not None  # caller ensures state via _ensure_research_state()
+        if state is None:
+            # Invariant: callers route research_note only after _ensure_research_state().
+            # Use an explicit raise instead of assert so the check survives `python -O`.
+            raise RuntimeError("research_note tool called without an active research state")
         genre = tc.arguments.get("genre", "general")
         title = tc.arguments.get("title", "untitled")
         content = tc.arguments.get("content", "")
@@ -1226,12 +1229,12 @@ class AgentLoop:
                         cur = self.tools.execute("get_current_function", {})
                         if cur:
                             ctx_lines.append(f"\n# Current function\n\n{cur}")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        log_debug(f"research_note current_function context failed: {exc}")
                     context_prefix = "\n\n".join(ctx_lines)
-            except Exception:
+            except Exception as exc:
                 # Context lookup is best-effort — fall back to bare task.
-                pass
+                log_debug(f"research_note context enrichment failed: {exc}")
 
         # Use the agent loop's existing cancel event so a user cancel
         # propagates cleanly into subprocesses and HTTP retry loops.
@@ -1401,7 +1404,7 @@ class AgentLoop:
             return tr
 
         # execute_python always requires explicit approval
-        if tc.name == "execute_python":
+        if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
             approved = yield from self._wait_for_approval(tc)
             if not approved:
                 content = "Tool execution denied by user."

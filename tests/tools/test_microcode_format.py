@@ -8,13 +8,17 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
-from rikugan.ida.tools.microcode_format import (
-    _MATURITY_NAMES, _MATURITY_LEVELS,
-    parse_maturity, maturity_label, require_hexrays,
-)
 from rikugan.core.errors import ToolError
+from rikugan.ida.tools.microcode_format import (
+    _MATURITY_LEVELS,
+    _MATURITY_NAMES,
+    maturity_label,
+    parse_maturity,
+    require_hexrays,
+)
 
 
 class TestMaturityNames(unittest.TestCase):

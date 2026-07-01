@@ -6,13 +6,16 @@ import json
 import os
 import sys
 import unittest
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
+from rikugan.agent.loop import AgentLoop
+from rikugan.agent.turn import TurnEvent, TurnEventType
+from rikugan.core.config import RikuganConfig
 from rikugan.core.types import (
     Message,
     ModelInfo,
@@ -21,19 +24,16 @@ from rikugan.core.types import (
     StreamChunk,
     TokenUsage,
 )
-from rikugan.core.config import RikuganConfig
-from rikugan.agent.loop import AgentLoop
-from rikugan.agent.turn import TurnEvent, TurnEventType
+from rikugan.providers.base import LLMProvider
+from rikugan.state.session import SessionState
 from rikugan.tools.base import ParameterSchema, ToolDefinition
 from rikugan.tools.registry import ToolRegistry
-from rikugan.state.session import SessionState
-from rikugan.providers.base import LLMProvider
 
 
 class MockProvider(LLMProvider):
     """Mock LLM provider that returns scripted responses."""
 
-    def __init__(self, responses: Optional[List[List[StreamChunk]]] = None):
+    def __init__(self, responses: list[list[StreamChunk]] | None = None):
         super().__init__(api_key="test", model="mock-model")
         self._responses = responses or []
         self._call_count = 0
@@ -49,11 +49,11 @@ class MockProvider(LLMProvider):
     def _get_client(self):
         return None
 
-    def _fetch_models_live(self) -> List[ModelInfo]:
+    def _fetch_models_live(self) -> list[ModelInfo]:
         return [ModelInfo(id="mock-model", name="Mock", provider="mock")]
 
     @staticmethod
-    def _builtin_models() -> List[ModelInfo]:
+    def _builtin_models() -> list[ModelInfo]:
         return [ModelInfo(id="mock-model", name="Mock", provider="mock")]
 
     def _format_messages(self, messages):
@@ -95,14 +95,14 @@ class MockProvider(LLMProvider):
             yield StreamChunk(text="No more scripted responses.")
 
 
-def _text_response(text: str) -> List[StreamChunk]:
+def _text_response(text: str) -> list[StreamChunk]:
     return [
         StreamChunk(text=text),
         StreamChunk(usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)),
     ]
 
 
-def _tool_call_response(tool_name: str, args: Dict[str, Any], call_id: str = "call_1") -> List[StreamChunk]:
+def _tool_call_response(tool_name: str, args: dict[str, Any], call_id: str = "call_1") -> list[StreamChunk]:
     return [
         StreamChunk(is_tool_call_start=True, tool_call_id=call_id, tool_name=tool_name),
         StreamChunk(tool_args_delta=json.dumps(args), tool_call_id=call_id),
@@ -128,7 +128,7 @@ def _make_registry() -> ToolRegistry:
 class TestExplorationModeEvents(unittest.TestCase):
     """Verify exploration mode emits events in the correct order."""
 
-    def _run_loop(self, loop: AgentLoop, message: str) -> List[TurnEvent]:
+    def _run_loop(self, loop: AgentLoop, message: str) -> list[TurnEvent]:
         """Consume the generator, collecting all events."""
         events = []
         for event in loop.run(message):

@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from tests.qt_stubs import ensure_pyside6_stubs
+
 ensure_pyside6_stubs()
 
 # Stub all heavy submodules that chat_view imports.
@@ -19,7 +20,7 @@ ensure_pyside6_stubs()
 
 
 class _StubModule(types.ModuleType):
-    def __getattr__(self, name):  # noqa: D401 — module-level getattr
+    def __getattr__(self, name):
         m = MagicMock()
         object.__setattr__(self, name, m)
         return m
@@ -58,9 +59,8 @@ for _mod_name in [
 ]:
     sys.modules.pop(_mod_name, None)
 
-from rikugan.ui.chat_view import _is_hidden_system_user_message, _TOOL_GROUP_MIN_CALLS  # noqa: E402
 from rikugan.ui.bulk_renamer import BulkRenamerWidget  # noqa: E402
-
+from rikugan.ui.chat_view import _TOOL_GROUP_MIN_CALLS, _is_hidden_system_user_message  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # _is_hidden_system_user_message

@@ -111,11 +111,6 @@ AGENT_STATUS_COLORS = {
 
 
 # Legacy dict shapes kept (empty) for re-export compatibility.
-AGENT_BTN_STYLE = {"dark": "", "light": ""}
-AGENT_TREE_STYLE = {"dark": "", "light": ""}
-AGENT_COMBO_STYLE = {"dark": "", "light": ""}
-AGENT_STATUS_LABEL_STYLE = {"dark": "", "light": ""}
-AGENT_PREVIEW_STYLE = {"dark": "", "light": ""}
 
 
 def get_agent_btn_style() -> str:

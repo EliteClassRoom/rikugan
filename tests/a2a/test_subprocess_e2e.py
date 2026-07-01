@@ -15,7 +15,6 @@ assert on.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import threading
@@ -28,8 +27,7 @@ from tests.mocks.ida_mock import install_ida_mocks
 install_ida_mocks()
 
 from rikugan.agent.a2a.subprocess_bridge import SubprocessBridge
-from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
-
+from rikugan.agent.a2a.types import ExternalAgentConfig
 
 # A real subprocess bridge uses shutil.which("python") to locate
 # the interpreter. We construct the agent config with

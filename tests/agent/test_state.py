@@ -10,12 +10,13 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
-from rikugan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult
-from rikugan.state.session import SessionState
-from rikugan.state.history import SessionHistory
 from rikugan.core.config import RikuganConfig
+from rikugan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult
+from rikugan.state.history import SessionHistory
+from rikugan.state.session import SessionState
 
 
 class TestSessionState(unittest.TestCase):

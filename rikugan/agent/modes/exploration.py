@@ -6,6 +6,7 @@ import re
 from collections.abc import Generator
 from typing import TYPE_CHECKING
 
+from ... import constants
 from ...core.errors import ToolError
 from ...core.logging import log_error, log_info
 from ...core.types import (
@@ -355,7 +356,7 @@ def _run_phase4_save(
             ]
             if rollback_parts:
                 try:
-                    loop.tools.execute("execute_python", {"code": "; ".join(rollback_parts)})
+                    loop.tools.execute(constants.EXECUTE_PYTHON_TOOL_NAME, {"code": "; ".join(rollback_parts)})
                     rolled_back = True
                     log_info("Exploration mode: patches rolled back via execute_python")
                 except ToolError as e:

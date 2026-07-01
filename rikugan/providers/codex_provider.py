@@ -118,7 +118,8 @@ def _codex_models_client_version() -> str:
     for path, key in ((_models_cache_path(), "client_version"), (_version_path(), "latest_version")):
         try:
             value = json.loads(path.read_text()).get(key)
-        except (OSError, json.JSONDecodeError, AttributeError):
+        except (OSError, json.JSONDecodeError, AttributeError) as exc:
+            log_debug(f"CodexProvider models cache miss ({path}, {key}): {exc}")
             continue
         if isinstance(value, str) and value:
             return value
@@ -248,8 +249,8 @@ def codex_auth_status() -> tuple[str, str]:
             and tokens.get("refresh_token")
         ):
             return "ChatGPT OAuth", "ok"
-    except (OSError, json.JSONDecodeError):
-        pass
+    except (OSError, json.JSONDecodeError) as exc:
+        log_debug(f"CodexProvider OAuth status check unreadable: {exc}")
     return "Setup required", "error"
 
 
@@ -588,8 +589,8 @@ class CodexProvider(LLMProvider):
             if r is not None:
                 try:
                     r.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log_debug(f"CodexProvider response.close() during cancel failed: {exc}")
 
         if cancel_event is not None:
             threading.Thread(target=_watchdog, daemon=True).start()
@@ -620,6 +621,9 @@ class CodexProvider(LLMProvider):
             try:
                 event = json.loads(data)
             except json.JSONDecodeError:
+                # Malformed SSE chunks (keepalives, partial frames) are expected
+                # on the Codex stream; skip them but stay observable for debugging.
+                log_debug(f"CodexProvider skipping non-JSON SSE chunk: {data[:80]!r}")
                 continue
             kind = event.get("type", "")
             if kind == "response.output_text.delta":

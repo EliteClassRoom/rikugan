@@ -9,6 +9,8 @@ code, comments), external sources (MCP servers), or user-controlled files
 2. **Injection pattern stripping** — removes sequences that mimic role markers
    or system instructions (e.g. ``[SYSTEM]``, ``<|im_start|>``).
 3. **Length capping** — truncates individual data items to sane limits.
+4. **Lone-surrogate stripping** — replaces invalid UTF-16 code units with
+   ``U+FFFD`` so provider HTTP body encoding never crashes.
 
 These are defense-in-depth measures.  No sanitization scheme can guarantee
 100% protection against prompt injection, but these significantly raise the
@@ -19,9 +21,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from copy import copy
 from typing import Any
 
 from .logging import log_debug
+from .types import Message, ToolResult
 
 # ---------------------------------------------------------------------------
 # Injection pattern detection
@@ -37,6 +41,15 @@ _ZERO_WIDTH_RE = re.compile(
     r"\U000e0001\U000e0020-\U000e007f"  # Tags block
     r"]"
 )
+
+# Lone surrogates (U+D800–U+DFFF) — high (D800–DBFF) and low (DC00–DFFF).
+# These are half-pairs of the UTF-16 surrogate mechanism and are *invalid*
+# as standalone code points.  Python `str` can hold them (e.g. when a binary
+# is decoded with ``errors='surrogatepass'``, or via IDA APIs reading wide
+# chars from a non-UTF-16 binary), but ``str.encode('utf-8')`` raises
+# ``UnicodeEncodeError: surrogates not allowed``.  Stripping them prevents
+# the provider SDK's HTTP body encoding from crashing on accumulated history.
+_LONE_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
 # Common Latin-lookalike homoglyphs (Cyrillic, Greek, etc.) that adversaries
 # use to evade keyword filters while visually matching the target string.
@@ -196,6 +209,83 @@ def strip_injection_markers(text: str) -> str:
     text = _ROLE_MARKER_RE.sub("[FILTERED]", text)
     text = _INSTRUCTION_OVERRIDE_RE.sub("[FILTERED]", text)
     return text
+
+
+def strip_lone_surrogates(text: str) -> str:
+    """Replace lone surrogate code points with ``U+FFFD`` so UTF-8 encoding succeeds.
+
+    Python ``str`` can hold lone surrogates (U+D800-DFFF) — typically
+    introduced by:
+
+    * Decoding bytes with ``errors='surrogatepass'`` (some libraries do this
+      to round-trip "undecodable" sequences).
+    * Reading binary content via IDA APIs that surface wide chars
+      (``idc.get_strlit_contents()`` on a non-UTF-16 binary, decompiled
+      pseudocode containing function names with non-UTF8 bytes, ``ida_name``
+      strings copied from corrupted PE resources, ...).
+    * External sources (MCP servers, web responses) that decode with the
+      wrong codec.
+
+    UTF-8 has no representation for them, so ``str.encode('utf-8')`` raises
+    ``UnicodeEncodeError: surrogates not allowed`` and the provider SDK's
+    HTTP body serialization aborts the entire turn.
+
+    Replacement strategy: ``U+FFFD`` (``�``). The Unicode standard replacement
+    character is valid UTF-8 (3 bytes) and signals "data was lost here"
+    without introducing semantic ambiguity (a plain ``?`` could be a real
+    question mark; a literal ``�`` is unmistakably a placeholder).
+    Position information is preserved, so the model still sees the
+    surrounding context.
+
+    Note: well-formed UTF-16 surrogate pairs (high+low) decode into a single
+    supplementary-plane code point (U+10000+, e.g. emoji like 😂 = U+1F602).
+    Those do NOT appear as lone surrogates in ``str``, so this regex does
+    not touch them — only the *lone* halves that are individually invalid.
+    """
+    if not text:
+        return text
+    return _LONE_SURROGATE_RE.sub("�", text)
+
+
+def sanitize_messages_for_provider(messages: list[Message]) -> list[Message]:
+    """Return shallow copies of *messages* with lone surrogates stripped from text fields.
+
+    Last-mile guard before any provider SDK serializes a request.  Operates
+    on a copy so the session's source-of-truth is left untouched (we don't
+    want to rewrite the user's history just to send one request).  Mutates
+    only the text fields that flow into the request body:
+
+    * ``Message.content`` (user prompts, assistant text)
+    * ``Message.tool_results[*].content`` (decompiled pseudocode, binary
+      strings, MCP outputs — the primary entry points for IDA-originated
+      surrogates)
+
+    Non-text fields (``tool_calls[].arguments``) are not touched: those are
+    constructed by the LLM from its own tool schema and do not contain
+    untrusted binary content.
+
+    Empty / ``None`` content is left as-is to preserve exact behavior of the
+    providers' input validation (some treat ``""`` and ``None`` differently).
+    """
+    if not messages:
+        return messages
+    result: list[Message] = []
+    for msg in messages:
+        m = copy(msg)
+        if m.content:
+            m.content = strip_lone_surrogates(m.content)
+        if m.tool_results:
+            m.tool_results = [
+                ToolResult(
+                    tool_call_id=tr.tool_call_id,
+                    name=tr.name,
+                    content=strip_lone_surrogates(tr.content) if tr.content else tr.content,
+                    is_error=tr.is_error,
+                )
+                for tr in m.tool_results
+            ]
+        result.append(m)
+    return result
 
 
 def quote_untrusted(content: str, label: str, max_length: int = 0) -> str:

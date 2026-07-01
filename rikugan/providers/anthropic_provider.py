@@ -504,8 +504,8 @@ class AnthropicProvider(LLMProvider):
             if s is not None:
                 try:
                     s.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log_debug(f"AnthropicProvider stream.close() during cancel failed: {exc}")
 
         watchdog: threading.Thread | None = None
         if cancel_event is not None:

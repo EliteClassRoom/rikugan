@@ -8,14 +8,15 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 from rikugan.core.profile import (
-    AnalysisProfile,
+    BUILTIN_PROFILES,
     DEFAULT_PROFILE,
     IOC_FILTER_CATEGORIES,
     PRIVATE_PROFILE,
-    BUILTIN_PROFILES,
+    AnalysisProfile,
     get_profile,
     list_profiles,
 )

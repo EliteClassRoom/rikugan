@@ -48,6 +48,7 @@ _SUMMARY_PREFIXES = (
 # permanently suppressed.  Retried on each flush() until it succeeds.
 _log_debug: Any = None
 _log_debug_lock = threading.Lock()
+_log_debug_lookup_warned = False
 
 
 def _get_log_debug() -> Any:
@@ -63,8 +64,14 @@ def _get_log_debug() -> Any:
 
             log_mod = importlib.import_module("rikugan.core.logging")
             _log_debug = log_mod.log_debug
-        except Exception:
-            pass
+        except Exception as exc:
+            # Suppress noise: only emit once per process via a module flag.
+            global _log_debug_lookup_warned
+            if not _log_debug_lookup_warned:
+                _log_debug_lookup_warned = True
+                import sys
+
+                sys.stderr.write(f"[rikugan:startup_timing] log_debug unavailable: {exc}\n")
         return _log_debug
 
 

@@ -6,36 +6,36 @@ import json
 import os
 import sys
 import unittest
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
+from rikugan.agent.exploration_mode import ExplorationState
+from rikugan.agent.loop import AgentLoop, BackgroundAgentRunner
+from rikugan.agent.turn import TurnEventType
+from rikugan.core.config import RikuganConfig
 from rikugan.core.types import (
     Message,
     ModelInfo,
     ProviderCapabilities,
     Role,
-    ToolCall,
     StreamChunk,
     TokenUsage,
+    ToolCall,
 )
-from rikugan.core.config import RikuganConfig
-from rikugan.agent.loop import AgentLoop, BackgroundAgentRunner
-from rikugan.agent.exploration_mode import ExplorationState
-from rikugan.agent.turn import TurnEventType
+from rikugan.providers.base import LLMProvider
+from rikugan.state.session import SessionState
 from rikugan.tools.base import ParameterSchema, ToolDefinition
 from rikugan.tools.registry import ToolRegistry
-from rikugan.state.session import SessionState
-from rikugan.providers.base import LLMProvider
 
 
 class MockProvider(LLMProvider):
     """Mock LLM provider that returns scripted responses."""
 
-    def __init__(self, responses: Optional[List[List[StreamChunk]]] = None):
+    def __init__(self, responses: list[list[StreamChunk]] | None = None):
         super().__init__(api_key="test", model="mock-model")
         self._responses = responses or []
         self._call_count = 0
@@ -51,11 +51,11 @@ class MockProvider(LLMProvider):
     def _get_client(self):
         return None
 
-    def _fetch_models_live(self) -> List[ModelInfo]:
+    def _fetch_models_live(self) -> list[ModelInfo]:
         return [ModelInfo(id="mock-model", name="Mock", provider="mock")]
 
     @staticmethod
-    def _builtin_models() -> List[ModelInfo]:
+    def _builtin_models() -> list[ModelInfo]:
         return [ModelInfo(id="mock-model", name="Mock", provider="mock")]
 
     def _format_messages(self, messages):
@@ -97,7 +97,7 @@ class MockProvider(LLMProvider):
             yield StreamChunk(text="No more scripted responses.")
 
 
-def _text_response(text: str) -> List[StreamChunk]:
+def _text_response(text: str) -> list[StreamChunk]:
     """Create a simple text-only response."""
     return [
         StreamChunk(text=text),
@@ -105,12 +105,12 @@ def _text_response(text: str) -> List[StreamChunk]:
     ]
 
 
-def _text_response_no_usage(text: str) -> List[StreamChunk]:
+def _text_response_no_usage(text: str) -> list[StreamChunk]:
     """Create a text response with no usage metadata (compat provider behavior)."""
     return [StreamChunk(text=text)]
 
 
-def _tool_call_response(tool_name: str, args: Dict[str, Any], call_id: str = "call_1") -> List[StreamChunk]:
+def _tool_call_response(tool_name: str, args: dict[str, Any], call_id: str = "call_1") -> list[StreamChunk]:
     """Create a response with a tool call."""
     return [
         StreamChunk(is_tool_call_start=True, tool_call_id=call_id, tool_name=tool_name),
@@ -121,7 +121,7 @@ def _tool_call_response(tool_name: str, args: Dict[str, Any], call_id: str = "ca
 
 
 class TestAgentLoop(unittest.TestCase):
-    def _make_loop(self, provider: MockProvider, tools: Optional[ToolRegistry] = None) -> AgentLoop:
+    def _make_loop(self, provider: MockProvider, tools: ToolRegistry | None = None) -> AgentLoop:
         config = RikuganConfig()
         config.auto_context = False  # Skip IDA API calls
         session = SessionState(provider_name="mock", model_name="mock-model")
@@ -608,6 +608,7 @@ class TestSkillInvocation(unittest.TestCase):
     def test_skill_rewrite(self):
         """Test that /slug messages get rewritten with skill body."""
         import tempfile
+
         from rikugan.skills.registry import SkillRegistry
 
         with tempfile.TemporaryDirectory() as tmpdir:

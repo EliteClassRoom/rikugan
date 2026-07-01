@@ -13,21 +13,18 @@ from ...tools.base import parse_addr, tool
 
 # Import each module independently so a single missing module (e.g. ida_struct
 # removed in IDA 9.x) does not prevent the others from loading.
-_HAS_IDA_STRUCT = False
-
 ida_auto = None
 ida_bytes = None
+ida_enum = None
 ida_hexrays = None
-ida_struct = None
 ida_typeinf = None
 idc = None
-ida_enum = None
 
 for _mod_name, _target in (
     ("ida_auto", "ida_auto"),
     ("ida_bytes", "ida_bytes"),
+    ("ida_enum", "ida_enum"),
     ("ida_hexrays", "ida_hexrays"),
-    ("ida_struct", "ida_struct"),
     ("ida_typeinf", "ida_typeinf"),
     ("idc", "idc"),
 ):
@@ -35,14 +32,6 @@ for _mod_name, _target in (
         globals()[_target] = importlib.import_module(_mod_name)
     except ImportError as _e:
         log_debug(f"IDA module not available: {_mod_name}: {_e}")
-
-_HAS_IDA_STRUCT = ida_struct is not None
-
-# ida_enum was removed in IDA 9.x (enums merged into ida_typeinf).
-try:
-    ida_enum = importlib.import_module("ida_enum")
-except ImportError as e:
-    log_debug(f"ida_enum not available (IDA 9.x+): {e}")
 
 if _HAS_HEXRAYS:
 
@@ -375,47 +364,9 @@ def create_struct(
     fields: Annotated[str, "JSON array of fields: [{name, type, offset?, comment?}, ...]"],
 ) -> str:
     """Create a new struct with typed fields."""
-    field_list = json.loads(fields)
-
-    if not _HAS_IDA_STRUCT:
-        # IDA 9.x path — ida_struct was removed, use ida_typeinf UDT API
-        if ida_typeinf is None:
-            return "ida_typeinf not available"
-        return _create_struct_ida9(name, field_list)
-
-    # IDA 8.x path
-    sid = ida_struct.get_struc_id(name)
-    if sid != idc.BADADDR:
-        return f"Struct '{name}' already exists (id={sid})"
-
-    sid = ida_struct.add_struc(idc.BADADDR, name, False)
-    if sid == idc.BADADDR:
-        return f"Failed to create struct '{name}'"
-
-    sptr = ida_struct.get_struc(sid)
-
-    for fld in field_list:
-        fname = fld["name"]
-        ftype_str = fld.get("type", "int")
-        foffset = fld.get("offset", idc.BADADDR)
-
-        tif = ida_typeinf.tinfo_t()
-        if ida_typeinf.parse_decl(tif, None, f"{ftype_str};", ida_typeinf.PT_SIL):
-            size = tif.get_size() or 4
-            err = ida_struct.add_struc_member(sptr, fname, foffset, 0, None, size)
-            if err == 0:
-                memb = ida_struct.get_member_by_name(sptr, fname)
-                if memb:
-                    ida_struct.set_member_tinfo(sptr, memb, 0, tif, 0)
-                    if fld.get("comment"):
-                        ida_struct.set_member_cmt(memb, fld["comment"], False)
-            else:
-                ida_struct.add_struc_member(sptr, fname, foffset, 0, None, 4)
-        else:
-            ida_struct.add_struc_member(sptr, fname, foffset, 0, None, 4)
-
-    total_size = ida_struct.get_struc_size(sptr)
-    return f"Created struct '{name}' with {len(field_list)} fields, size={total_size}"
+    if ida_typeinf is None:
+        return "ida_typeinf not available"
+    return _create_struct_ida9(name, json.loads(fields))
 
 
 @tool(category="types", mutating=True)
@@ -433,118 +384,17 @@ def modify_struct(
     new_size: Annotated[int, "New struct size (for resize)"] = 0,
 ) -> str:
     """Modify an existing struct: add/remove/rename/retype fields."""
-    if not _HAS_IDA_STRUCT:
-        # IDA 9.x path
-        if ida_typeinf is None:
-            return "ida_typeinf not available"
-        return _modify_struct_ida9(name, action, field_name, new_name, field_type, offset, comment, new_size)
-
-    # IDA 8.x path
-    sid = ida_struct.get_struc_id(name)
-    if sid == idc.BADADDR:
-        return f"Struct '{name}' not found"
-
-    sptr = ida_struct.get_struc(sid)
-
-    if action == "add_field":
-        tif = ida_typeinf.tinfo_t()
-        size = 4
-        if ida_typeinf.parse_decl(tif, None, f"{field_type};", ida_typeinf.PT_SIL):
-            size = tif.get_size() or 4
-        off = offset if offset >= 0 else idc.BADADDR
-        err = ida_struct.add_struc_member(sptr, field_name, off, 0, None, size)
-        if err == 0:
-            memb = ida_struct.get_member_by_name(sptr, field_name)
-            if memb and tif.is_correct():
-                ida_struct.set_member_tinfo(sptr, memb, 0, tif, 0)
-            return f"Added field '{field_name}' ({field_type}) to '{name}'"
-        return f"Failed to add field (error code {err})"
-
-    elif action == "remove_field":
-        memb = ida_struct.get_member_by_name(sptr, field_name)
-        if memb is None:
-            return f"Field '{field_name}' not found in '{name}'"
-        ida_struct.del_struc_member(sptr, memb.soff)
-        return f"Removed field '{field_name}' from '{name}'"
-
-    elif action == "rename_field":
-        memb = ida_struct.get_member_by_name(sptr, field_name)
-        if memb is None:
-            return f"Field '{field_name}' not found"
-        ok = ida_struct.set_member_name(sptr, memb.soff, new_name)
-        return f"Renamed '{field_name}' \u2192 '{new_name}'" if ok else "Rename failed"
-
-    elif action == "retype_field":
-        memb = ida_struct.get_member_by_name(sptr, field_name)
-        if memb is None:
-            return f"Field '{field_name}' not found"
-        tif = ida_typeinf.tinfo_t()
-        if ida_typeinf.parse_decl(tif, None, f"{field_type};", ida_typeinf.PT_SIL):
-            ok = ida_struct.set_member_tinfo(sptr, memb, 0, tif, 0)
-            return f"Retyped '{field_name}' to '{field_type}'" if ok else "Retype failed"
-        return f"Failed to parse type '{field_type}'"
-
-    elif action == "set_field_comment":
-        memb = ida_struct.get_member_by_name(sptr, field_name)
-        if memb is None:
-            return f"Field '{field_name}' not found"
-        ida_struct.set_member_cmt(memb, comment, False)
-        return f"Set comment on '{field_name}'"
-
-    elif action == "resize":
-        if new_size <= 0:
-            return "New size must be positive"
-        current = ida_struct.get_struc_size(sptr)
-        if new_size > current:
-            ida_struct.expand_struc(sptr, 0, new_size - current)
-            return f"Resized '{name}' from {current} to {new_size}"
-        return f"Cannot shrink struct (current={current}, requested={new_size})"
-
-    return f"Unknown action: {action}"
+    if ida_typeinf is None:
+        return "ida_typeinf not available"
+    return _modify_struct_ida9(name, action, field_name, new_name, field_type, offset, comment, new_size)
 
 
 @tool(category="types")
 def get_struct_info(name: Annotated[str, "Struct name"]) -> str:
     """Get full struct layout: fields, types, offsets, sizes."""
-    if not _HAS_IDA_STRUCT:
-        # IDA 9.x path
-        if ida_typeinf is None:
-            return "ida_typeinf not available"
-        return _get_struct_info_ida9(name)
-
-    sid = ida_struct.get_struc_id(name)
-    if sid == idc.BADADDR:
-        return f"Struct '{name}' not found"
-
-    sptr = ida_struct.get_struc(sid)
-    size = ida_struct.get_struc_size(sptr)
-    nmembers = sptr.memqty
-
-    lines = [
-        f"Struct: {name}",
-        f"Size: {size} (0x{size:x})",
-        f"Members: {nmembers}",
-        "",
-    ]
-
-    for i in range(nmembers):
-        memb = sptr.get_member(i)
-        mname = ida_struct.get_member_name(memb.id)
-        msize = ida_struct.get_member_size(memb)
-        moff = memb.soff
-
-        # Get type
-        tif = ida_typeinf.tinfo_t()
-        if ida_struct.get_member_tinfo(tif, memb):
-            tname = str(tif)
-        else:
-            tname = "?"
-
-        cmt = ida_struct.get_member_cmt(memb, False) or ""
-        cmt_str = f"  ; {cmt}" if cmt else ""
-        lines.append(f"  +0x{moff:04x}  {tname:24s} {mname:24s} ({msize} bytes){cmt_str}")
-
-    return "\n".join(lines)
+    if ida_typeinf is None:
+        return "ida_typeinf not available"
+    return _get_struct_info_ida9(name)
 
 
 @tool(category="types")
@@ -552,31 +402,9 @@ def list_structs(
     filter: Annotated[str, "Name filter (substring match)"] = "",
 ) -> str:
     """List all structs in the IDB."""
-    if not _HAS_IDA_STRUCT:
-        # IDA 9.x path
-        if ida_typeinf is None:
-            return "ida_typeinf not available"
-        return _list_structs_ida9(filter)
-
-    lines = ["Structs:"]
-    idx = ida_struct.get_first_struc_idx()
-    count = 0
-    while idx != idc.BADADDR:
-        sid = ida_struct.get_struc_by_idx(idx)
-        sptr = ida_struct.get_struc(sid)
-        sname = ida_struct.get_struc_name(sid)
-        if not filter or filter.lower() in sname.lower():
-            size = ida_struct.get_struc_size(sptr)
-            lines.append(f"  {sname:40s} size={size}")
-            count += 1
-        idx = ida_struct.get_next_struc_idx(idx)
-        if count >= 200:
-            lines.append("  ... (truncated)")
-            break
-
-    if count == 0:
-        lines.append("  (none)")
-    return "\n".join(lines)
+    if ida_typeinf is None:
+        return "ida_typeinf not available"
+    return _list_structs_ida9(filter)
 
 
 # --- Enums ---
@@ -802,25 +630,9 @@ def apply_struct_to_address(
     address: Annotated[str, "Data address (hex string)"],
 ) -> str:
     """Apply a struct type at a data address."""
-    ea = parse_addr(address)
-
-    if not _HAS_IDA_STRUCT:
-        # IDA 9.x path — use apply_tinfo
-        if ida_typeinf is None:
-            return "ida_typeinf not available"
-        return _apply_struct_to_address_ida9(struct_name, ea)
-
-    # IDA 8.x path
-    sid = ida_struct.get_struc_id(struct_name)
-    if sid == idc.BADADDR:
-        return f"Struct '{struct_name}' not found"
-
-    sptr = ida_struct.get_struc(sid)
-    size = ida_struct.get_struc_size(sptr)
-    ok = ida_bytes.create_struct(ea, size, sid)
-    if ok:
-        return f"Applied struct '{struct_name}' at 0x{ea:x} ({size} bytes)"
-    return f"Failed to apply struct at 0x{ea:x}"
+    if ida_typeinf is None:
+        return "ida_typeinf not available"
+    return _apply_struct_to_address_ida9(struct_name, parse_addr(address))
 
 
 @tool(category="types", mutating=True)
@@ -988,24 +800,9 @@ def propagate_type(
     field_index: Annotated[int, "Specific field index to propagate (-1 for all)"] = -1,
 ) -> str:
     """Re-run type propagation after struct changes to update xrefs and decompilation."""
-    if not _HAS_IDA_STRUCT:
-        # IDA 9.x path
-        if ida_typeinf is None:
-            return "ida_typeinf not available"
-        return _propagate_type_ida9(struct_name)
-
-    sid = ida_struct.get_struc_id(struct_name)
-    if sid == idc.BADADDR:
-        return f"Struct '{struct_name}' not found"
-
-    # Force reanalysis by touching the struct
-    tif = ida_typeinf.tinfo_t()
-    if tif.get_named_type(None, struct_name):
-        # Re-import the type to trigger propagation
-        ida_auto.auto_wait()
-        return f"Triggered type propagation for '{struct_name}'"
-
-    return f"Type propagation requested for '{struct_name}' (manual refresh may be needed)"
+    if ida_typeinf is None:
+        return "ida_typeinf not available"
+    return _propagate_type_ida9(struct_name)
 
 
 @tool(category="types")

@@ -12,6 +12,7 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 
+from ...core.logging import log_debug
 from .types import A2AEvent, ExternalAgentConfig
 
 
@@ -166,10 +167,10 @@ class SubprocessBridge:
                     return
                 for line in proc.stdout:
                     stdout_queue.put(line)
-            except Exception:
+            except Exception as exc:
                 # Subprocess pipe may be closed mid-iteration;
                 # the None sentinel handles the wakeup either way.
-                pass
+                log_debug(f"A2A subprocess stdout drain ended: {exc}")
             finally:
                 stdout_queue.put(None)  # wake the main loop
 

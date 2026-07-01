@@ -61,7 +61,7 @@ class TestSlashToDispatcher(unittest.TestCase):
         """``/a2a claude do thing`` parses, dispatches, streams result."""
         from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
         from rikugan.agent.modes.a2a import run_a2a_mode
-        from rikugan.agent.turn import TurnEvent, TurnEventType
+        from rikugan.agent.turn import TurnEventType
 
         loop = _build_minimal_loop()
         agents = [ExternalAgentConfig(
@@ -97,9 +97,9 @@ class TestSlashToDispatcher(unittest.TestCase):
     def test_slash_to_dispatcher_uses_loop_config(self) -> None:
         """The mode runner reads ``loop.config.a2a_agents`` and
         passes it to the dispatcher."""
+        from rikugan.agent.a2a.types import ExternalAgentConfig
         from rikugan.agent.modes import a2a as a2a_mode
         from rikugan.agent.modes.a2a import run_a2a_mode
-        from rikugan.agent.a2a.types import ExternalAgentConfig
 
         loop = _build_minimal_loop()
         loop.config.a2a_agents = [
@@ -172,9 +172,7 @@ class TestA2AToolIntegration(unittest.TestCase):
     def test_pseudo_tool_dispatches_via_loop(self) -> None:
         """Calling _handle_delegate_external_task_tool streams events."""
         from rikugan.agent.a2a.types import A2AEvent, ExternalAgentConfig
-        from rikugan.agent.turn import TurnEvent, TurnEventType
-        from rikugan.core.types import ToolCall
-        from rikugan.tools.base import ToolDefinition
+        from rikugan.agent.turn import TurnEventType
 
         # We don't need a real AgentLoop — invoke the
         # pseudo-tool's dispatcher via a minimal harness.

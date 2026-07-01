@@ -31,8 +31,8 @@ def _build_widget_with_mocks(agents: list | None = None) -> tuple:
 
     Returns (widget, mocks_dict) so tests can inspect both.
     """
-    from rikugan.ui.a2a_widget import A2ABridgeWidget
     from rikugan.agent.a2a.types import ExternalAgentConfig
+    from rikugan.ui.a2a_widget import A2ABridgeWidget
 
     if agents is None:
         agents = [ExternalAgentConfig(
@@ -337,8 +337,8 @@ class TestWorker(unittest.TestCase):
         self.assertEqual(w._task_id, "tid-1")
 
     def test_worker_run_emits_started_output_completed(self) -> None:
-        from rikugan.ui.a2a_widget import _A2AWorker
         from rikugan.agent.turn import TurnEvent, TurnEventType
+        from rikugan.ui.a2a_widget import _A2AWorker
         cancel = threading.Event()
 
         def fake_run(agent_name, task, **kwargs):

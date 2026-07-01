@@ -10,17 +10,18 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 from rikugan.core.logging import (
-    get_logger,
-    log_info,
-    log_warning,
-    log_error,
-    log_debug,
-    log_trace,
     IDAHandler,
     _FlushFileHandler,
+    get_logger,
+    log_debug,
+    log_error,
+    log_info,
+    log_trace,
+    log_warning,
 )
 
 
@@ -106,6 +107,7 @@ class TestIDAHandler(unittest.TestCase):
     def test_emit_to_stderr_when_no_host_sink(self):
         """When no host sink is registered, HostOutputHandler falls back to stderr."""
         import io
+
         import rikugan.core.log_sinks as sinks_mod
 
         handler = IDAHandler()

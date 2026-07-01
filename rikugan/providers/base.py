@@ -8,6 +8,10 @@ from collections.abc import Generator
 from typing import Any, NoReturn
 
 from ..core.logging import log_debug
+from ..core.sanitize import (
+    sanitize_messages_for_provider,
+    strip_lone_surrogates,
+)
 from ..core.types import (
     Message,
     ModelInfo,
@@ -132,9 +136,17 @@ class LLMProvider(ABC):
 
         Orchestrates the standard pipeline:
         get client -> build kwargs -> call API -> normalize response.
+
+        Lone surrogates (U+D800-DFFF) are stripped from messages and the
+        system prompt before the request kwargs are built — otherwise the
+        provider SDK's HTTP body encoding (``str.encode('utf-8')``) raises
+        ``UnicodeEncodeError: surrogates not allowed`` and aborts the turn.
+        See :func:`rikugan.core.sanitize.sanitize_messages_for_provider`.
         """
         client = self._get_client()
-        kwargs = self._build_request_kwargs(messages, tools, temperature, max_tokens, system)
+        safe_messages = sanitize_messages_for_provider(messages)
+        safe_system = strip_lone_surrogates(system) if system else system
+        kwargs = self._build_request_kwargs(safe_messages, tools, temperature, max_tokens, safe_system)
         try:
             raw = self._call_api(client, kwargs)
         except Exception as e:
@@ -159,9 +171,14 @@ class LLMProvider(ABC):
         set to interrupt a slow HTTP stream. When set, the provider force-closes
         the underlying connection so the consumer's cancellation check fires
         within ~100ms instead of waiting for the next SSE chunk.
+
+        Lone surrogates are stripped from messages and the system prompt
+        before serialization (see ``chat`` docstring for rationale).
         """
         client = self._get_client()
-        kwargs = self._build_request_kwargs(messages, tools, temperature, max_tokens, system)
+        safe_messages = sanitize_messages_for_provider(messages)
+        safe_system = strip_lone_surrogates(system) if system else system
+        kwargs = self._build_request_kwargs(safe_messages, tools, temperature, max_tokens, safe_system)
         yield from self._stream_chunks(client, kwargs, cancel_event=cancel_event)
 
     # -- Concrete shared implementations ---------------------------------------

@@ -34,7 +34,6 @@ install_ida_mocks()
 from rikugan.agent.a2a.client import A2AClient, A2AClientConfig
 from rikugan.agent.a2a.types import A2ATaskStatus, ExternalAgentConfig
 
-
 # ---------------------------------------------------------------------------
 # Test fixtures: a thread-local HTTP server with a configurable handler
 # ---------------------------------------------------------------------------
@@ -56,12 +55,12 @@ class _A2AServerHandler(BaseHTTPRequestHandler):
     call_count: int = 0
     last_request_body: bytes = b""
 
-    def log_message(self, format, *args):  # noqa: A002 - signature matches stdlib
+    def log_message(self, format, *args):
         # Silence the test output — BaseHTTPRequestHandler logs
         # every request to stderr by default.
         pass
 
-    def do_GET(self) -> None:  # noqa: N802 (HTTP verb naming)
+    def do_GET(self) -> None:
         # ``/.well-known/agent.json`` is the discovery endpoint.
         # Respect the behavior queue (e.g. for 404 tests).
         idx = _A2AServerHandler.call_count
@@ -82,7 +81,7 @@ class _A2AServerHandler(BaseHTTPRequestHandler):
         else:
             self._respond(404, {"error": "not found"})
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         # Read the body
         length = int(self.headers.get("Content-Length", "0"))
         # Set as class attribute so tests can read it without
@@ -134,7 +133,7 @@ class _MockA2AServer:
         host, port = self._server.server_address
         return f"http://{host}:{port}"
 
-    def __enter__(self) -> "_MockA2AServer":
+    def __enter__(self) -> _MockA2AServer:
         # Reset shared state so successive tests don't leak.
         _A2AServerHandler.behavior = []
         _A2AServerHandler.call_count = 0

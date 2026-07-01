@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
+
 install_ida_mocks()
 
 from rikugan.agent.loop import _parse_user_command
@@ -291,7 +292,7 @@ class TestSafeNotePath(unittest.TestCase):
                 shutil.rmtree(sibling, ignore_errors=True)
 
 
-def _resolve(path: str) -> "os.PathLike[str]":
+def _resolve(path: str) -> os.PathLike[str]:
     """Resolve a path to its absolute form (helper for assertions)."""
     import pathlib
     return pathlib.Path(path).resolve()

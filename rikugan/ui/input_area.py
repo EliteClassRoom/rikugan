@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..core.logging import get_logger
 from .qt_compat import (
     QFrame,
     QLabel,
@@ -13,6 +14,8 @@ from .qt_compat import (
 )
 from .styles import build_input_area_stylesheet
 from .theme.manager import ThemeManager
+
+logger = get_logger()
 
 
 def _skill_popup_style() -> str:
@@ -138,8 +141,8 @@ class InputArea(QPlainTextEdit):
         self.apply_theme()
         try:
             ThemeManager.instance().themeChanged.connect(self.apply_theme)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("InputArea themeChanged connect failed", exc_info=exc)
 
     def apply_theme(self) -> None:
         """Refresh the editor (and skill popup) QSS for the current theme.
@@ -155,13 +158,13 @@ class InputArea(QPlainTextEdit):
             return
         try:
             self.setStyleSheet(build_input_area_stylesheet(tokens))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("InputArea stylesheet apply failed", exc_info=exc)
         if self._popup is not None:
             try:
                 self._popup.apply_theme()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("InputArea popup apply_theme failed", exc_info=exc)
 
     def set_submit_callback(self, callback) -> None:
         """Set the callback for submit (Enter key). Callback signature: (str) -> None."""

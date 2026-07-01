@@ -65,4 +65,4 @@ def optional_test_data_dir() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-__all__ = ["optional_test_data_path", "optional_test_data_dir"]
+__all__ = ["optional_test_data_dir", "optional_test_data_path"]

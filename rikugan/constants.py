@@ -11,6 +11,11 @@ PLUGIN_VERSION = "1.2.0"
 PLUGIN_HOTKEY = "Ctrl+Shift+I"
 PLUGIN_COMMENT = "Intelligent Reverse-engineering Integrated System"
 
+# Tool name constants — used wherever the security gate (always-approve
+# behavior) and the dispatch tables must agree on the literal string.
+# A typo at any of those call sites would silently disable the gate.
+EXECUTE_PYTHON_TOOL_NAME = "execute_python"
+
 CONFIG_DIR_NAME = "rikugan"
 CONFIG_FILE_NAME = "config.json"
 CHECKPOINTS_DIR_NAME = "checkpoints"

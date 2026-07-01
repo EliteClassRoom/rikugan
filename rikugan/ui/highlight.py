@@ -67,20 +67,6 @@ _OUTPUT_CACHE: dict[tuple[str, str, str], str] = {}
 _OUTPUT_CACHE_MAX = 256
 
 
-def _pygments_style_for_tokens(tokens) -> str:
-    """Return the pygments style name for a given token set.
-
-    Uses luminance check (not mode name) so that IDA_NATIVE in a light
-    IDA theme also gets a light code style. The bug this fixes: pre-
-    theme-system, code highlighting used monokai whenever the mode was
-    'dark', but in IDA Native + Light IDA theme, monokai clashes with
-    the light background.
-    """
-    from .theme.tokens import is_dark_tokens
-
-    return "monokai" if is_dark_tokens(tokens) else "default"
-
-
 def _get_formatter(style_name: str) -> object | None:
     """Get (or create) a pygments HtmlFormatter for the given style.
 

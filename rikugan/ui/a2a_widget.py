@@ -23,6 +23,7 @@ from typing import Any
 
 from ..agent.a2a import A2ADispatcher
 from ..agent.turn import TurnEventType
+from ..core.logging import get_logger
 from .qt_compat import (
     QCheckBox,
     QComboBox,
@@ -44,6 +45,8 @@ from .qt_compat import (
     QWidget,
     Signal,
 )
+
+logger = get_logger()
 
 # ---------------------------------------------------------------------------
 # Background worker — runs the dispatcher in a separate thread
@@ -529,8 +532,8 @@ class A2ABridgeWidget(QWidget):
             dlg = _OutputDialog(row.agent_name, row.task_excerpt, row.result_text, self)
             dlg.exec()
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("A2A output: _OutputDialog failed", exc_info=exc)
         try:
             from PySide6.QtWidgets import QMessageBox  # type: ignore[import-not-found]
 
@@ -538,8 +541,8 @@ class A2ABridgeWidget(QWidget):
             box.setWindowTitle(f"{row.agent_name} — output")
             box.setText(row.result_text or row.error_text or "(no output)")
             box.exec()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("A2A output: QMessageBox fallback failed", exc_info=exc)
 
     def _on_clear_history_clicked(self) -> None:
         """Drop completed/failed rows from the table. In-flight rows stay."""
@@ -647,8 +650,8 @@ class A2ABridgeWidget(QWidget):
                 status_item.setForeground(QColor("#d29922"))
             else:
                 status_item.setForeground(QColor("#8b949e"))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("A2A history row colorize failed", exc_info=exc)
 
     def _find_row_index(self, task_id: str) -> int:
         # ``rowCount`` may return a MagicMock in tests; coerce to int

@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from scripts.build_release import (
-    EXCLUDE_NAMES,
     INCLUDE_PATHS,
     build_zip,
     collect,
@@ -23,7 +22,6 @@ from scripts.build_release import (
     should_skip,
     write_sha256sums,
 )
-
 
 # ── should_skip ────────────────────────────────────────────────────────
 

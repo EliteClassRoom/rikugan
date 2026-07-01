@@ -13,7 +13,8 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from tests.qt_stubs import ensure_pyside6_stubs, _qt_class
+from tests.qt_stubs import _qt_class, ensure_pyside6_stubs
+
 ensure_pyside6_stubs()
 
 # Stub rikugan.ui.panel_core
@@ -32,7 +33,6 @@ _actions_mod.RikuganUIHooks = MagicMock()
 sys.modules["rikugan.ida.ui.actions"] = _actions_mod
 
 from rikugan.ida.ui.panel import RikuganPanel  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helper

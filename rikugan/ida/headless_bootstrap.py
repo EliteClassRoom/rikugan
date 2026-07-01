@@ -35,6 +35,23 @@ import threading
 import traceback
 
 
+def _log_best_effort(context: str, exc: BaseException) -> None:
+    """Emit a short note for swallowed best-effort exceptions.
+
+    Bootstrap runs before structured logging is configured and may run
+    during process exit where ``sys.stderr`` is the only usable channel.
+    Keeping the message on stderr avoids silent failure without pulling
+    in ``rikugan.core.logging`` (which is not safe to import at every
+    point this is called).
+    """
+    try:
+        sys.stderr.write(f"[rikugan:bootstrap] {context}: {exc}\n")
+        sys.stderr.flush()
+    except Exception:
+        # stderr itself is closed/unwritable — nothing more we can do.
+        pass
+
+
 def _clean_exit_ida(exit_code: int, message: str = "") -> None:
     """Write structured output and attempt a clean IDA exit.
 
@@ -61,16 +78,16 @@ def _clean_exit_ida(exit_code: int, message: str = "") -> None:
         raise SystemExit(exit_code)
     except SystemExit:
         raise
-    except Exception:
+    except Exception as exc:
         # idc unavailable or qexit failed — fall through to os._exit.
-        pass
+        _log_best_effort("idc.qexit fallback", exc)
 
     # Final fallback: flush and hard-exit.
     try:
         sys.stdout.flush()
         sys.stderr.flush()
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_best_effort("stream flush before hard exit", exc)
     os._exit(exit_code)
 
 
@@ -150,8 +167,8 @@ def _run_one_shot(controller, dispatcher, config: dict) -> None:
     if not prompt:
         try:
             controller.shutdown()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_best_effort("controller.shutdown before missing-prompt exit", exc)
         _clean_exit_ida(2, "One-shot mode requires a 'prompt' field.")
 
     output_file = config.get("output_file", "")
@@ -179,16 +196,16 @@ def _run_one_shot(controller, dispatcher, config: dict) -> None:
     if error_holder:
         try:
             controller.shutdown()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_best_effort("controller.shutdown before error exit", exc)
         _clean_exit_ida(1, error_holder[0])
 
     result = result_holder[0] if result_holder else None
     if result is None:
         try:
             controller.shutdown()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_best_effort("controller.shutdown before no-result exit", exc)
         _clean_exit_ida(1, "Prompt failed — no result returned.")
 
     stdout_payload: dict = {
@@ -227,8 +244,8 @@ def _run_one_shot(controller, dispatcher, config: dict) -> None:
     # Clean shutdown before exiting IDA.
     try:
         controller.shutdown()
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_best_effort("controller.shutdown after one-shot", exc)
 
     _clean_exit_ida(result.exit_code or 0)
 
@@ -277,8 +294,8 @@ def _run_server(controller, dispatcher, config: dict) -> None:
         server.shutdown()
         try:
             controller.shutdown()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_best_effort("controller.shutdown in server finally", exc)
 
     _clean_exit_ida(0)
 
@@ -344,8 +361,8 @@ def main() -> None:
         if controller is not None:
             try:
                 controller.shutdown()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log_best_effort("controller.shutdown before bootstrap-failure exit", exc)
         _clean_exit_ida(1, str(e))
 
 

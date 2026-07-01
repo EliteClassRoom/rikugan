@@ -175,18 +175,6 @@ BULK_STATUS_COLORS = {
 # === Public getters (signatures unchanged) ==================================
 
 # Legacy dict shapes kept (empty) for re-export compatibility.
-BULK_BTN_STYLE = {"dark": "", "light": ""}
-BULK_STOP_BTN_STYLE = {"dark": "", "light": ""}
-BULK_START_BTN_STYLE = {"dark": "", "light": ""}
-BULK_TABLE_STYLE = {"dark": "", "light": ""}
-BULK_FILTER_STYLE = {"dark": "", "light": ""}
-BULK_COMBO_STYLE = {"dark": "", "light": ""}
-BULK_NUM_INPUT_STYLE = {"dark": "", "light": ""}
-BULK_PROGRESS_STYLE = {"dark": "", "light": ""}
-BULK_RADIO_STYLE = {"dark": "", "light": ""}
-BULK_CHECK_STYLE = {"dark": "", "light": ""}
-BULK_SELECTION_LABEL_STYLE = {"dark": "", "light": ""}
-BULK_MODE_LABEL_STYLE = {"dark": "", "light": ""}
 
 
 def get_bulk_btn_style() -> str:
