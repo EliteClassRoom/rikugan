@@ -15,7 +15,6 @@ install_ida_mocks()
 import rikugan.ida.tools.types_tools as types_tools
 from rikugan.core.errors import ToolError
 
-
 # ---------------------------------------------------------------------------
 # _require_ida_enum
 # ---------------------------------------------------------------------------
@@ -189,15 +188,12 @@ class TestApplyTypeToVariable(unittest.TestCase):
 
 class TestCreateStructIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
-        orig_s = types_tools._HAS_IDA_STRUCT
         orig_t = types_tools.ida_typeinf
         try:
-            types_tools._HAS_IDA_STRUCT = False
             types_tools.ida_typeinf = None
             result = types_tools.create_struct("Foo", '[{"name": "x", "type": "int"}]')
             self.assertIn("not available", result)
         finally:
-            types_tools._HAS_IDA_STRUCT = orig_s
             types_tools.ida_typeinf = orig_t
 
 
@@ -207,15 +203,12 @@ class TestCreateStructIda9Path(unittest.TestCase):
 
 class TestModifyStructIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
-        orig_s = types_tools._HAS_IDA_STRUCT
         orig_t = types_tools.ida_typeinf
         try:
-            types_tools._HAS_IDA_STRUCT = False
             types_tools.ida_typeinf = None
             result = types_tools.modify_struct("Foo", "add_field")
             self.assertIn("not available", result)
         finally:
-            types_tools._HAS_IDA_STRUCT = orig_s
             types_tools.ida_typeinf = orig_t
 
 
@@ -225,15 +218,12 @@ class TestModifyStructIda9Path(unittest.TestCase):
 
 class TestGetStructInfoIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
-        orig_s = types_tools._HAS_IDA_STRUCT
         orig_t = types_tools.ida_typeinf
         try:
-            types_tools._HAS_IDA_STRUCT = False
             types_tools.ida_typeinf = None
             result = types_tools.get_struct_info("Foo")
             self.assertIn("not available", result)
         finally:
-            types_tools._HAS_IDA_STRUCT = orig_s
             types_tools.ida_typeinf = orig_t
 
 
@@ -243,15 +233,12 @@ class TestGetStructInfoIda9Path(unittest.TestCase):
 
 class TestListStructsIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
-        orig_s = types_tools._HAS_IDA_STRUCT
         orig_t = types_tools.ida_typeinf
         try:
-            types_tools._HAS_IDA_STRUCT = False
             types_tools.ida_typeinf = None
             result = types_tools.list_structs()
             self.assertIn("not available", result)
         finally:
-            types_tools._HAS_IDA_STRUCT = orig_s
             types_tools.ida_typeinf = orig_t
 
 
@@ -261,15 +248,12 @@ class TestListStructsIda9Path(unittest.TestCase):
 
 class TestApplyStructToAddressIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
-        orig_s = types_tools._HAS_IDA_STRUCT
         orig_t = types_tools.ida_typeinf
         try:
-            types_tools._HAS_IDA_STRUCT = False
             types_tools.ida_typeinf = None
             result = types_tools.apply_struct_to_address("Foo", "0x1000")
             self.assertIn("not available", result)
         finally:
-            types_tools._HAS_IDA_STRUCT = orig_s
             types_tools.ida_typeinf = orig_t
 
 
@@ -279,15 +263,12 @@ class TestApplyStructToAddressIda9Path(unittest.TestCase):
 
 class TestPropagateTypeIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
-        orig_s = types_tools._HAS_IDA_STRUCT
         orig_t = types_tools.ida_typeinf
         try:
-            types_tools._HAS_IDA_STRUCT = False
             types_tools.ida_typeinf = None
             result = types_tools.propagate_type("Foo")
             self.assertIn("not available", result)
         finally:
-            types_tools._HAS_IDA_STRUCT = orig_s
             types_tools.ida_typeinf = orig_t
 
 
