@@ -65,6 +65,7 @@ from .mutation import MutationRecord, build_reverse_record, capture_pre_state
 from .plan_mode import parse_plan as _parse_plan_impl
 from .pseudo_tool_schemas import (
     ASK_USER_SCHEMA,
+    DELEGATE_EXTERNAL_TASK_SCHEMA,
     EXPLORATION_REPORT_SCHEMA,
     PHASE_TRANSITION_SCHEMA,
     RESEARCH_NOTE_SCHEMA,
@@ -1901,6 +1902,7 @@ class AgentLoop:
 
         tools_schema.append(SPAWN_SUBAGENT_SCHEMA)
         tools_schema.append(ASK_USER_SCHEMA)
+        tools_schema.append(DELEGATE_EXTERNAL_TASK_SCHEMA)
 
         # Deduplicate — Anthropic rejects requests with duplicate tool names
         seen: set = set()
