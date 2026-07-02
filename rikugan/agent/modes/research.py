@@ -155,7 +155,7 @@ something useful → call `exploration_report` immediately.**
 ### Rename as you go:
 As you explore, **rename functions whose purpose you have confidently identified**. \
 Use `rename_function` to replace generic names (sub_XXXX, FUN_XXXX) with descriptive \
-ones. Batch renames of local variables (`rename_multi_variables`) are also encouraged \
+ones. Batch renames of local variables (multiple `rename_variable` calls) are also encouraged \
 when decompiling a key function.
 
 ### Persist your findings:

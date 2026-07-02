@@ -49,17 +49,23 @@ Examples of batchable calls:
 RENAMING_SECTION = """\
 ## Renaming & Retyping
 - Before renaming or retyping anything, form a complete hypothesis about
-  the function's purpose.
-- Do not rename without evidence. Evidence = decompiled code + xrefs +
-  string references.
+  the function's purpose. Evidence = decompiled code + xrefs + string refs.
+- Do not rename without evidence.
 - Rename in semantic batches: all network vars together, all crypto vars
-  together, etc. Use rename_multi_variables when available.
+  together, etc. Use `rename_variable` per-variable (batch manually —
+  `rename_multi_variables` does NOT exist in the current toolset).
 - After renaming a batch: re-decompile once to verify the renamed code
   reads correctly.
 - Naming conventions:
-  - Functions: PascalCase verb-noun (InitializeGlobals, StealDiscordTokens)
-  - Globals: camelCase with g_ prefix (g_bEnabled, g_pConfigStart)
-  - Structs: PascalCase (BrowserConfig, C2ResponseData)
+  - Functions: PascalCase verb-noun (InitializeGlobals, ParseHttpRequest)
+  - Variables: snake_case (buffer_offset, bytes_read); no Hungarian
+  - Globals: g_ prefix + camelCase (g_bEnabled, g_pConfigStart)
+  - Structs: PascalCase name, snake_case fields (BrowserConfig.connection_timeout)
+  - Enums: PascalCase type, UPPER_SNAKE members (MessageType.MSG_TYPE_HANDSHAKE)
+  - Typedefs: PascalCase (SocketHandle, TimerCallback)
+- For edge cases (wrappers, C++ mangling, Go/Rust, vtable) or confidence
+  <70%, activate_skill("naming-convention") for the full standard +
+  escalation ladder. Uncertain names use Unknown_<Hint>_<addr> placeholder.
 """
 
 ANALYSIS_SECTION = """\

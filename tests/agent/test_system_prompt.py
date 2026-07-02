@@ -105,6 +105,31 @@ class TestBasePromptContent(unittest.TestCase):
     def test_has_analysis_section(self):
         self.assertIn("## Analysis Approach", _BASE_PROMPT)
 
+    def test_renaming_section_covers_all_object_types(self):
+        """Baseline RENAMING_SECTION must cover all 6 IDA object types."""
+        from rikugan.agent.prompts.base import RENAMING_SECTION
+
+        self.assertIn("PascalCase", RENAMING_SECTION)  # functions
+        self.assertIn("snake_case", RENAMING_SECTION)  # variables
+        self.assertIn("g_", RENAMING_SECTION)  # globals
+        self.assertIn("Enum", RENAMING_SECTION)  # enums
+        self.assertIn("Typedef", RENAMING_SECTION)  # typedefs
+
+    def test_renaming_section_references_naming_convention_skill(self):
+        """Baseline must point to the naming-convention skill for edge cases."""
+        from rikugan.agent.prompts.base import RENAMING_SECTION
+
+        self.assertIn("naming-convention", RENAMING_SECTION)
+        self.assertIn("Unknown_<Hint>", RENAMING_SECTION)
+
+    def test_renaming_section_does_not_reference_ghost_tool(self):
+        """Regression: rename_multi_variables is a ghost tool — must NOT be
+        referenced as if it exists. See spec self-review round 2."""
+        from rikugan.agent.prompts.base import RENAMING_SECTION
+
+        # The phrase 'Use rename_multi_variables when available' must be gone.
+        self.assertNotIn("Use rename_multi_variables", RENAMING_SECTION)
+
 
 if __name__ == "__main__":
     unittest.main()

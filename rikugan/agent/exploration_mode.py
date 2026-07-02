@@ -297,7 +297,7 @@ Use `rename_function` to replace generic names (sub_XXXX, FUN_XXXX) with descrip
 ones. This makes subsequent analysis clearer for you and the user. \
 Only rename when you are certain — if unsure, leave the original name and note your \
 hypothesis in an `exploration_report` instead. Batch renames of local variables \
-(`rename_multi_variables`) are also encouraged when decompiling a key function.
+(multiple `rename_variable` calls per local) are also encouraged when decompiling a key function.
 
 ### Persist your findings:
 Use `save_memory` to persist confirmed findings to RIKUGAN.md so future sessions \

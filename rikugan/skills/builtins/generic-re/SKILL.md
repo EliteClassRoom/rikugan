@@ -49,7 +49,13 @@ Depth guidance:
 - Rename in semantic batches: all network functions together, all crypto together
 - After renaming a batch: re-decompile to verify the renamed code reads correctly
 - Use `set_comment` and `set_function_comment` to document non-obvious logic
-- Naming conventions: PascalCase for functions, g_ prefix for globals, PascalCase for structs
+- Naming conventions:
+  - Functions: PascalCase verb-noun (InitializeGlobals, ParseHttpRequest)
+  - Variables: snake_case (buffer_offset, bytes_read)
+  - Globals: g_ prefix + camelCase (g_bEnabled, g_pConfigStart, g_C2ServerUrl)
+  - Structs: PascalCase; fields snake_case (BrowserConfig, connection_timeout)
+  - Enums: PascalCase type + UPPER_SNAKE members (MessageType, MSG_TYPE_HANDSHAKE)
+  - For edge cases / uncertain names, see the /naming-convention skill.
 
 ## Output
 

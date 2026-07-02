@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `set_runtime_config` wiring in `rikugan/web/__init__.py` (fixes silent `getattr` no-op; security-constant-real-bug step 2).
 - `EXECUTE_PYTHON_TOOL_NAME` constant in `rikugan/constants.py` (security-constant-real-bug step 1).
+- `naming-convention` skill (`rikugan/skills/builtins/naming-convention/`) — comprehensive naming standard covering functions, variables, globals, structs, enums, and typedefs, plus edge cases (wrappers/thunks, C++ mangling, Go/Rust, vtable) and a confidence-based escalation ladder with `Unknown_<Hint>_<addr>` placeholders.
+
+### Changed
+- **BREAKING (behavior):** `bulk_renamer` Quick and Deep prompts now generate PascalCase function names (`InitializeGlobals`) instead of snake_case (`initialize_globals`). This unifies bulk-rename output with the system prompt and the new `naming-convention` skill. Existing IDBs are NOT migrated — old snake_case names persist; only new renames follow the standard. If you relied on snake_case output from Bulk Rename, regenerate names for affected functions.
+- `RENAMING_SECTION` in the system prompt (`rikugan/agent/prompts/base.py`) expanded from 3 naming rules to 6 (now covers variables, enums, typedefs) and references the `/naming-convention` skill for edge cases. Also removes the ghost-tool reference to `rename_multi_variables` (which never existed).
+- `malware-analysis` and `generic-re` skills: naming sections expanded from 1-3 rules to the full 6-rule summary, cross-referencing `/naming-convention`.
 
 ### Fixed
 - CI: master trigger + push hook + concurrency + Python 3.12 matrix (`f191722`).
