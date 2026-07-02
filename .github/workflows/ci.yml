@@ -1,8 +1,23 @@
 name: CI
 
 on:
+  # Cover fork default branch (master) + inherited upstream branches
+  # (main, dev) so PRs to master actually trigger checks — previously
+  # pushes to master silently skipped CI. See AGENTS.md §"CI trigger drift".
   pull_request:
-    branches: [main, dev]
+    branches: [master, main, dev]
+  # Catch direct pushes to default branches as a safety net (no
+  # required-PR workflow on this repo, so accidental force-push to
+  # master bypasses review).
+  push:
+    branches: [master, main, dev]
+
+# Cancel stale runs when new commits land on the same branch.
+# Without this, every force-push spawns a parallel run that wastes
+# CI minutes and floods the PR / commit with notifications.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -46,14 +61,23 @@ jobs:
         run: python -m mypy rikugan/core rikugan/providers  # config in pyproject.toml
 
   test:
-    name: Pytest
+    name: Pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # pyproject.toml advertises both 3.11 and 3.12 support. Run pytest
+    # on both so a 3.12-specific bug can't slip through. Lint and
+    # typecheck stay on 3.11 (single stable tool version), and
+    # desloppify stays on 3.11 to keep its objective score reproducible
+    # (see AGENTS.md §"Note — Python version and desloppify scores").
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install deps
