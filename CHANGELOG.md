@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Dependabot weekly config with grouped updates.
 - Added `CODEOWNERS` for security and CI paths.
 
+## [1.6.1] — 2026-07-02
+
+### Fixed
+- `delegate_external_task` pseudo-tool is now visible to the LLM. The handler (`_handle_delegate_external_task_tool`) and dispatch (`elif tc.name == "delegate_external_task"`) were previously unreachable because `DELEGATE_EXTERNAL_TASK_SCHEMA` was never appended to the tool list in `_build_tools_schema`. The schema is now imported and wired in `rikugan/agent/loop.py` (C.4 final step).
+
 ## [1.5.0] — 2026-06-29
 
 ### Added
