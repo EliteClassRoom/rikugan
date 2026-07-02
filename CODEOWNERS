@@ -1,0 +1,39 @@
+# CODEOWNERS for Rikugan
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Default owner for the fork. When a PR lacks an explicit owner match,
+# @tuna1999 is requested for review so no change lands silently.
+
+# ── Default owner (catches everything not listed below) ──────────────
+* @tuna1999
+
+# ── CI/CD pipeline ────────────────────────────────────────────────────
+# Workflow + CI scripts + dependabot config are infrastructure changes
+# with broad blast radius — gate on maintainer review.
+#   - release.yml gates every published artifact
+#   - dependabot.yml controls dep PR cadence
+#   - build_release.py / validate_archive.py drive the publish step
+/.github/ @tuna1999
+/scripts/ @tuna1999
+/ci-local.sh @tuna1999
+/ci-local.ps1 @tuna1999
+
+# ── Security-critical code paths ──────────────────────────────────────
+# mutate database, run user-supplied Python scripts, sanitize
+# binary→prompt injection surface. Hard requirement that security
+# reviewers see every PR touching these paths.
+/rikugan/agent/mutation.py @tuna1999
+/rikugan/agent/script_guard.py @tuna1999
+/rikugan/core/sanitize.py @tuna1999
+/rikugan/constants.py @tuna1999
+
+# ── Python coding-style & lint config ────────────────────────────────
+# Bumping lint rules or line-length sends a ripple through every file.
+/pyproject.toml @tuna1999
+/ruff.toml @tuna1999
+/.ruff.toml @tuna1999
+
+# ── Release metadata (must stay in sync across the 3 sources) ────────
+# release.yml verify job enforces sync, but PR-time review catches
+# accidental bumps.
+/ida-plugin.json @tuna1999
