@@ -23,9 +23,15 @@ Hậu quả: khi user dùng Bulk Rename widget, agent sinh tên `snake_case`; kh
 thường, agent sinh `PascalCase` → **cùng một IDB có 2 phong cách tên lộn xộn**,
 không thể undo tự động vì IDA lưu tên vào database.
 
-Ngoài ra, quy chuẩn hiện tại chỉ **3 dòng** (`RENAMING_SECTION` dòng 49-63),
-chỉ cover 3 loại đối tượng (function/global/struct), thiếu edge case và quy tắc
-khi thiếu evidence.
+Ngoài ra, quy chuẩn hiện tại chỉ **3 quy tắc naming** (`RENAMING_SECTION`
+dòng 49-63, phần convention chỉ 3 dòng 60-62), chỉ cover 3 loại đối tượng
+(function/global/struct), thiếu edge case và quy tắc khi thiếu evidence.
+
+**Lưu ý bug hiện có:** `RENAMING_SECTION` dòng 56 và `research.py:158`/
+`exploration_mode.py:300` reference tool `rename_multi_variables`, nhưng tool
+này **không tồn tại** trong `rikugan/ida/tools/` (chỉ có `rename_function`,
+`rename_variable`, `rename_address`). Đây là tool ma được kế thừa — baseline
+mới phải **loại bỏ** reference này, không kế thừa bug.
 
 ## Decisions (đã chốt qua brainstorming)
 
@@ -404,7 +410,8 @@ RENAMING_SECTION = """\
   the function's purpose. Evidence = decompiled code + xrefs + string refs.
 - Do not rename without evidence.
 - Rename in semantic batches: all network vars together, all crypto vars
-  together, etc. Use rename_multi_variables when available.
+  together, etc. Use `rename_variable` per-variable (batch manually —
+  `rename_multi_variables` does NOT exist in the current toolset).
 - After renaming a batch: re-decompile once to verify the renamed code
   reads correctly.
 - Naming conventions:
@@ -465,12 +472,23 @@ Xác nhận skill mới được discover với đúng slug `naming-convention`.
 
 ```python
 def test_bulk_renamer_prompts_use_pascalcase(self):
-    """Bulk renamer must NOT use snake_case (regression: was snake_case)."""
+    """Bulk renamer must use PascalCase, not snake_case (regression guard).
+
+    Checks the EXACT original snake_case phrases so the test fails loudly if
+    anyone reverts. Positive checks confirm the prompts actively enforce
+    PascalCase. Avoids brittle substring checks on the word "snake_case"
+    (which legitimately appears in "NEVER snake_case" guidance).
+    """
     from rikugan.agent.bulk_renamer import QUICK_ANALYSIS_PROMPT, DEEP_ANALYSIS_PROMPT
-    assert "snake_case naming convention" not in QUICK_ANALYSIS_PROMPT
-    assert "snake_case convention" not in DEEP_ANALYSIS_PROMPT
+    # Negative: original snake_case directives must be gone (exact phrases)
+    assert "Use snake_case naming convention" not in QUICK_ANALYSIS_PROMPT
+    assert "using snake_case convention" not in DEEP_ANALYSIS_PROMPT
+    # Positive: PascalCase is now the stated convention
     assert "PascalCase" in QUICK_ANALYSIS_PROMPT
     assert "PascalCase" in DEEP_ANALYSIS_PROMPT
+    # Positive: prompts actively forbid snake_case
+    assert "NEVER snake_case" in QUICK_ANALYSIS_PROMPT
+    assert "NEVER snake_case" in DEEP_ANALYSIS_PROMPT
 ```
 
 ## Validation & verification
@@ -499,6 +517,7 @@ def test_bulk_renamer_prompts_use_pascalcase(self):
 | **Bulk_renamer prompt dài hơn** (~100 token) | THẤP | Acceptable — bulk rename batch vốn đã lớn (180k chars cap). |
 | **LLM không tuân thủ PascalCase** dù prompt rõ | THẤP | Hành vi LLM, không phải bug code. Confidence placeholder + re-decompile verify là safety net. |
 | **`Unknown_` không match `_AUTO_NAME_PATTERNS`** → bulk_renamer skip | **CÓ Ý CHỦ ĐẠO** | Feature: analyst rename `Unknown_` thủ công khi có evidence mới. Future enhancement: thêm pattern tuỳ chọn. |
+| **`rename_multi_variables` là tool ma** (không implement) | **CAO** | Baseline mới **loại bỏ** reference. Không kế thừa bug. Nếu sau này cần bulk variable rename, implement tool thật rồi mới reference lại. |
 
 ## Backward compatibility
 
