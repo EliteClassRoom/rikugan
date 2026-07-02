@@ -8,6 +8,28 @@ verify the widget's logic by introspecting the mock state.
 
 The dispatcher itself is mocked so no subprocess or HTTP is exercised
 — those have their own integration tests.
+
+================================================================
+ORPHANED TESTS — see rikugan/issues tracking the rewrite task
+----------------------------------------------------------------
+The a2a_widget threading model was refactored from PySide6
+``QThread`` / ``_A2AWorker(QObject)`` to stdlib ``threading.Thread``
+with a queue-polling ``_A2ATaskRunner``. The tests in this file were
+NOT updated and still patch ``QThread`` / import ``_A2AWorker``,
+which no longer exist on the module. They fail at collection /
+import with ``AttributeError`` / ``ImportError`` rather than testing
+anything.
+
+These tests are excluded from CI via
+``pytest --ignore=tests/ui/test_a2a_widget.py``
+(see ``.github/workflows/ci.yml`` ``Run tests`` step). They still
+run locally — devs fixing the a2a_widget rewrite should iterate
+with ``pytest tests/ui/test_a2a_widget.py -v`` and remove the
+module-level skip below once the new threading model has tests
+that match it.
+
+Tracking issue: https://github.com/EliteClassRoom/rikugan/issues/3
+================================================================
 """
 
 from __future__ import annotations
@@ -17,6 +39,18 @@ import sys
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+# Module-level skip so the file is harmless when run directly:
+# ``pytest tests/ui/test_a2a_widget.py`` exits clean with skip
+# reasons, no AttributeError noise. Remove this once the tests are
+# rewritten for the threading.Thread + _A2ATaskRunner API and the
+# ignore flag in ci.yml is dropped.
+pytestmark = pytest.mark.skip(
+    reason="orphaned tests: see file docstring; a2a_widget API refactored "
+    "from QThread/_A2AWorker to threading.Thread/_A2ATaskRunner",
+)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -35,10 +69,14 @@ def _build_widget_with_mocks(agents: list | None = None) -> tuple:
     from rikugan.ui.a2a_widget import A2ABridgeWidget
 
     if agents is None:
-        agents = [ExternalAgentConfig(
-            name="claude", transport="subprocess", endpoint="claude",
-            capabilities=["code_generation"],
-        )]
+        agents = [
+            ExternalAgentConfig(
+                name="claude",
+                transport="subprocess",
+                endpoint="claude",
+                capabilities=["code_generation"],
+            )
+        ]
 
     fake_dispatcher = MagicMock()
     fake_dispatcher.discover.return_value = agents
@@ -49,6 +87,7 @@ def _build_widget_with_mocks(agents: list | None = None) -> tuple:
     w = A2ABridgeWidget.__new__(A2ABridgeWidget)
     # Initialize the QObject base so signals work.
     from rikugan.ui.qt_compat import QObject
+
     QObject.__init__(w)
 
     w._dispatcher = fake_dispatcher
@@ -112,10 +151,7 @@ class TestRefreshAgents(unittest.TestCase):
         # send button was disabled (call_count >= 1 with falsy arg)
         # We use ``not c.args[0]`` instead of ``is False`` because
         # MagicMock doesn't always preserve identity for booleans.
-        disabled_calls = [
-            c for c in w._send_btn.setEnabled.call_args_list
-            if c.args and not c.args[0]
-        ]
+        disabled_calls = [c for c in w._send_btn.setEnabled.call_args_list if c.args and not c.args[0]]
         self.assertGreaterEqual(len(disabled_calls), 1)
 
     def test_refresh_with_agents_enables_send(self) -> None:
@@ -145,7 +181,6 @@ class TestRefreshAgents(unittest.TestCase):
         mocks["dispatcher"].discover.assert_not_called()
 
 
-
 class TestSendClick(unittest.TestCase):
     def test_send_with_empty_task_does_nothing(self) -> None:
         w, _ = _build_widget_with_mocks()
@@ -163,6 +198,7 @@ class TestSendClick(unittest.TestCase):
 
     def test_send_appends_history_row(self) -> None:
         from rikugan.ui.a2a_widget import _HistoryRow
+
         w, _ = _build_widget_with_mocks([_FakeAgent()])
         w._task_edit.toPlainText.return_value = "summarize the binary"
         # Mock QThread so we don't actually spin a thread
@@ -278,9 +314,7 @@ class TestCancelHandler(unittest.TestCase):
         w._history_table.item.return_value = item_mock
         # And we need a real cancel_event, not a mock, to verify
         # ``.set()`` was actually called.
-        w._inflight[task_id] = (
-            _thread, _worker, threading.Event()
-        )
+        w._inflight[task_id] = (_thread, _worker, threading.Event())
         _t, _w, real_cancel = w._inflight[task_id]
         w._on_cancel_clicked()
         self.assertTrue(real_cancel.is_set())
@@ -311,12 +345,14 @@ class TestHistoryRowModel(unittest.TestCase):
 
     def test_status_defaults_to_queued(self) -> None:
         from rikugan.ui.a2a_widget import _HistoryRow
+
         row = _HistoryRow(task_id="abc", agent_name="claude", task_excerpt="x")
         self.assertEqual(row.status, "queued")
         self.assertEqual(row.result_text, "")
         self.assertEqual(row.error_text, "")
         # started_at is a recent timestamp
         import time
+
         self.assertLess(time.time() - row.started_at, 5.0)
 
 
@@ -325,11 +361,10 @@ class TestWorker(unittest.TestCase):
 
     def test_worker_stores_arguments(self) -> None:
         from rikugan.ui.a2a_widget import _A2AWorker
+
         cancel = threading.Event()
         fake_dispatcher = MagicMock()
-        w = _A2AWorker(
-            fake_dispatcher, "claude", "do thing", "ctx", cancel, "tid-1"
-        )
+        w = _A2AWorker(fake_dispatcher, "claude", "do thing", "ctx", cancel, "tid-1")
         self.assertEqual(w._agent_name, "claude")
         self.assertEqual(w._task, "do thing")
         self.assertEqual(w._include_context, "ctx")
@@ -339,12 +374,11 @@ class TestWorker(unittest.TestCase):
     def test_worker_run_emits_started_output_completed(self) -> None:
         from rikugan.agent.turn import TurnEvent, TurnEventType
         from rikugan.ui.a2a_widget import _A2AWorker
+
         cancel = threading.Event()
 
         def fake_run(agent_name, task, **kwargs):
-            yield TurnEvent(
-                type=TurnEventType.TEXT_DELTA, text="hello"
-            )
+            yield TurnEvent(type=TurnEventType.TEXT_DELTA, text="hello")
             return "final result"
 
         fake_dispatcher = MagicMock()
@@ -365,6 +399,7 @@ class TestWorker(unittest.TestCase):
 
     def test_worker_run_emits_failed_on_exception(self) -> None:
         from rikugan.ui.a2a_widget import _A2AWorker
+
         cancel = threading.Event()
         fake_dispatcher = MagicMock()
         fake_dispatcher.run_task.side_effect = RuntimeError("boom")
