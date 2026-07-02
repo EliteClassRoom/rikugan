@@ -50,9 +50,30 @@ jobs:
 
           VERSION="${TAG#v}"
 
-          PLUGIN_VERSION=$(python -c "import json; print(json.load(open('ida-plugin.json'))['plugin']['version'])")
-          if [ "$VERSION" != "$PLUGIN_VERSION" ]; then
-            echo "::error::Tag '$TAG' (→ version '$VERSION') does not match ida-plugin.json '$PLUGIN_VERSION'"
+          # Version must agree in ALL THREE sources, per the release flow
+          # documented in CLAUDE.md ("Bump version ở cả 3 nguồn (sync)").
+          # Catches drift between ida-plugin.json (HCLI metadata),
+          # pyproject.toml (PEP 621), and rikugan/constants.py (runtime
+          # PLUGIN_VERSION shown in UI / logs).
+          PLUGIN_JSON_VERSION=$(python -c "import json; print(json.load(open('ida-plugin.json'))['plugin']['version'])")
+          PYPROJECT_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          CONSTANTS_VERSION=$(python -c "
+          import re
+          src = open('rikugan/constants.py').read()
+          m = re.search(r'^PLUGIN_VERSION\\s*=\\s*[\"\\']([^\"\\']+)[\"\\']', src, re.MULTILINE)
+          print(m.group(1) if m else '')
+          ")
+
+          if [ "$VERSION" != "$PLUGIN_JSON_VERSION" ]; then
+            echo "::error::Tag '$TAG' (→ version '$VERSION') does not match ida-plugin.json '$PLUGIN_JSON_VERSION'"
+            exit 1
+          fi
+          if [ "$VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "::error::Tag '$TAG' (→ version '$VERSION') does not match pyproject.toml '$PYPROJECT_VERSION' — bump pyproject.toml to '$VERSION'"
+            exit 1
+          fi
+          if [ "$VERSION" != "$CONSTANTS_VERSION" ]; then
+            echo "::error::Tag '$TAG' (→ version '$VERSION') does not match rikugan/constants.py PLUGIN_VERSION '$CONSTANTS_VERSION' — bump constants.py to '$VERSION'"
             exit 1
           fi
 
@@ -65,7 +86,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
-          echo "::notice::Parsed: tag=$TAG, version=$VERSION, is_prerelease=$IS_PRERELEASE"
+          echo "::notice::Parsed: tag=$TAG, version=$VERSION (synced in ida-plugin.json, pyproject.toml, rikugan/constants.py), is_prerelease=$IS_PRERELEASE"
 
       - name: Re-run CI checks (inline)
         run: |
