@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover
     QPalette = None  # type: ignore[assignment]
     _HAS_QT = False
 
-from .manager import _blend_hex, _hex_luminance
+from .manager import blend_hex, hex_luminance
 from .tokens import ThemeTokens
 
 # Fixed reference hues for semantic tokens.
@@ -62,13 +62,13 @@ def _read_qpalette_colors(source: Any) -> dict[str, str]:
 def _derive_semantic_tokens(qp_colors: dict[str, str]) -> dict[str, str]:
     text = qp_colors.get("text", "#000000")
     alt_base = qp_colors.get("alt_base", "#000000")
-    is_dark = _hex_luminance(qp_colors.get("window", "#000000")) < 0.5
+    is_dark = hex_luminance(qp_colors.get("window", "#000000")) < 0.5
     amount = 0.15 if is_dark else 0.35
 
     return {
-        "success": _blend_hex(_SUCCESS_BASE, text, amount),
-        "warning": _blend_hex(_WARNING_BASE, text, amount),
-        "error": _blend_hex(_ERROR_BASE, text, amount),
+        "success": blend_hex(_SUCCESS_BASE, text, amount),
+        "warning": blend_hex(_WARNING_BASE, text, amount),
+        "error": blend_hex(_ERROR_BASE, text, amount),
         "code_text": text,
         "code_bg": alt_base,
     }
@@ -89,15 +89,15 @@ def _derive_interaction_tokens(qp_colors: dict[str, str]) -> dict[str, str]:
     text = qp_colors.get("text", "#000000")
     window = qp_colors.get("window", "#ffffff")
     highlight = qp_colors.get("highlight", "#0e639c")
-    is_dark = _hex_luminance(window) < 0.5
+    is_dark = hex_luminance(window) < 0.5
 
     muted_ref = _MUTED_DARK if is_dark else _MUTED_LIGHT
-    selection = highlight if is_dark else _blend_hex(_ACCENT_BASE, window, 0.78)
+    selection = highlight if is_dark else blend_hex(_ACCENT_BASE, window, 0.78)
 
     return {
-        "accent": _blend_hex(_ACCENT_BASE, text, 0.15 if is_dark else 0.35),
+        "accent": blend_hex(_ACCENT_BASE, text, 0.15 if is_dark else 0.35),
         "selection": selection,
-        "muted_text": _blend_hex(muted_ref, text, 0.2),
+        "muted_text": blend_hex(muted_ref, text, 0.2),
     }
 
 

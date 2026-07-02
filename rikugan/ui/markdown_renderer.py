@@ -145,7 +145,7 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
     """
     del source  # unused; kept for API parity
     from .styles import is_host_theme
-    from .theme.manager import ThemeManager, _blend_hex
+    from .theme.manager import ThemeManager, blend_hex
 
     if is_host_theme():
         # Minimal host-friendly defaults — Qt picks up the host's
@@ -165,11 +165,11 @@ def _build_theme_styles(source: Any = None) -> dict[str, str]:
         }
 
     tokens = ThemeManager.instance().tokens()
-    code_bg = _blend_hex(tokens.base, tokens.window, 0.15)
-    inline_fg = _blend_hex(tokens.highlight, tokens.text, 0.3)
-    border = _blend_hex(tokens.mid, tokens.window, 0.35)
-    heading = _blend_hex(tokens.highlight, tokens.text, 0.15)
-    muted_text = _blend_hex(tokens.text, tokens.window, 0.45)
+    code_bg = blend_hex(tokens.base, tokens.window, 0.15)
+    inline_fg = blend_hex(tokens.highlight, tokens.text, 0.3)
+    border = blend_hex(tokens.mid, tokens.window, 0.35)
+    heading = blend_hex(tokens.highlight, tokens.text, 0.15)
+    muted_text = blend_hex(tokens.text, tokens.window, 0.45)
 
     return {
         "inline_code_style": (

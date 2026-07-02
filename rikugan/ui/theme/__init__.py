@@ -5,6 +5,6 @@ Public entry points:
 - ThemeMode (enum)
 - ThemeTokens (frozen dataclass)
 - is_dark_tokens(tokens) -> bool
-- _blend_hex(h1, h2, t) -> str
-- _hex_luminance(hex) -> float
+- blend_hex(h1, h2, t) -> str
+- hex_luminance(hex) -> float
 """

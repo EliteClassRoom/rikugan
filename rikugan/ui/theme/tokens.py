@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-def _hex_luminance(hex_color: str) -> float:
+def hex_luminance(hex_color: str) -> float:
     """sRGB-linearized luminance for a ``#rrggbb`` color (0..1).
 
     Uses the IEC 61966-2-1 EOTF inverse + BT.709 luminance
@@ -88,4 +88,4 @@ def is_dark_tokens(tokens: ThemeTokens) -> bool:
     """Return True when the token's window color is dark (luminance < 0.5)."""
     if not (len(tokens.window) == 7 and tokens.window.startswith("#")):
         return False
-    return _hex_luminance(tokens.window) < 0.5
+    return hex_luminance(tokens.window) < 0.5

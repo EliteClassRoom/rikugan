@@ -67,10 +67,10 @@ def _tab_label():
     falls under WCAG AA. We shift the blend toward ``text`` (0.35) so
     unselected tabs stay readable in both light and dark modes.
     """
-    from .theme.manager import _blend_hex
+    from .theme.manager import blend_hex
 
     t = ThemeManager.instance().tokens()
-    return _blend_hex(t.text, t.mid, 0.35)
+    return blend_hex(t.text, t.mid, 0.35)
 
 
 def _small_btn_style() -> str:
@@ -83,10 +83,10 @@ def _small_btn_style() -> str:
 
 
 def _cancel_btn_style() -> str:
-    from .theme.manager import _blend_hex
+    from .theme.manager import blend_hex
 
     t = ThemeManager.instance().tokens()
-    danger_hover = _blend_hex(t.alt_base, t.error, 0.3)
+    danger_hover = blend_hex(t.alt_base, t.error, 0.3)
     return (
         f"QPushButton {{ background: {t.alt_base}; color: {t.error}; border: 1px solid {t.error}; "
         f"border-radius: 6px; padding: 4px; font-size: 11px; }}"
@@ -378,13 +378,13 @@ class RikuganPanelCore(QWidget):
 
     def _dependency_banner_style(self) -> str:
         """Themed QSS for the yellow dependency-warnings banner."""
-        from .theme.manager import _blend_hex
+        from .theme.manager import blend_hex
 
         t = ThemeManager.instance().tokens()
         # Derive a warning pair: muted amber background, brighter amber border.
-        warn_bg = _blend_hex(t.base, t.error, 0.2)  # dark amber
-        warn_fg = _blend_hex(t.error, t.highlight_text, 0.4)
-        warn_border = _blend_hex(t.error, t.highlight, 0.4)
+        warn_bg = blend_hex(t.base, t.error, 0.2)  # dark amber
+        warn_fg = blend_hex(t.error, t.highlight_text, 0.4)
+        warn_border = blend_hex(t.error, t.highlight, 0.4)
         return (
             f"QLabel#dependency_banner {{"
             f"background: {warn_bg}; color: {warn_fg}; "

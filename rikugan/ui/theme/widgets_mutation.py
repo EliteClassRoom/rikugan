@@ -115,9 +115,9 @@ def _tool_approval_always_btn_style() -> str:
     the two green approval buttons are visually distinct, not a misclick trap."""
     t = _tokens()
     # Blend success toward dark for a deeper green that still reads as "allow".
-    from .manager import _blend_hex
+    from .manager import blend_hex
 
-    always_bg = _blend_hex(t.success, t.dark, 0.45)
+    always_bg = blend_hex(t.success, t.dark, 0.45)
     return (
         f"QToolButton {{ background: {always_bg}; color: #ffffff; border: none; "
         f"border-radius: 4px; padding: 4px 16px; font-size: inherit; font-weight: bold; }}"

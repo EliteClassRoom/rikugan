@@ -7,8 +7,8 @@ The manager owns the current ThemeMode and exposes:
 - set_mode(mode): change mode (triggers debounced QSS rebuild)
 
 Helpers (private/public):
-- _hex_luminance(hex): sRGB-linearized luminance (IEC 61966-2-1)
-- _blend_hex(h1, h2, t): linear interpolation between two #rrggbb colors
+- hex_luminance(hex): sRGB-linearized luminance (IEC 61966-2-1)
+- blend_hex(h1, h2, t): linear interpolation between two #rrggbb colors
 - blend_tokens(a, b, t): linear interpolation between two token sets
 - format_template(s, mapping): str.format with {placeholders}
 - is_dark_tokens(tokens): True when tokens.window is dark (lum < 0.5)
@@ -36,7 +36,7 @@ from .palette_light import LIGHT_TOKENS
 from .tokens import (  # noqa: F401 — re-exported
     ThemeMode,
     ThemeTokens,
-    _hex_luminance,
+    hex_luminance,
     is_dark_tokens,
 )
 
@@ -60,8 +60,8 @@ logger = get_logger()
 
 # === Helpers (public) ===
 #
-# ``_hex_luminance`` lives in ``.tokens`` (re-exported above) so the
-# leaf module is the single source of truth. ``_blend_hex`` is defined
+# ``hex_luminance`` lives in ``.tokens`` (re-exported above) so the
+# leaf module is the single source of truth. ``blend_hex`` is defined
 # here because ``palette_ida`` imports it during its own module load
 # and would create a cycle if it were moved into ``.tokens``.
 
@@ -93,7 +93,7 @@ def _linear_rgb_to_hex(rgb: tuple[float, float, float]) -> str:
     return f"#{_linear_to_srgb(r):02x}{_linear_to_srgb(g):02x}{_linear_to_srgb(b):02x}"
 
 
-def _blend_hex(h1: str, h2: str, t: float) -> str:
+def blend_hex(h1: str, h2: str, t: float) -> str:
     """Linearly interpolate two #rrggbb colors in sRGB-linear space.
 
     t=0.0 returns h1, t=1.0 returns h2, t=0.5 is the midpoint. Used by

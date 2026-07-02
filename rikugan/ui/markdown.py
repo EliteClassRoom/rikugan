@@ -23,7 +23,7 @@ import importlib.util as _importlib_util
 import re as _re
 
 from .styles import is_host_theme
-from .theme.manager import ThemeManager, _blend_hex
+from .theme.manager import ThemeManager, blend_hex
 
 # ---------------------------------------------------------------------------
 # Emoji stripping (shared with markdown_renderer.py) — used by the
@@ -146,11 +146,11 @@ def _legacy_theme_styles(source=None) -> dict[str, str]:
         }
 
     tokens = ThemeManager.instance().tokens()
-    code_bg = _CODE_BLOCK_OVERRIDES.get("bg") or _blend_hex(tokens.base, tokens.window, 0.15)
-    inline_fg = _blend_hex(tokens.highlight, tokens.text, 0.3)
-    border = _CODE_BLOCK_OVERRIDES.get("border") or _blend_hex(tokens.mid, tokens.window, 0.35)
+    code_bg = _CODE_BLOCK_OVERRIDES.get("bg") or blend_hex(tokens.base, tokens.window, 0.15)
+    inline_fg = blend_hex(tokens.highlight, tokens.text, 0.3)
+    border = _CODE_BLOCK_OVERRIDES.get("border") or blend_hex(tokens.mid, tokens.window, 0.35)
     text_color = _CODE_BLOCK_OVERRIDES.get("text") or tokens.text
-    heading = _blend_hex(tokens.highlight, tokens.text, 0.15)
+    heading = blend_hex(tokens.highlight, tokens.text, 0.15)
     return {
         "inline_code_style": (
             f"background-color:{code_bg}; color:{inline_fg}; "
