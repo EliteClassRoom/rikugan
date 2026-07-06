@@ -11,7 +11,7 @@ from typing import Any
 
 from rikugan.core.startup_timing import end, start
 from rikugan.ui.panel_core import RikuganPanelCore
-from rikugan.ui.qt_compat import QT_BINDING, QApplication, QVBoxLayout, QWidget
+from rikugan.ui.qt_compat import QApplication, QVBoxLayout, QWidget
 
 from .actions import RikuganUIHooks
 from .session_controller import IdaSessionController
@@ -188,13 +188,11 @@ class RikuganPanel(idaapi.PluginForm):
         t_oncreate = start("ida_form.on_create_total")
 
         t_widget = start("ida_form.to_qt_widget")
-        if QT_BINDING == "PyQt5":
-            self._form_widget = self.FormToPyQtWidget(form)
-        else:
-            try:
-                self._form_widget = self.FormToPySideWidget(form)
-            except Exception:
-                self._form_widget = self.FormToPyQtWidget(form)
+        # IDA ≥ 9.0 ships PySide6; FormToPySideWidget returns the host widget.
+        # (IDA 9.x also exposes FormToPyQtWidget, but it returns the same
+        # PySide6 widget via a shim — mixing it with PyQt5-imported layouts was
+        # the root cause of the QVBoxLayout/PySide6 type-mismatch crash.)
+        self._form_widget = self.FormToPySideWidget(form)
         end("ida_form.to_qt_widget", t_widget)
 
         self._root = QWidget()

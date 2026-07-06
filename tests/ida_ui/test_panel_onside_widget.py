@@ -8,20 +8,12 @@ Root cause: panel.OnCreate branched on QT_BINDING and could select
 FormToPyQtWidget; on IDA 9.x that method returns a PySide6 widget
 (since IDA's PyQt5 is a shim), mismatching a PyQt5 QVBoxLayout.
 
-This test pins the contract: OnCreate always uses FormToPySideWidget.
-
-The second test (``test_path_a_dispatches_to_pyqt_under_buggy_branch``)
-is a *characterization* test for path (a) of the pre-Task-5 branch:
-
-    if QT_BINDING == "PyQt5":
-        self._form_widget = self.FormToPyQtWidget(form)   # ← BUG (path a)
-
-On current ``master`` this test PASSES — proving path (a) calls the wrong
-method. After Task 5 removes the ``if QT_BINDING == "PyQt5"`` branch
-entirely, ``FormToPyQtWidget`` will no longer be called regardless of the
-``QT_BINDING`` value, and this test will FAIL. At that point the Task 5
-implementer must FLIP both assertions (pyside.assert_called /
-pyqt.assert_not_called) to match the new correct behavior.
+After Task 5 of the ``refactor/drop-pyqt5`` plan, the
+``if QT_BINDING == "PyQt5"`` branch is gone: ``OnCreate`` calls
+``FormToPySideWidget(form)`` unconditionally. Both tests in this file
+pin that contract — even when ``_detect_binding`` wrongly returns
+``"PyQt5"`` (e.g., another plugin pre-imported PyQt5), ``OnCreate``
+must not reach for ``FormToPyQtWidget``.
 """
 
 from __future__ import annotations
@@ -66,21 +58,23 @@ sys.modules.setdefault("rikugan.ida.ui.actions", _actions_mod)
 def _run_oncreate_under_stubs(qt_binding: str) -> tuple[mock.MagicMock, mock.MagicMock]:
     """Run ``RikuganPanel.OnCreate`` under the standard stub setup.
 
-    Monkey-patches ``rikugan.ida.ui.panel.QT_BINDING`` (the symbol
-    imported by ``panel.py`` at module load) so each test can drive the
-    ``if QT_BINDING == "PyQt5"`` branch independently of the host's
-    detected binding. Returns ``(pyside_mock, pyqt_mock)`` so callers can
-    assert which conversion method OnCreate selected.
+    The ``qt_binding`` argument is preserved for documentation only —
+    after the PyQt5 drop, ``OnCreate`` ignores the binding entirely and
+    always uses ``FormToPySideWidget``. Each test can still drive the
+    "PyQt5 detected" environment by passing ``qt_binding="PyQt5"`` to
+    prove the contract holds even under hostile binding-detection.
+    Returns ``(pyside_mock, pyqt_mock)`` so callers can assert which
+    conversion method OnCreate selected.
 
     The function exits cleanly even if OnCreate raises partway through
     — the stub setup swallows theme/font work that depends on a real
     IDA runtime; we only care which ``FormTo*Widget`` was invoked.
     """
+    del qt_binding  # post-Task-5: panel.py no longer reads QT_BINDING
     panel_mod = importlib.import_module("rikugan.ida.ui.panel")
     panel = panel_mod.RikuganPanel.__new__(panel_mod.RikuganPanel)
 
     with (
-        mock.patch.object(panel_mod, "QT_BINDING", qt_binding),
         mock.patch.object(panel, "FormToPySideWidget", create=True) as pyside,
         mock.patch.object(panel, "FormToPyQtWidget", create=True) as pyqt,
     ):
@@ -123,26 +117,21 @@ class TestPanelOnCreatePySideOnly(unittest.TestCase):
         pyside.assert_called()
         pyqt.assert_not_called()
 
-    def test_path_a_dispatches_to_pyqt_under_buggy_branch(self) -> None:
-        """QT_BINDING == "PyQt5" path picks FormToPyQtWidget (pre-fix bug).
+    def test_path_a_never_dispatches_to_pyqt_regardless_of_binding(self) -> None:
+        """QT_BINDING == "PyQt5" path must never pick FormToPyQtWidget after the drop.
 
-        Characterization test for path (a) of the pre-Task-5 branch:
-        ``if QT_BINDING == "PyQt5": self.FormToPyQtWidget(form)``. On
-        ``master`` (before Task 5) this branch is reached when
-        ``_detect_binding`` wrongly returns ``"PyQt5"`` because another
-        plugin pre-imported PyQt5. Calling ``FormToPyQtWidget`` on
-        IDA 9.x returns a PySide6 widget (IDA's PyQt5 is a shim),
-        mismatching a PyQt5 ``QVBoxLayout`` and crashing.
-
-        This test PASSES today, pinning the buggy behavior. After Task 5
-        drops the ``if QT_BINDING == "PyQt5"`` branch, this assertion
-        must be FLIPPED (pyside.assert_called /
-        pyqt.assert_not_called) to match the new correct behavior.
+        After the PyQt5 drop, OnCreate must never call FormToPyQtWidget,
+        no matter what QT_BINDING resolves to. Previously this test pinned
+        the buggy pre-Task-5 behavior (path (a) of the
+        ``if QT_BINDING == "PyQt5"`` branch that called
+        ``FormToPyQtWidget(form)``). Task 5 removed that branch entirely
+        and unconditionally calls ``FormToPySideWidget(form)``; calling
+        the old test name with flipped assertions pins the new contract.
         """
         pyside, pyqt = _run_oncreate_under_stubs(qt_binding="PyQt5")
 
-        pyqt.assert_called()
-        pyside.assert_not_called()
+        pyside.assert_called()
+        pyqt.assert_not_called()
 
 
 if __name__ == "__main__":
