@@ -101,7 +101,7 @@ Also supports any OpenAI-compatible endpoint and Ollama for local models.
 
 ## Requirements
 
-- IDA Pro 9.0+ with Hex-Rays decompiler
+- IDA Pro 9.0+ (ships PySide6 / Qt6; PyQt5 is not used) with Hex-Rays decompiler
 - Python 3.10+
 - At least one LLM provider
 - Windows, macOS, or Linux
