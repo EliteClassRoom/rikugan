@@ -7,3 +7,4 @@ tomli>=2.4.0
 cryptography>=49.0.0
 requests>=2.31.0
 html2text>=2025.4.15
+markdown-it-py>=3.0.0
