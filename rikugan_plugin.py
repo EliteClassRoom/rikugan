@@ -17,6 +17,27 @@ import importlib
 import os
 import threading
 
+# Import the stdlib-only early-startup log first so that any failure in
+# ``import idaapi`` (or anything below) is captured in
+# ``~/.idapro/rikugan/early_startup.log``. If the import itself fails the
+# surrounding try/except falls back to a raw ``open(...)`` write so we
+# never lose the diagnostic sink.
+try:
+    from rikugan.core import early_log as _el
+except Exception as _el_exc:  # pragma: no cover — defensive
+    try:
+        import sys as _sys
+        _fallback_dir = os.path.join(os.path.expanduser("~"), ".idapro", "rikugan")
+        os.makedirs(_fallback_dir, exist_ok=True)
+        with open(os.path.join(_fallback_dir, "early_startup.log"), "a", encoding="utf-8") as _fallback_fh:
+            _fallback_fh.write(
+                f"[CRITICAL] rikugan.core.early_log import failed: {type(_el_exc).__name__}: {_el_exc}\n"
+            )
+    except Exception:
+        pass
+    _sys.stderr.write(f"[Rikugan] early_log import failed: {_el_exc}\n")
+    _el = None  # type: ignore[assignment]
+
 import idaapi
 
 # ---------------------------------------------------------------------------
@@ -67,13 +88,21 @@ def _ensure_import_guard() -> None:
     the bypass target with the very hook we are trying to bypass, and
     the guard would silently become a no-op.
     """
+    if _el is not None:
+        _el._early_log("guard:pre_install")
     current = builtins.__import__
     if getattr(current, "_rikugan_guarded", False):
+        if _el is not None:
+            _el._early_log("guard:already_active")
         return
     builtins.__import__ = _guarded_import
+    if _el is not None:
+        _el._early_log("guard:post_install", level="DEBUG")
 
 
 _ensure_import_guard()
+if _el is not None:
+    _el._early_log("module_import:complete")
 
 
 class RikuganPlugmod(idaapi.plugmod_t):
@@ -84,6 +113,8 @@ class RikuganPlugmod(idaapi.plugmod_t):
         self._panel = None
 
     def run(self, arg: int) -> bool:
+        if _el is not None:
+            _el._early_log("plugmod_run:entry")
         _ensure_import_guard()
         self._toggle_panel()
         return True
@@ -115,6 +146,8 @@ class RikuganPlugmod(idaapi.plugmod_t):
         # PySide6/Shiboken6 may have replaced builtins.__import__ since
         # plugin load, and a bare ``from rikugan.… import …`` without
         # protection would re-enter the broken hook.
+        if _el is not None:
+            _el._early_log("toggle_panel:entry")
         _ensure_import_guard()
         # Lazily import startup_timing within toggle_panel so that the
         # plugin module itself does NOT import rikugan.* at load time.
@@ -183,18 +216,26 @@ class RikuganPlugmod(idaapi.plugmod_t):
             _log("_toggle_panel: importing rikugan.ida.ui.panel")
             t_import_panel = _start_phase("toggle.import_panel_module")
             RikuganPanel = importlib.import_module("rikugan.ida.ui.panel").RikuganPanel
+            if _el is not None:
+                _el._early_log("toggle_panel:panel_module_imported")
             _end_phase("toggle.import_panel_module", t_import_panel)
 
             _log("_toggle_panel: creating RikuganPanel()")
             t_construct = _start_phase("toggle.panel_construct")
             self._panel = RikuganPanel()
+            if _el is not None:
+                _el._early_log("toggle_panel:panel_constructed")
             _end_phase("toggle.panel_construct", t_construct)
 
             _log("_toggle_panel: calling show()")
             t_show = _start_phase("toggle.panel_show")
             self._panel.show()
+            if _el is not None:
+                _el._early_log("toggle_panel:panel_shown")
             _end_phase("toggle.panel_show", t_show)
 
+            if _el is not None:
+                _el._early_log("toggle_panel:done")
             _log("_toggle_panel: done")
             _end_phase("toggle.total", t_toggle)
 
@@ -210,6 +251,12 @@ class RikuganPlugmod(idaapi.plugmod_t):
         except Exception as e:
             import sys
             import traceback
+
+            # Flush the early-startup ring buffer + a formatted traceback
+            # to ``early_startup_crash.log`` BEFORE the existing IDA/log
+            # fallback runs. The existing fallback chain is preserved.
+            if _el is not None:
+                _el._early_log_crash(e)
 
             tb_str = traceback.format_exc()
             idaapi.msg(f"[Rikugan] Failed to open panel: {e}\n{tb_str}\n")
@@ -234,6 +281,8 @@ class RikuganPlugin(idaapi.plugin_t):
     wanted_hotkey = "Ctrl+Shift+I"
 
     def init(self) -> idaapi.plugmod_t:
+        if _el is not None:
+            _el._early_log("plugin_init:entry")
         _ver = importlib.import_module("rikugan.constants").PLUGIN_VERSION
         idaapi.msg(f"[Rikugan] Plugin loaded (v{_ver})\n")
         return RikuganPlugmod()
@@ -280,4 +329,6 @@ def _log(msg: str) -> None:
 
 
 def PLUGIN_ENTRY():
+    if _el is not None:
+        _el._early_log("plugin_entry")
     return RikuganPlugin()
