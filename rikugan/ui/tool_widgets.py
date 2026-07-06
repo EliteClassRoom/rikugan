@@ -24,7 +24,6 @@ from .qt_compat import (
     QVBoxLayout,
     QWidget,
     Signal,
-    qt_flags,
 )
 from .styles import (
     get_tool_approval_allow_btn_style,
@@ -564,10 +563,7 @@ class ToolCallWidget(QFrame):
         self._args_label.setObjectName("tool_content")
         self._args_label.setWordWrap(True)
         self._args_label.setTextInteractionFlags(
-            qt_flags(
-                Qt.TextInteractionFlag.TextSelectableByMouse,
-                Qt.TextInteractionFlag.TextSelectableByKeyboard,
-            )
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
         self._detail_layout.addWidget(self._args_label)
 
@@ -582,10 +578,7 @@ class ToolCallWidget(QFrame):
         self._result_label.setObjectName("tool_content")
         self._result_label.setWordWrap(True)
         self._result_label.setTextInteractionFlags(
-            qt_flags(
-                Qt.TextInteractionFlag.TextSelectableByMouse,
-                Qt.TextInteractionFlag.TextSelectableByKeyboard,
-            )
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
         self._result_label.setVisible(False)
         self._detail_layout.addWidget(self._result_label)
