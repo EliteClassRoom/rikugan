@@ -43,9 +43,13 @@ MAX_RETRIES: int = 3
 INITIAL_BACKOFF_SECONDS: float = 1.0
 BACKOFF_MULTIPLIER: float = 2.0
 
-# Module names are [a-z0-9_]+ per spec; we accept that here, and a Sphinx
-# index page contains <a href="ida_typeinf/"> style entries.
-_MODULE_LINK_RE: re.Pattern[str] = re.compile(r'<a\s+href="(?P<module>[a-z0-9_]+)/?"')
+# Module names are [a-z0-9_]+ per spec; we accept that here. The Sphinx
+# index page contains <a href="ida_typeinf/"> entries (plain format) and
+# <a class="reference internal" href="ida_typeinf/index.html"> entries
+# (Sphinx-emitted format with optional anchor fragment). Both forms must
+# be discovered; the optional `(?:/index\.html)?(?:#[^"]*)?/?` suffix
+# group covers both the bare trailing slash and the explicit index page.
+_MODULE_LINK_RE: re.Pattern[str] = re.compile(r'<a[^>]*href="(?P<module>[a-z0-9_]+)(?:/index\.html)?(?:#[^"]*)?/?"')
 
 
 # ---------------------------------------------------------------------------
