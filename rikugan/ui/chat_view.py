@@ -798,6 +798,8 @@ class ChatView(QScrollArea):
             TurnEventType.SUBAGENT_FAILED,
         ):
             self._handle_subagent_event(event)
+        elif etype == TurnEventType.KNOWLEDGE_RETRIEVED:
+            self._handle_knowledge_event(event)
         elif etype == TurnEventType.ERROR:
             self._hide_thinking()
             self._reset_tool_run()
@@ -1069,6 +1071,25 @@ class ChatView(QScrollArea):
             error = event.error or "Unknown error"
             self._insert_widget(SubagentEventWidget("failed", name, error))
         self._scroll_to_bottom()
+
+    def _handle_knowledge_event(self, event: TurnEvent) -> None:
+        """Render the compact ``KNOWLEDGE_RETRIEVED`` indicator.
+
+        Cheap, no scroll: this is a small status pill, not a full
+        message.  Uses the dedicated :class:`KnowledgeContextWidget`
+        so the label reads "Retrieved Knowledge" instead of
+        "Subagent ...".
+        """
+        from .message_widgets import KnowledgeContextWidget
+
+        meta = event.metadata or {}
+        items = meta.get("items", []) or []
+        self._insert_widget(
+            KnowledgeContextWidget(
+                summary=event.text or "",
+                items=items,
+            )
+        )
 
     def _handle_question_event(self, event: TurnEvent) -> None:
         self._hide_thinking()

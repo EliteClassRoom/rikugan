@@ -118,6 +118,31 @@ class RikuganConfig:
     # Allowed: "debug", "info", "warning", "error", "critical", "off".
     ida_output_log_level: str = "warning"
 
+    # ------------------------------------------------------------------
+    # Raw knowledge memory (see rikugan.memory.*)
+    # ------------------------------------------------------------------
+    # Master switch: when False, no JSONL is written, no system-prompt
+    # context is built, and the ``/knowledge`` command reports
+    # "memory disabled". Default True — the feature is opt-out, not
+    # opt-in, because the auto-ingest paths are designed to be no-ops
+    # when no IDB path is set anyway.
+    knowledge_enabled: bool = True
+
+    # When True, every retrieval emits a compact ``KNOWLEDGE_RETRIEVED``
+    # chat indicator (counts + top item titles). The default is False
+    # because the LLM already sees the retrieved-knowledge block in the
+    # system prompt; the UI indicator is a user-facing "what is in
+    # scope right now" affordance.
+    knowledge_show_retrieved_in_chat: bool = False
+
+    # Soft cap on the number of memory items per retrieval.
+    knowledge_max_context_items: int = 12
+
+    # Hard cap on the bytes of the rendered retrieved-knowledge block.
+    # Truncation is applied as a final pass so we never blow out the
+    # system prompt's token budget.
+    knowledge_max_context_chars: int = 12_000
+
     # Startup behavior
     # "all"    — restore every saved session for this database (default, preserves existing behavior)
     # "latest" — restore only the most recent session (opt-in, faster)
@@ -180,6 +205,14 @@ class RikuganConfig:
             errors.append(
                 f"ida_output_log_level '{self.ida_output_log_level}' must be debug|info|warning|error|critical|off"
             )
+        if not isinstance(self.knowledge_enabled, bool):
+            errors.append("knowledge_enabled must be a bool")
+        if not isinstance(self.knowledge_show_retrieved_in_chat, bool):
+            errors.append("knowledge_show_retrieved_in_chat must be a bool")
+        if not (1 <= self.knowledge_max_context_items <= 100):
+            errors.append(f"knowledge_max_context_items {self.knowledge_max_context_items} out of range [1, 100]")
+        if not (1_000 <= self.knowledge_max_context_chars <= 60_000):
+            errors.append(f"knowledge_max_context_chars {self.knowledge_max_context_chars} out of range [1000, 60000]")
         return errors
 
     def save(self, password: str = "") -> None:
@@ -198,6 +231,13 @@ class RikuganConfig:
             # Normalize invalid log verbosity to "warning"
             if self.ida_output_log_level not in ("debug", "info", "warning", "error", "critical", "off"):
                 self.ida_output_log_level = "warning"
+            # Clamp knowledge memory bounds
+            if not isinstance(self.knowledge_enabled, bool):
+                self.knowledge_enabled = True
+            if not isinstance(self.knowledge_show_retrieved_in_chat, bool):
+                self.knowledge_show_retrieved_in_chat = False
+            self.knowledge_max_context_items = max(1, min(100, int(self.knowledge_max_context_items or 12)))
+            self.knowledge_max_context_chars = max(1000, min(60_000, int(self.knowledge_max_context_chars or 12_000)))
 
         os.makedirs(self._config_dir, exist_ok=True)
         # Snapshot current provider into the providers dict before saving
@@ -272,6 +312,10 @@ class RikuganConfig:
             "oauth_consent_accepted",
             "encrypt_api_keys",
             "ida_output_log_level",
+            "knowledge_enabled",
+            "knowledge_show_retrieved_in_chat",
+            "knowledge_max_context_items",
+            "knowledge_max_context_chars",
         ):
             if k in data:
                 val = data[k]

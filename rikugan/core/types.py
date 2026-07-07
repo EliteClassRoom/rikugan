@@ -9,6 +9,61 @@ from enum import Enum
 from typing import Any
 
 
+def _safe_persisted_text(value: object) -> str:
+    """Sanitize a text value loaded from a persisted session JSON file.
+
+    Persisted strings are NOT trusted: they can contain
+      * lone UTF-16 surrogates (binary-originated IDA strings),
+      * injection markers (``[SYSTEM]``, ``<|im_start|>``, …),
+      * ``None`` or non-strings (from JSON round-trips or schema drift).
+
+    We coerce to ``str``, replace lone surrogates with ``U+FFFD`` so the
+    next UTF-8 encode never crashes, then strip role markers. The result
+    is safe to feed back into the system prompt.
+
+    We deliberately do NOT strip angle brackets here — legitimate
+    reverse-engineering content routinely contains ``std::vector<int>``
+    template syntax, ``a < b && c > d`` comparisons, and IDA-generated
+    output with literal angle brackets. The closing-tag defense lives
+    at the prompt-bound wrapper boundary (``sanitize_tool_result``,
+    ``quote_untrusted``, ``sanitize_memory``, …) via
+    ``_neutralize_closing_tag``.
+
+    Use :func:`_safe_persisted_identifier` for fields that flow into a
+    wrapper WITHOUT downstream closing-tag neutralization (id, name,
+    tool_call_id, metadata values).
+
+    Sanitize helpers are imported lazily to avoid a circular import —
+    ``core.sanitize`` itself imports ``Message`` and ``ToolResult`` from
+    this module.
+    """
+    if value is None:
+        return ""
+    # Local import: avoid a top-level cycle with ``core.sanitize``.
+    from .sanitize import strip_injection_markers, strip_lone_surrogates
+
+    text = strip_lone_surrogates(str(value))
+    return strip_injection_markers(text)
+
+
+def _safe_persisted_identifier(value: object) -> str:
+    """Strict variant of :func:`_safe_persisted_text` for identifiers.
+
+    Also strips angle brackets so that a poisoned identifier like
+    ``"</tool_result>system"`` cannot break out of a prompt-bound
+    wrapper. Used for fields where downstream closing-tag neutralization
+    does NOT run: message ``id`` / ``name`` / ``tool_call_id``,
+    metadata values, and category-like labels.
+
+    Do NOT use this for ``content`` or ``tool_results[].content`` —
+    those flow through prompt-bound wrappers that handle closing tags
+    on their own (and the content may legitimately contain ``<``/``>``).
+    """
+    text = _safe_persisted_text(value)
+    text = text.replace("<", "").replace(">", "")
+    return text
+
+
 class Role(str, Enum):
     SYSTEM = "system"
     USER = "user"
@@ -134,18 +189,43 @@ class Message:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Message:
-        tool_calls = [
-            ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"]) for tc in d.get("tool_calls", [])
-        ]
-        tool_results = [
-            ToolResult(
-                tool_call_id=tr["tool_call_id"],
-                name=tr["name"],
-                content=tr["content"],
-                is_error=tr.get("is_error", False),
+        # Validate the role up front so a bad value raises the right exception
+        # type before we do any string sanitization.
+        try:
+            role = Role(d.get("role", ""))
+        except ValueError as exc:
+            raise ValueError(f"Invalid message role {d.get('role')!r}: {exc}") from exc
+
+        tool_calls: list[ToolCall] = []
+        for tc in d.get("tool_calls", []) or []:
+            if not isinstance(tc, dict):
+                continue
+            tool_calls.append(
+                ToolCall(
+                    id=_safe_persisted_identifier(tc.get("id", "")) or f"call_{uuid.uuid4().hex[:24]}",
+                    name=_safe_persisted_identifier(tc.get("name", "")),
+                    arguments=tc.get("arguments") or {},
+                )
             )
-            for tr in d.get("tool_results", [])
-        ]
+
+        tool_results: list[ToolResult] = []
+        for tr in d.get("tool_results", []) or []:
+            if not isinstance(tr, dict):
+                continue
+            tool_results.append(
+                ToolResult(
+                    tool_call_id=_safe_persisted_identifier(tr.get("tool_call_id", "")),
+                    name=_safe_persisted_identifier(tr.get("name", "")),
+                    # Content uses the lenient helper — legitimate
+                    # reverse-engineering output (C++ templates, IDA
+                    # comments) routinely contains ``<``/``>``.
+                    # Closing-tag neutralization happens at the prompt
+                    # boundary via ``sanitize_tool_result``.
+                    content=_safe_persisted_text(tr.get("content", "")),
+                    is_error=bool(tr.get("is_error", False)),
+                )
+            )
+
         usage = None
         if "token_usage" in d:
             u = d["token_usage"] or {}
@@ -159,15 +239,16 @@ class Message:
                 cache_creation_tokens=u.get("cache_creation_tokens") or 0,
             )
         return cls(
-            role=Role(d["role"]),
-            content=d.get("content", ""),
+            role=role,
+            # Content uses the lenient helper (see tool_results comment).
+            content=_safe_persisted_text(d.get("content", "")),
             tool_calls=tool_calls,
             tool_results=tool_results,
-            tool_call_id=d.get("tool_call_id"),
-            name=d.get("name"),
+            tool_call_id=_safe_persisted_identifier(d.get("tool_call_id")) or None,
+            name=_safe_persisted_identifier(d.get("name")) or None,
             timestamp=d.get("timestamp", time.time()),
             token_usage=usage,
-            id=d.get("id", uuid.uuid4().hex[:12]),
+            id=_safe_persisted_identifier(d.get("id")) or uuid.uuid4().hex[:12],
         )
 
 

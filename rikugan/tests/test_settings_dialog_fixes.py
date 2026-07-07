@@ -1766,5 +1766,49 @@ class TestAgentLoopDuplicateToolCallIdGuard(unittest.TestCase):
         self.assertEqual(seen, {"c1"})
 
 
+class TestKnowledgeEnabledSetting(unittest.TestCase):
+    """``knowledge_enabled`` must be discoverable in Settings and persist."""
+
+    def test_default_is_true(self) -> None:
+        from rikugan.core.config import RikuganConfig
+
+        cfg = RikuganConfig()
+        self.assertTrue(cfg.knowledge_enabled)
+
+    def test_checkbox_default_round_trip(self) -> None:
+        from rikugan.core.config import RikuganConfig
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+        config = RikuganConfig()
+        dlg = SettingsDialog(config)
+        try:
+            # Checkbox exists and mirrors the config default.
+            self.assertTrue(hasattr(dlg, "_knowledge_enabled_cb"))
+            self.assertEqual(
+                dlg._knowledge_enabled_cb.isChecked(),
+                config.knowledge_enabled,
+            )
+        finally:
+            dlg.done(0)
+
+    def test_toggle_persists_via_on_accept(self) -> None:
+        from rikugan.core.config import RikuganConfig
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+        config = RikuganConfig()
+        dlg = SettingsDialog(config)
+        try:
+            dlg._knowledge_enabled_cb.setChecked(False)
+            dlg._on_accept()
+            self.assertFalse(config.knowledge_enabled)
+            dlg._knowledge_enabled_cb.setChecked(True)
+            dlg._on_accept()
+            self.assertTrue(config.knowledge_enabled)
+        finally:
+            dlg.done(0)
+
+
 if __name__ == "__main__":
     unittest.main()

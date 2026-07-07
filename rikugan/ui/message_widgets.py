@@ -1377,6 +1377,96 @@ class SubagentEventWidget(QFrame):
             )
 
 
+class KnowledgeContextWidget(QFrame):
+    """Compact indicator for a per-turn ``KNOWLEDGE_RETRIEVED`` event.
+
+    The previous implementation reused :class:`SubagentEventWidget`
+    with a ``status="knowledge"`` string, which produced a misleading
+    ``Subagent "5 memories..." knowledge`` label.  This widget shows
+    a dedicated ``Retrieved Knowledge`` header plus the event summary
+    and up to 3 item labels.
+    """
+
+    _MAX_PREVIEW_ITEMS = 3
+
+    def __init__(
+        self,
+        summary: str,
+        items: list[dict] | None = None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setObjectName("message_tool")
+        self._summary = summary or ""
+        self._items = list(items or [])
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(6)
+
+        self._icon = QLabel("\U0001f50d")  # magnifying glass
+        layout.addWidget(self._icon)
+
+        self._label = QLabel("Retrieved Knowledge")
+        layout.addWidget(self._label)
+
+        preview_bits: list[str] = []
+        for it in self._items[: self._MAX_PREVIEW_ITEMS]:
+            label = (it.get("title") or it.get("name") or it.get("id") or "").strip()
+            if not label:
+                continue
+            kind = (it.get("kind") or "").strip()
+            if kind and kind not in label.lower():
+                preview_bits.append(f"{kind}: {label}")
+            else:
+                preview_bits.append(label)
+        detail_text = ", ".join(preview_bits)
+        if self._summary and detail_text:
+            detail_text = f"{self._summary} — {detail_text}"
+        elif self._summary:
+            detail_text = self._summary
+
+        if detail_text:
+            self._detail = QLabel(detail_text)
+            self._detail.setWordWrap(True)
+            layout.addWidget(self._detail, 1)
+        else:
+            self._detail = None
+
+        self._apply_styles()
+        ThemeManager.instance().themeChanged.connect(self._apply_styles)
+
+    def _apply_styles(self, _tokens: object = None) -> None:
+        tokens = ThemeManager.instance().tokens()
+        color = tokens.highlight
+        self.setStyleSheet(
+            _tool_frame_style(
+                tokens=tokens,
+                accent=color,
+                background=_blend_hex(tokens.alt_base, tokens.mid, 0.85),
+            )
+        )
+        self._icon.setStyleSheet(
+            host_stylesheet(
+                f"color: {color}; font-size: 14px;",
+                f"color: {color}; {_native_text_style(size=14)}",
+            )
+        )
+        self._label.setStyleSheet(
+            host_stylesheet(
+                f"color: {color}; font-weight: bold; font-size: 11px;",
+                f"color: {color}; {_native_text_style(size=11, bold=True)}",
+            )
+        )
+        if self._detail is not None:
+            self._detail.setStyleSheet(
+                host_stylesheet(
+                    f"color: {_subtle_text(tokens)}; font-size: 11px;",
+                    f"color: {_subtle_text(tokens)}; {_native_text_style(size=11)}",
+                )
+            )
+
+
 class ErrorMessageWidget(QFrame):
     """Displays an error message."""
 

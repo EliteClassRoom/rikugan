@@ -98,7 +98,15 @@ class BulkRenamerWidget(QWidget):
         self._filter_edit = QLineEdit()
         self._filter_edit.setPlaceholderText("Filter by name or address...")
         self._filter_edit.setStyleSheet(get_bulk_filter_style())
-        self._filter_edit.textChanged.connect(self._on_filter_changed)
+        # Debounce text changes — running ``_on_filter_changed`` on
+        # every keystroke scans every row.  For large IDBs that scan
+        # is the dominant cost of the filter UI.  A 100ms single-shot
+        # timer coalesces rapid typing into one scan.
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(100)
+        self._filter_timer.timeout.connect(self._on_filter_changed)
+        self._filter_edit.textChanged.connect(self._schedule_filter)
         top_bar.addWidget(self._filter_edit, 1)
 
         self._filter_combo = QComboBox()
@@ -625,8 +633,31 @@ class BulkRenamerWidget(QWidget):
         idx = self._addr_to_entry.get(addr)
         return self._entries[idx] if idx is not None else None
 
+    def _schedule_filter(self, _text: str = "") -> None:
+        """Restart the debounce timer for the text-filter changes.
+
+        Connected to ``self._filter_edit.textChanged``.  The actual
+        scan happens in :meth:`_on_filter_changed` once the timer
+        fires, so a rapid sequence of keystrokes only triggers one
+        table walk.
+        """
+        # Restart the single-shot timer on every keystroke.  A running
+        # single-shot timer resets its deadline on ``.start()`` — that
+        # is the standard Qt debounce idiom.
+        try:
+            self._filter_timer.start()
+        except Exception:
+            # Fallback: run synchronously if the timer object is gone
+            # (e.g. during widget teardown).
+            self._on_filter_changed()
+
     def _on_filter_changed(self) -> None:
-        """Filter table rows based on text filter and combo selection."""
+        """Filter table rows based on text filter and combo selection.
+
+        Skipped during a chunked load (``_loading``) so we don't pay
+        for an O(rows) scan on every chunk.  ``_finish_load`` runs
+        this once after the last chunk is inserted.
+        """
         if self._loading:
             return
 

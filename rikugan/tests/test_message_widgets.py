@@ -212,3 +212,48 @@ class TestAssistantMessageWidgetUI(unittest.TestCase):
         for c in chunks:
             w.append_text(_extract_visible_text(c))
         self.assertEqual(w.full_text(), "I am thinking about code")
+
+
+class TestKnowledgeContextWidget(unittest.TestCase):
+    """The chat indicator for ``KNOWLEDGE_RETRIEVED`` must use a
+    dedicated widget that does NOT render the misleading
+    ``Subagent ... knowledge`` label.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_qapp(self, qapp):
+        self.qapp = qapp
+
+    def test_label_is_retrieved_knowledge_not_subagent(self):
+        from rikugan.ui.message_widgets import KnowledgeContextWidget
+
+        items = [
+            {"kind": "memory", "id": "mem:crypto:0x401000:abc", "title": "RC4 decrypts"},
+            {"kind": "entity", "id": "func:0x401000", "name": "rc4_ksa"},
+            {"kind": "relation", "id": "rel:1:2", "src": "a", "predicate": "calls", "dst": "b"},
+        ]
+        w = KnowledgeContextWidget(
+            summary="5 memories, 2 entities, 4 relations for 0x401000",
+            items=items,
+        )
+        text = w._label.text()
+        self.assertNotIn("Subagent", text)
+        self.assertEqual(text, "Retrieved Knowledge")
+
+    def test_renders_up_to_three_item_labels(self):
+        from rikugan.ui.message_widgets import KnowledgeContextWidget
+
+        items = [
+            {"kind": "memory", "title": "alpha"},
+            {"kind": "memory", "title": "beta"},
+            {"kind": "memory", "title": "gamma"},
+            {"kind": "memory", "title": "delta"},
+        ]
+        w = KnowledgeContextWidget(summary="x", items=items)
+        assert w._detail is not None
+        detail = w._detail.text()
+        self.assertIn("alpha", detail)
+        self.assertIn("beta", detail)
+        self.assertIn("gamma", detail)
+        # Fourth item is dropped to keep the pill compact.
+        self.assertNotIn("delta", detail)

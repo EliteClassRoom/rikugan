@@ -18,13 +18,14 @@ from __future__ import annotations
 
 from typing import Any
 
-# Lazy/optional PySide6 imports — Qt is not required for headless tests.
+# Lazy/optional Qt imports via the shared compatibility layer. Direct
+# PySide6/PyQt5 imports are forbidden in this module — importing Qt6 in a
+# Qt5-based IDA host can crash the process. See ``rikugan/ui/qt_compat.py``.
 try:
-    from PySide6.QtCore import QObject, QTimer, Signal  # type: ignore[import-not-found]
-    from PySide6.QtWidgets import QApplication  # type: ignore[import-not-found]
+    from ..qt_compat import QApplication, QObject, QTimer, Signal
 
     _HAS_QT = True
-except ImportError:  # pragma: no cover — headless fallback
+except (ImportError, ModuleNotFoundError):  # pragma: no cover — headless fallback
     QObject = object  # type: ignore[assignment,misc]
     QTimer = None  # type: ignore[assignment]
     Signal = None  # type: ignore[assignment]

@@ -554,6 +554,17 @@ class SettingsDialog(QDialog):
         )
         behavior_form.addRow(self._preserve_context_cb)
 
+        # --- Raw knowledge memory ---
+        self._knowledge_enabled_cb = QCheckBox("Enable raw knowledge memory")
+        self._knowledge_enabled_cb.setChecked(bool(getattr(self._config, "knowledge_enabled", True)))
+        self._knowledge_enabled_cb.setToolTip(
+            "When enabled, Rikugan writes structured analysis knowledge to\n"
+            "``.rikugan-kb/`` (memories, entities, relations, observations) and\n"
+            "report Markdown under ``notes/reports/`` next to the IDB. Disable\n"
+            "to skip writes entirely and hide the Knowledge tab banner."
+        )
+        behavior_form.addRow(self._knowledge_enabled_cb)
+
         # --- API key encryption ---
         from ..core.crypto import is_available as crypto_available
 
@@ -1318,6 +1329,8 @@ class SettingsDialog(QDialog):
         self._config.font_size_override = self._font_size_spin.value()
         self._config.preserve_context = self._preserve_context_cb.isChecked()
         self._config.oauth_consent_accepted = self._oauth_cb.isChecked()
+        if hasattr(self, "_knowledge_enabled_cb"):
+            self._config.knowledge_enabled = self._knowledge_enabled_cb.isChecked()
         if hasattr(self, "_docs_gate_cb"):
             self._config.require_ida_docs_for_complex_scripts = self._docs_gate_cb.isChecked()
         # Persist the selected theme.  ``_on_theme_changed`` already

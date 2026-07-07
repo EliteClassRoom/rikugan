@@ -309,7 +309,11 @@ def quote_untrusted(content: str, label: str, max_length: int = 0) -> str:
     if not content:
         return content
 
-    text = strip_injection_markers(content)
+    # Strip lone surrogates FIRST — without this the downstream
+    # ``str.encode('utf-8')`` (used by provider HTTP bodies) can crash
+    # even after we have removed the injection markers.
+    text = strip_lone_surrogates(content)
+    text = strip_injection_markers(text)
     if max_length > 0 and len(text) > max_length:
         text = text[:max_length] + "\n... [truncated]"
     text = _neutralize_closing_tag(text, label)
@@ -352,34 +356,35 @@ def sanitize_tool_result(content: str, tool_name: str = "") -> str:
     """Sanitize a tool execution result before feeding it to the LLM."""
     if not content:
         return content
-    text = strip_injection_markers(content)
+    text = strip_lone_surrogates(content)
+    text = strip_injection_markers(text)
     if len(text) > TOOL_RESULT_MAX_CHARS:
         text = text[:TOOL_RESULT_MAX_CHARS] + "\n... [truncated]"
     text = _neutralize_closing_tag(text, "tool_result")
-    return f'{_TOOL_RESULT_PREAMBLE}\n<tool_result name="{_escape_attr(tool_name)}">\n{text}\n</tool_result>'
+    safe_tool_name = _escape_attr(strip_lone_surrogates(strip_injection_markers(tool_name)))
+    return f'{_TOOL_RESULT_PREAMBLE}\n<tool_result name="{safe_tool_name}">\n{text}\n</tool_result>'
 
 
 def sanitize_mcp_result(content: str, server_name: str = "", tool_name: str = "") -> str:
     """Sanitize an MCP server tool result (external/untrusted source)."""
     if not content:
         return content
-    text = strip_injection_markers(content)
+    text = strip_lone_surrogates(content)
+    text = strip_injection_markers(text)
     if len(text) > MCP_RESULT_MAX_CHARS:
         text = text[:MCP_RESULT_MAX_CHARS] + "\n... [truncated]"
     text = _neutralize_closing_tag(text, "mcp_result")
-    return (
-        f"{_MCP_RESULT_PREAMBLE}\n"
-        f'<mcp_result server="{_escape_attr(server_name)}" tool="{_escape_attr(tool_name)}">\n'
-        f"{text}\n"
-        f"</mcp_result>"
-    )
+    safe_server = _escape_attr(strip_lone_surrogates(strip_injection_markers(server_name)))
+    safe_tool = _escape_attr(strip_lone_surrogates(strip_injection_markers(tool_name)))
+    return f'{_MCP_RESULT_PREAMBLE}\n<mcp_result server="{safe_server}" tool="{safe_tool}">\n{text}\n</mcp_result>'
 
 
 def sanitize_binary_context(content: str, context_type: str = "binary_data") -> str:
     """Sanitize binary-derived context injected into the system prompt."""
     if not content:
         return content
-    text = strip_injection_markers(content)
+    text = strip_lone_surrogates(content)
+    text = strip_injection_markers(text)
     if len(text) > BINARY_DATA_MAX_CHARS:
         text = text[:BINARY_DATA_MAX_CHARS] + "\n... [truncated]"
     text = _neutralize_closing_tag(text, context_type)
@@ -390,7 +395,8 @@ def sanitize_memory(content: str) -> str:
     """Sanitize persistent memory (RIKUGAN.md) content for the system prompt."""
     if not content:
         return content
-    text = strip_injection_markers(content)
+    text = strip_lone_surrogates(content)
+    text = strip_injection_markers(text)
     if len(text) > MEMORY_MAX_CHARS:
         text = text[:MEMORY_MAX_CHARS] + "\n... [truncated]"
     text = _neutralize_closing_tag(text, "persistent_memory")

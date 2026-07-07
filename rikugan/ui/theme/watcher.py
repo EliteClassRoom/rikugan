@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import threading
 
-from PySide6.QtCore import QObject, QTimer  # type: ignore[import-not-found]
-from PySide6.QtGui import QPalette  # type: ignore[import-not-found]
-
 from ...core.logging import log_error
+
+# All Qt imports must go through the shared compatibility layer. Direct
+# PySide6/PyQt5 imports would load Qt6 DLLs into a Qt5-based IDA host
+# and crash the process (see ``rikugan/ui/qt_compat.py``).
+from ..qt_compat import QObject, QPalette, QTimer
 from .manager import ThemeManager
 
 

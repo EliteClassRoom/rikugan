@@ -32,8 +32,10 @@ from typing import Any
 
 from ..agent.a2a import A2ADispatcher
 from ..agent.turn import TurnEventType
+from ..core.early_log import _early_log
 from ..core.logging import get_logger
 from .qt_compat import (
+    QAbstractItemView,
     QCheckBox,
     QColor,
     QComboBox,
@@ -310,13 +312,18 @@ class A2ABridgeWidget(QWidget):
     task_dispatched = Signal(str, str, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        _early_log("a2a_widget:init:entry")
         super().__init__(parent)
         self.setObjectName("a2a_bridge_widget")
 
         # One dispatcher shared across this widget's lifetime. The
         # registry is cached on first ``discover()`` so the agents
-        # list only does the heavy work once.
+        # list only does the heavy work once.  The dispatcher
+        # construction itself is cheap (no subprocess bridge, no
+        # ``A2AClient`` yet — those are lazy in the dispatcher).
+        _early_log("a2a_widget:dispatcher:entry")
         self._dispatcher = A2ADispatcher()
+        _early_log("a2a_widget:dispatcher_created")
 
         # task_id → _HistoryRow (only main thread reads/writes)
         self._history: dict[str, _HistoryRow] = {}
@@ -326,25 +333,50 @@ class A2ABridgeWidget(QWidget):
         # a strong reference so the runner isn't GC'd mid-run.
         self._inflight: dict[str, _A2ATaskRunner] = {}
 
+        # Fallback list for ``_target_combo_agents`` lookup when the
+        # qt_stubs don't support userData on QComboBox.addItem. Reset
+        # on every refresh so stale entries don't survive across
+        # agent-list rebuilds.
+        self._target_combo_agents: list[Any] = []
+
         # Poll timer — started on first dispatch, stopped when the
         # last inflight task completes. Runs on the GUI thread and
         # is the only path that touches Qt widgets from runner output.
+        _early_log("a2a_widget:timer:entry")
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(_POLL_INTERVAL_MS)
         _safe_connect(self._poll_timer, "timeout", self._poll_task_events)
+        _early_log("a2a_widget:timer_created")
 
         # Top-level layout
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(8)
 
+        _early_log("a2a_widget:agents_pane:entry")
         root.addWidget(self._build_agents_pane(), stretch=1)
+        _early_log("a2a_widget:agents_pane:done")
+        _early_log("a2a_widget:delegate_pane:entry")
         root.addWidget(self._build_delegate_pane(), stretch=2)
+        _early_log("a2a_widget:delegate_pane:done")
+        _early_log("a2a_widget:history_pane:entry")
         root.addWidget(self._build_history_pane(), stretch=3)
+        _early_log("a2a_widget:history_pane:done")
 
-        # Initial population: discover agents now so the list is
-        # populated before the user clicks anything.
-        QTimer.singleShot(0, self._refresh_agents)
+        # Defer agent discovery: the previous version scheduled
+        # ``QTimer.singleShot(0, self._refresh_agents)`` here, which
+        # ran A2A discovery (PATH checks for ``claude`` / ``codex``,
+        # ``orchestra.toml`` load, optional live HTTP agent-card
+        # fetches) on the main thread the moment the A2A tab was
+        # first activated.  The widget construction itself now only
+        # happens when the user selects the A2A tab (see
+        # ``panel_core._ensure_a2a_tab_initialized``), and we don't
+        # auto-discover even then — the user clicks Refresh.
+        # ``_agent_count_label`` shows 0 and the Send button stays
+        # disabled until a real refresh fills the list.
+        self._agent_count_label.setText("0 agents")
+        self._send_btn.setEnabled(False)
+        _early_log("a2a_widget:init:done")
 
     # -- Pane builders -------------------------------------------------------
 
@@ -362,9 +394,7 @@ class A2ABridgeWidget(QWidget):
         # attach ``SelectionMode`` there (consistent with agent_tree.py
         # and bulk_renamer.py).
         self._agent_list.setSelectionMode(
-            __import__(
-                "rikugan.ui.qt_compat", fromlist=["QAbstractItemView"]
-            ).QAbstractItemView.SelectionMode.SingleSelection
+            QAbstractItemView.SelectionMode.SingleSelection
         )
         _safe_connect(self._agent_list, "itemDoubleClicked", self._on_agent_double_clicked)
         layout.addWidget(self._agent_list, 1)
@@ -458,9 +488,10 @@ class A2ABridgeWidget(QWidget):
         # Same QAbstractItemView-via-base-class trick for the
         # ``SelectionBehavior`` and ``EditTrigger`` enums. The qt_stubs
         # only attach them to the base class.
-        _abstract = __import__("rikugan.ui.qt_compat", fromlist=["QAbstractItemView"]).QAbstractItemView
-        self._history_table.setSelectionBehavior(_abstract.SelectionBehavior.SelectRows)
-        self._history_table.setEditTriggers(_abstract.EditTrigger.NoEditTriggers)
+        self._history_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._history_table.verticalHeader().setVisible(False)
         # Stretch the Result column so long outputs are readable.
         header = self._history_table.horizontalHeader()
@@ -502,6 +533,12 @@ class A2ABridgeWidget(QWidget):
             self._target_combo.clear()
         except RuntimeError:
             return
+        # Reset the stub-fallback list so stale entries from a prior
+        # discovery don't leak into the rebuilt combo.  Real Qt
+        # (``addItem(label, userData=agent)``) does not need this,
+        # but keeping the list empty + repopulating it below also
+        # works for the stub path.
+        self._target_combo_agents = []
         agents = self._dispatcher.discover()
         for agent in agents:
             label = f"{agent.name}  ({agent.transport})"
@@ -520,9 +557,9 @@ class A2ABridgeWidget(QWidget):
                 # Qt.UserRole. The combo's ``itemData(i)`` won't
                 # return it under this fallback — use
                 # ``_target_combo_agents[i]`` for lookup. (See
-                # _lookup_target_agent.)
-                if not hasattr(self, "_target_combo_agents"):
-                    self._target_combo_agents = []
+                # _lookup_target_agent.)  The list is initialised
+                # in ``__init__`` and reset by ``_refresh_agents``
+                # so we just append.
                 self._target_combo_agents.append(agent)
 
         count = len(agents)

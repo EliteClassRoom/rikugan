@@ -41,6 +41,7 @@ class TurnEventType(str, Enum):
     SUBAGENT_COMPLETED = "subagent_completed"
     SUBAGENT_FAILED = "subagent_failed"
     COMMAND_ORCHESTRA = "command_orchestra"
+    KNOWLEDGE_RETRIEVED = "knowledge_retrieved"
 
 
 @dataclass
@@ -392,6 +393,25 @@ class TurnEvent:
         return TurnEvent(
             type=TurnEventType.COMMAND_ORCHESTRA,
             text=message,
+        )
+
+    @staticmethod
+    def knowledge_retrieved(
+        summary: str,
+        counts: dict,
+        items: list[dict] | None = None,
+    ) -> TurnEvent:
+        """Compact notification that retrieval happened this turn.
+
+        ``summary`` is a one-line human-readable description of the
+        retrieved slice (e.g. "5 memories, 2 entities, 4 relations for
+        0x401000"). ``counts`` is a dict the chat widget uses for its
+        badge; ``items`` is a short list of representative titles/ids.
+        """
+        return TurnEvent(
+            type=TurnEventType.KNOWLEDGE_RETRIEVED,
+            text=summary,
+            metadata={"counts": dict(counts or {}), "items": list(items or [])},
         )
 
     # ------------------------------------------------------------------

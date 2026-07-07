@@ -38,10 +38,14 @@ try:
     if os.environ.get("RIKUGAN_HEADLESS", "") in ("1", "yes", "true"):
         _is_headless = True
     elif _ida_kernwin is not None:
-        # If ida_kernwin is present, check IDA batch flags.
+        # If ida_kernwin is present, check IDA batch flags.  A partially
+        # initialized IDA runtime can raise more than ``AttributeError``
+        # here (e.g. ``RuntimeError`` from a half-built ``ida_kernwin``),
+        # so we treat every exception as "headless/batch = unknown ->
+        # default False" instead of letting it bubble up at import time.
         try:
             batch = getattr(_ida_kernwin.cvar, "batch", False)
-        except AttributeError:
+        except Exception:
             batch = False
         _is_headless = bool(batch)
     else:

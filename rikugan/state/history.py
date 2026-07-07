@@ -18,8 +18,18 @@ from typing import Any
 from ..constants import SESSION_SCHEMA_VERSION
 from ..core.config import RikuganConfig
 from ..core.logging import log_debug, log_warning
-from ..core.types import Message
+from ..core.types import (
+    Message,
+    _safe_persisted_identifier,
+    _safe_persisted_text,
+)
 from .session import SessionState
+
+# ``_safe_persisted_text`` / ``_safe_persisted_identifier`` are imported
+# from ``core.types`` (single source of truth). The lenient helper
+# preserves ``<`` / ``>`` for content fields; the strict helper scrubs
+# them for identifiers and metadata values.
+
 
 MANIFEST_FILE = "_session_manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
@@ -82,7 +92,7 @@ class SessionHistory:
         if not os.path.exists(path):
             return {}
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
             log_debug(f"Session manifest corrupt: {exc}")
@@ -114,8 +124,8 @@ class SessionHistory:
         tmp_path = ""
         try:
             fd, tmp_path = tempfile.mkstemp(dir=self._dir, prefix=".manifest_tmp_")
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f, indent=2)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
             os.replace(tmp_path, path)
         except Exception as e:
             log_warning(f"Failed to write session manifest: {e}")
@@ -226,7 +236,7 @@ class SessionHistory:
                 continue
             path = os.path.join(self._dir, fname)
             try:
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     data = json.load(f)
             except (json.JSONDecodeError, OSError) as exc:
                 log_debug(f"Skipping corrupt session JSON {fname}: {exc}")
@@ -289,8 +299,8 @@ class SessionHistory:
         tmp_path = ""
         try:
             fd, tmp_path = tempfile.mkstemp(dir=self._dir, prefix=".session_tmp_")
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f, indent=2)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
             os.replace(tmp_path, path)
         except Exception as e:
             log_warning(f"Failed to save session {session.id}: {e}")
@@ -339,30 +349,85 @@ class SessionHistory:
         _SAVE_EXECUTOR.submit(lambda: None).result(timeout=timeout)
 
     def load_session(self, session_id: str) -> SessionState | None:
-        """Load a session by ID. Returns None if not found or corrupt."""
+        """Load a session by ID. Returns None if not found or corrupt.
+
+        Robustness contract (added by ``.kilo/fixing-plan.md``):
+          * Opens JSON with explicit UTF-8 encoding so binary-originated
+            surrogate halves and embedded NULs survive decode.
+          * Skips individual corrupt message entries instead of aborting
+            the whole restore (so a single poisoned message does not
+            permanently break a session).
+          * Sanitizes ``metadata`` string values (including ``active_goal``)
+            before constructing the ``SessionState``.
+          * Sanitizes subagent log keys.
+        """
         path = os.path.join(self._dir, f"{session_id}.json")
         if not os.path.exists(path):
             return None
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
             log_debug(f"Failed to load session {session_id}: {exc}")
             return None
+
+        # Sanitize metadata — particularly ``active_goal`` which the
+        # system-prompt builder feeds into ``quote_untrusted``. Metadata
+        # values flow into a prompt-bound wrapper without downstream
+        # closing-tag neutralization, so we use the strict helper that
+        # also strips ``<``/``>``.
+        raw_metadata = data.get("metadata") or {}
+        if not isinstance(raw_metadata, dict):
+            raw_metadata = {}
+        safe_metadata: dict[str, str] = {}
+        for k, v in raw_metadata.items():
+            if not isinstance(k, str):
+                continue
+            safe_metadata[_safe_persisted_identifier(k)] = _safe_persisted_identifier(v)
+
         session = SessionState(
-            id=data["id"],
+            id=_safe_persisted_identifier(data.get("id")) or session_id,
             created_at=data.get("created_at", 0),
-            provider_name=data.get("provider_name", ""),
-            model_name=data.get("model_name", ""),
-            idb_path=data.get("idb_path", ""),
-            db_instance_id=data.get("db_instance_id", ""),
+            provider_name=_safe_persisted_identifier(data.get("provider_name", "")),
+            model_name=_safe_persisted_identifier(data.get("model_name", "")),
+            idb_path=_safe_persisted_identifier(data.get("idb_path", "")),
+            db_instance_id=_safe_persisted_identifier(data.get("db_instance_id", "")),
             current_turn=data.get("current_turn", 0),
-            metadata=data.get("metadata", {}),
+            metadata=safe_metadata,
         )
-        for md in data.get("messages", []):
-            session.messages.append(Message.from_dict(md))
-        for key, msg_dicts in data.get("subagent_logs", {}).items():
-            session.subagent_logs[key] = [Message.from_dict(md) for md in msg_dicts]
+
+        # Skip corrupt messages one at a time — a single bad entry must
+        # not abort the entire restore.  ``Message.from_dict`` already
+        # sanitizes content/tool results/tool names.
+        for md in data.get("messages", []) or []:
+            if not isinstance(md, dict):
+                log_warning(f"Skipping non-dict message in session {session_id}")
+                continue
+            try:
+                session.messages.append(Message.from_dict(md))
+            except (KeyError, TypeError, ValueError) as exc:
+                log_warning(f"Skipping corrupt session message in {session_id}: {exc}")
+                continue
+
+        # Subagent logs share the same message shape — sanitize keys and
+        # skip corrupt entries the same way.
+        for raw_key, msg_dicts in (data.get("subagent_logs") or {}).items():
+            if not isinstance(msg_dicts, list):
+                continue
+            safe_key = _safe_persisted_text(raw_key)
+            if not safe_key:
+                continue
+            restored: list[Message] = []
+            for md in msg_dicts:
+                if not isinstance(md, dict):
+                    continue
+                try:
+                    restored.append(Message.from_dict(md))
+                except (KeyError, TypeError, ValueError) as exc:
+                    log_warning(f"Skipping corrupt subagent message in {session_id}/{safe_key}: {exc}")
+                    continue
+            if restored:
+                session.subagent_logs[safe_key] = restored
         return session
 
     def list_sessions(self, idb_path: str = "", db_instance_id: str = "") -> list[dict[str, Any]]:

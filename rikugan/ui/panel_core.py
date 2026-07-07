@@ -6,11 +6,12 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 from ..agent.mutation import MutationRecord
 from ..agent.turn import TurnEvent, TurnEventType
 from ..core.config import RikuganConfig
+from ..core.early_log import _early_log, _early_log_crash
 from ..core.logging import log_debug, log_error, log_info, log_warning
 from ..core.types import Role
 from ..providers.auth_cache import resolve_auth_cached
@@ -187,8 +188,14 @@ class RikuganPanelCore(QWidget):
         tools_form_factory: Callable[..., Any] | None = None,
         parent: QWidget | None = None,
     ):
+        _early_log("panel_core:init:entry")
         super().__init__(parent)
-        self._config = RikuganConfig.load_or_create()
+        try:
+            self._config = RikuganConfig.load_or_create()
+            _early_log("panel_core:config_loaded")
+        except Exception as _exc:
+            _early_log_crash(_exc)
+            raise
         self._use_native_host_theme = use_native_host_theme()
         log_debug(
             f"Config loaded: provider={self._config.provider.name} model={self._config.provider.model}",
@@ -201,7 +208,13 @@ class RikuganPanelCore(QWidget):
         QTimer.singleShot(0, self._resolve_dependency_warnings)
         if self._config.has_encrypted_keys():
             self._prompt_decryption_password()
-        self._ctrl = controller_factory(self._config)
+        try:
+            self._ctrl = controller_factory(self._config)
+            _early_log("panel_core:controller_built")
+        except Exception as _exc:
+            _early_log_crash(_exc)
+            raise
+        _early_log("panel_core:post_controller_fields:entry")
         self._poll_timer: QTimer | None = None
         self._polling = False
         self._pending_answer = False
@@ -218,17 +231,36 @@ class RikuganPanelCore(QWidget):
         self._context_bar: ContextBar | None = None
         self._mutation_panel: MutationLogPanel | None = None
         self._skills_refresh_timer: QTimer | None = None
+        _early_log("panel_core:post_controller_fields:done")
 
-        self._check_oauth_consent()
+        _early_log("panel_core:oauth_consent:entry")
+        try:
+            self._check_oauth_consent()
+        except Exception as _exc:
+            _early_log_crash(_exc)
+            raise
+        _early_log("panel_core:oauth_consent:done")
 
         def _warm_oauth() -> None:
+            _early_log("panel_core:oauth_warm_thread:entry")
             try:
                 resolve_auth_cached()
+                _early_log("panel_core:oauth_warm_thread:done")
             except Exception as e:
+                _early_log(f"panel_core:oauth_warm_thread:error:{type(e).__name__}:{e}")
                 log_debug(f"OAuth warm-up failed: {e}")
 
-        threading.Thread(target=_warm_oauth, daemon=True).start()
-        self._build_ui()
+        _early_log("panel_core:oauth_warm_thread:create")
+        _oauth_thread = threading.Thread(target=_warm_oauth, daemon=True)
+        _early_log("panel_core:oauth_warm_thread:started")
+        _oauth_thread.start()
+        try:
+            _early_log("panel_core:build_ui:about_to_call")
+            self._build_ui()
+            _early_log("panel_core:ui_built")
+        except Exception as _exc:
+            _early_log_crash(_exc)
+            raise
         # Refresh themed widgets when the user switches the active theme.
         # The hookup is narrow on purpose: it only catches the
         # connect-time exceptions (RuntimeError / TypeError when the
@@ -244,7 +276,13 @@ class RikuganPanelCore(QWidget):
         # Honor the persisted theme from config so the user does not
         # have to re-pick their theme on every restart.  Map the
         # legacy config.theme string to the new ThemeMode enum.
-        self._apply_initial_theme_from_config(self._config)
+        try:
+            self._apply_initial_theme_from_config(self._config)
+            _early_log("panel_core:initial_theme_applied")
+        except Exception as _exc:
+            _early_log_crash(_exc)
+            raise
+        _early_log("panel_core:init:done")
 
     @staticmethod
     def _apply_initial_theme_from_config(config: Any) -> None:
@@ -418,14 +456,20 @@ class RikuganPanelCore(QWidget):
     # directly get the themed value at access time.
 
     def _build_ui(self) -> None:
+        _early_log("panel_core:build_ui:entry")
+        _early_log("panel_core:build_ui:set_object_name:entry")
         self.setObjectName("rikugan_panel")
+        _early_log("panel_core:build_ui:set_object_name:done")
 
+        _early_log("panel_core:build_ui:root_layout:entry")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        _early_log("panel_core:build_ui:root_layout:done")
 
         # Top-level mode switcher: Chat | Tools.
         # Hosts may optionally provide tools in a separate form.
+        _early_log("panel_core:build_ui:mode_bar:entry")
         self._mode_bar = QTabBar()
         self._mode_bar.setObjectName("mode_bar")
         self._mode_bar.setStyleSheet("" if self._use_native_host_theme else self._MODE_BAR_STYLE_TEMPLATE)
@@ -437,11 +481,15 @@ class RikuganPanelCore(QWidget):
         if self._tools_form_factory is not None:
             self._mode_bar.setVisible(False)
         layout.addWidget(self._mode_bar)
+        _early_log("panel_core:build_ui:mode_bar:done")
 
         # Stacked content: page 0 = chat, page 1 = tools
+        _early_log("panel_core:build_ui:mode_stack:entry")
         self._mode_stack = QStackedWidget()
         layout.addWidget(self._mode_stack, 1)
+        _early_log("panel_core:build_ui:mode_stack:done")
 
+        _early_log("panel_core:build_ui:dependency_banner:entry")
         self._dependency_banner = QLabel()
         self._dependency_banner.setObjectName("dependency_banner")
         self._dependency_banner.setWordWrap(True)
@@ -451,35 +499,53 @@ class RikuganPanelCore(QWidget):
             layout.insertWidget(1, self._dependency_banner)
         else:
             self._dependency_banner.hide()
+        _early_log("panel_core:build_ui:dependency_banner:done")
 
         # --- Page 0: Chat ---
+        _early_log("panel_core:build_ui:chat_page:entry")
         chat_page = QWidget()
         chat_layout = QVBoxLayout(chat_page)
         chat_layout.setContentsMargins(0, 0, 0, 0)
         chat_layout.setSpacing(0)
+        _early_log("panel_core:build_ui:tab_widget:entry")
         self._build_tab_widget()
+        _early_log("panel_core:build_ui:tab_widget:done")
+        _early_log("panel_core:build_ui:main_splitter:entry")
         self._build_main_splitter(chat_layout)
+        _early_log("panel_core:build_ui:main_splitter:done")
+        _early_log("panel_core:build_ui:create_initial_tab:entry")
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
+        _early_log("panel_core:build_ui:create_initial_tab:done")
+        _early_log("panel_core:build_ui:input_section:entry")
         chat_layout.addWidget(self._build_input_section())
+        _early_log("panel_core:build_ui:input_section:done")
+        _early_log("panel_core:build_ui:mode_stack_chat_page:entry")
         self._mode_stack.addWidget(chat_page)
+        _early_log("panel_core:build_ui:mode_stack_chat_page:done")
 
         # --- Page 1: Tools (lazily populated on first switch) ---
-        self._tools_panel: ToolsPanel | None = ToolsPanel()
-        self._tools_panel.hide_header()
-        if self._tools_form_factory is not None:
-            # Separate tools-form hosts keep a lightweight placeholder in the
-            # stack so page indices stay stable while tools live elsewhere.
-            _tools_placeholder = QWidget()
-            self._mode_stack.addWidget(_tools_placeholder)
-        else:
-            # Embed the tools panel directly in the mode stack.
-            self._mode_stack.addWidget(self._tools_panel)
+        # The ToolsPanel shell is intentionally NOT constructed here.
+        # Doing so would force A2A imports / heavy widget construction
+        # at panel-build time (during the Tools button being pressed
+        # at startup, on the user's main thread).  The actual panel
+        # is created lazily by :meth:`_ensure_tools_panel_created`
+        # the first time the user clicks the Tools button or the
+        # mode bar lands on index 1.  Until then we keep a lightweight
+        # placeholder in the stack so the page index stays stable.
+        _early_log("panel_core:build_ui:tools_panel:placeholder")
+        self._tools_panel: ToolsPanel | None = None
+        self._tools_placeholder = QWidget()
+        self._mode_stack.addWidget(self._tools_placeholder)
         self._tools_tab_index = -1  # kept for IDA compat
+        _early_log("panel_core:build_ui:tools_panel:done")
 
+        _early_log("panel_core:build_ui:context_bar:entry")
         self._context_bar = ContextBar()
         self._context_bar.set_model(self._config.provider.model)
         layout.addWidget(self._context_bar)
+        _early_log("panel_core:build_ui:context_bar:done")
 
+        _early_log("panel_core:build_ui:ui_hooks:entry")
         if self._ui_hooks_factory is not None:
             try:
                 self._ui_hooks = self._ui_hooks_factory(lambda: self)
@@ -488,8 +554,16 @@ class RikuganPanelCore(QWidget):
             except Exception as e:
                 log_debug(f"UI hook setup failed: {e}")
                 self._ui_hooks = None
+        _early_log("panel_core:build_ui:ui_hooks:done")
 
-        self._try_restore_session()
+        try:
+            _early_log("session_restore:entry")
+            self._try_restore_session()
+            _early_log("session_restore:done")
+        except Exception as _exc:
+            _early_log_crash(_exc)
+            raise
+        _early_log("panel_core:build_ui:done")
 
     def _build_tab_widget(self) -> None:
         """Create the tab widget with custom tab bar."""
@@ -1009,6 +1083,24 @@ class RikuganPanelCore(QWidget):
                 self._renamer_engine = None
             self._stop_poll_timer()
             self._stop_skills_refresh_timer()
+            # Stop the knowledge-panel debounce timer so it can't fire
+            # a refresh after the panel is destroyed.
+            timer = getattr(self, "_knowledge_refresh_timer", None)
+            if timer is not None:
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+            # Stop the tools-event poll timer (started lazily by
+            # ``_ensure_tools_panel_created``) so it cannot run on
+            # a torn-down panel.
+            poll_timer = getattr(self, "_tools_poll_timer", None)
+            if poll_timer is not None:
+                try:
+                    poll_timer.stop()
+                except Exception:
+                    pass
+                self._tools_poll_timer = None
             # Detach from ThemeManager.themeChanged so the singleton
             # doesn't keep a dangling reference to this panel alive
             # after teardown.  ``disconnect`` may raise if the panel
@@ -1292,6 +1384,16 @@ class RikuganPanelCore(QWidget):
         if chat_view is None:
             return
         chat_view.handle_event(event)
+        # Side-effects that don't belong in chat_view: refresh the
+        # Knowledge tab on events that imply the store changed.
+        # KNOWLEDGE_RETRIEVED is a READ-SIDE indicator (per-turn context
+        # rebuild) and does NOT mutate the store, so it must not trigger
+        # a refresh.
+        if event.type in (
+            TurnEventType.RESEARCH_NOTE_SAVED,
+            TurnEventType.EXPLORATION_FINDING,
+        ):
+            self._on_knowledge_event_refresh(event.type.value)
         if event.usage:
             # Use prompt_tokens from the event directly — session hasn't
             # been updated yet during streaming, so session.last_prompt_tokens
@@ -1456,16 +1558,24 @@ class RikuganPanelCore(QWidget):
         """Handle the Chat / Tools mode bar switch."""
         self._mode_stack.setCurrentIndex(index)
         if index == 1:
-            self._ensure_tools_initialized()
+            # Lazy: create the shell on first switch, then activate the
+            # currently selected sub-tab.  ``_ensure_tools_panel_created``
+            # is idempotent so calling it here is safe even if the user
+            # already pressed the Tools button before the mode bar
+            # caught up.
+            self._ensure_tools_panel_created()
+            if self._tools_panel is not None:
+                self._activate_tools_tab(self._tools_panel._tabs.currentIndex())
             self._tools_btn.setChecked(True)
         else:
             self._tools_btn.setChecked(False)
 
     def _on_toggle_tools(self) -> None:
         """Toggle the Tools view (IDA-docked or embedded mode tab)."""
-        if self._tools_panel is None:
-            return
-        self._ensure_tools_initialized()
+        # Lazy shell creation runs before we decide to show/hide.  In
+        # the IDA-docked path the panel may already exist (created by
+        # an earlier show_tools_panel call); the helper is idempotent.
+        self._ensure_tools_panel_created()
 
         if self._tools_form is not None:
             # IDA dockable form
@@ -1475,6 +1585,8 @@ class RikuganPanelCore(QWidget):
             else:
                 self._tools_form.show()
                 self._tools_btn.setChecked(True)
+                if self._tools_panel is not None:
+                    self._activate_tools_tab(self._tools_panel._tabs.currentIndex())
         else:
             # Toggle mode bar between Chat (0) and Tools (1)
             current = self._mode_bar.currentIndex()
@@ -1484,10 +1596,21 @@ class RikuganPanelCore(QWidget):
         """Show the tools view and switch to the given tab.
 
         Public API used by IDA actions (Open Tools, Send to Bulk Rename).
+        Lazy-creates the ToolsPanel shell + the requested tab on first
+        invocation so the user only pays the cost of what they actually
+        open.  Subsequent calls reuse the existing widgets.
         """
+        if self._is_shutdown:
+            return
+        _t0 = time.monotonic()
+        self._ensure_tools_panel_created()
         if self._tools_panel is None:
             return
-        self._ensure_tools_initialized()
+
+        # Per-tab init: only build the widget the caller asked for.
+        # ``_ensure_tab_initialized`` is idempotent and is a no-op when
+        # the tab has already been wired up.
+        self._ensure_tab_initialized(tab_index)
 
         if self._tools_form is not None:
             self._tools_form.show()
@@ -1497,57 +1620,286 @@ class RikuganPanelCore(QWidget):
             if hasattr(self._tools_panel, "_tabs"):
                 self._tools_panel._tabs.setCurrentIndex(tab_index)
         self._tools_btn.setChecked(True)
+        _early_log(
+            f"panel_core:show_tools_panel:done:tab={tab_index}:elapsed_ms="
+            f"{int((time.monotonic() - _t0) * 1000)}"
+        )
 
     def show_tools_with_renamer(self, address: int | None = None) -> None:
         """Show the tools panel on the Renamer tab.
 
         If *address* is given, filter and check that function.
         Called from the IDA "Send to Bulk Rename" right-click action.
+
+        The address-based select/filter is deferred if the Renamer tab
+        is still loading functions — the desired address is stored on
+        the panel and applied once ``finish_function_load`` fires.
         """
+        # If the caller hands us an address, stash it BEFORE we ask the
+        # shell to be created so the lazy Renamer initializer can pick
+        # it up and route it to the right place.  The flag is consumed
+        # by ``_ensure_renamer_tab_initialized``.
+        if address is not None:
+            self._renamer_pending_select_address = address
         self.show_tools_panel(tab_index=0)
-        if address is not None and hasattr(self, "_bulk_renamer"):
-            self._bulk_renamer.select_and_filter_address(address)
 
     def _ensure_tools_initialized(self) -> None:
-        """Lazily initialize tools panel contents on first open."""
-        if getattr(self, "_tools_initialized", False):
-            return
+        """Backward-compat: ensure shell + every tab.
+
+        The original Tools-open path called this once and built every
+        tab eagerly.  The lazy version now builds only the requested
+        tabs via :meth:`_ensure_tab_initialized`, but external callers
+        (and tests) may still invoke this method.  We keep it as an
+        idempotent "init the shell + every tab" so existing behaviour
+        does not regress.
+        """
+        self._ensure_tools_panel_created()
         if self._tools_panel is None:
             return
-        self._tools_initialized = True
+        for idx in range(self._tools_panel._tabs.count()):
+            self._ensure_tab_initialized(idx)
 
-        from .agent_tree import AgentTreeWidget
+    def _ensure_tools_panel_created(self) -> None:
+        """Create the ``ToolsPanel`` shell on first Tools access.
+
+        The previous design built the shell during ``_build_ui``,
+        which forced ``ToolsPanel.__init__`` (and its eager A2A
+        import + widget construction) to run on the startup path.
+        Deferring the shell until the user actually wants it keeps
+        Tools-related heavy work off the main startup tick.
+
+        Idempotent — repeated calls are no-ops once the shell exists.
+        Safe to call from any entry point (``_on_mode_changed``,
+        ``_on_toggle_tools``, ``show_tools_panel``).
+        """
+        if self._tools_panel is not None:
+            return
+        if self._is_shutdown:
+            return
+        _t0 = time.monotonic()
+        _early_log("panel_core:_ensure_tools_panel_created:entry")
+        try:
+            self._tools_panel = ToolsPanel()
+            _early_log("panel_core:_ensure_tools_panel_created:constructed")
+            self._tools_panel.hide_header()
+            # Hook per-tab lazy init.  The panel calls back into us
+            # whenever a tab becomes active; we route to the right
+            # per-tab initializer.
+            self._tools_panel.set_tab_activation_callback(self._activate_tools_tab)
+            if self._tools_form_factory is not None:
+                # IDA dockable form factory: leave the placeholder in
+                # the stack alone and create the wrapper, which will
+                # embed ``self._tools_panel`` into its own QWidget.
+                self._tools_form = self._tools_form_factory(self._tools_panel)
+            else:
+                # Embedded mode: replace the placeholder in the
+                # mode stack with the real panel.  Use
+                # ``removeWidget`` (not deleteLater) so the
+                # placeholder is immediately gone instead of
+                # surviving until the next event-loop tick.
+                placeholder_idx = self._mode_stack.indexOf(self._tools_placeholder)
+                if placeholder_idx >= 0:
+                    self._mode_stack.removeWidget(self._tools_placeholder)
+                    self._tools_placeholder.deleteLater()
+                    self._tools_placeholder = None
+                self._mode_stack.insertWidget(placeholder_idx, self._tools_panel)
+            # Shared tools-event poll timer.  Cheap (100ms idle) and
+            # only used by SubagentManager / BulkRenamerEngine events.
+            self._tools_poll_timer = QTimer(self)
+            self._tools_poll_timer.setInterval(100)
+            self._tools_poll_timer.timeout.connect(self._poll_tools_events)
+            self._tools_poll_timer.start()
+        except Exception as e:
+            _early_log_crash(e)
+            log_error(f"ToolsPanel lazy creation failed: {e}")
+            self._tools_panel = None
+            return
+        _early_log(
+            f"panel_core:_ensure_tools_panel_created:done:elapsed_ms="
+            f"{int((time.monotonic() - _t0) * 1000)}"
+        )
+
+    def _activate_tools_tab(self, index: int) -> None:
+        """Lazy-init the tab that became active.
+
+        Hooked from ``ToolsPanel._on_tab_changed``.  Per-tab init is
+        idempotent so back-and-forth tab switching is cheap.  We also
+        guard against ``self._tools_panel`` being ``None`` (e.g. if
+        the callback fires during shutdown).
+        """
+        if self._tools_panel is None:
+            return
+        self._ensure_tab_initialized(index)
+
+    # Per-tab index → initializer name.  Tab order must remain stable:
+    # 0 = Renamer, 1 = Agents, 2 = A2A, 3 = Knowledge.
+    _TAB_INITIALIZERS: ClassVar[dict[int, str]] = {
+        0: "_ensure_renamer_tab_initialized",
+        1: "_ensure_agents_tab_initialized",
+        2: "_ensure_a2a_tab_initialized",
+        3: "_ensure_knowledge_tab_initialized",
+    }
+
+    def _ensure_tab_initialized(self, index: int) -> None:
+        """Dispatch to the per-tab initializer for ``index``.
+
+        Silently no-ops for unknown indices so a future tab addition
+        does not crash callers that ask by index.
+        """
+        method_name = self._TAB_INITIALIZERS.get(index)
+        if method_name is None:
+            return
+        if not hasattr(self, "_tab_initialized_flags"):
+            self._tab_initialized_flags = {}
+        if self._tab_initialized_flags.get(index):
+            return
+        method = getattr(self, method_name, None)
+        if method is None:
+            return
+        _t0 = time.monotonic()
+        try:
+            method()
+            self._tab_initialized_flags[index] = True
+        except Exception as e:
+            log_error(f"Tab {index} initialization failed: {e}")
+            return
+        _early_log(
+            f"panel_core:tab_init:index={index}:elapsed_ms="
+            f"{int((time.monotonic() - _t0) * 1000)}"
+        )
+
+    # -- Per-tab initializers -----------------------------------------------
+
+    def _ensure_renamer_tab_initialized(self) -> None:
+        """Build the bulk renamer widget and wire its signals.
+
+        Function loading is deferred to :meth:`_start_renamer_load`
+        which is called by the tab-activation hook (or by
+        ``show_tools_with_renamer`` before row data is available).
+        """
+        if self._tools_panel is None:
+            return
         from .bulk_renamer import BulkRenamerWidget
 
-        # Agent tree
-        self._agent_tree = AgentTreeWidget()
-        self._agent_tree.cancel_requested.connect(self._on_cancel_agent)
-        self._agent_tree.inject_summary_requested.connect(self._on_inject_summary)
-        self._tools_panel.set_agents_widget(self._agent_tree)
-
-        # Bulk renamer
+        _t0 = time.monotonic()
         self._bulk_renamer = BulkRenamerWidget()
+        _early_log(
+            f"panel_core:_ensure_renamer_tab_initialized:built:elapsed_ms="
+            f"{int((time.monotonic() - _t0) * 1000)}"
+        )
         self._bulk_renamer.start_requested.connect(self._on_renamer_start)
         self._bulk_renamer.pause_requested.connect(self._on_renamer_pause)
         self._bulk_renamer.cancel_requested.connect(self._on_renamer_cancel)
         self._bulk_renamer.undo_requested.connect(self._on_renamer_undo)
         self._bulk_renamer.seek_requested.connect(lambda addr: self._on_renamer_seek(addr))
-        self._bulk_renamer.refresh_requested.connect(self._load_renamer_functions)
+        self._bulk_renamer.refresh_requested.connect(self._start_renamer_load)
         self._tools_panel.set_renamer_widget(self._bulk_renamer)
+        # The activation callback may have fired before this method
+        # completed (the user clicked a tab while we were building
+        # the widget); in that case ``currentChanged`` will not fire
+        # again, so kick the load here.
+        self._start_renamer_load()
 
-        # Create IDA dockable form wrapper if factory is available
-        if self._tools_form_factory is not None and self._tools_form is None:
-            self._tools_form = self._tools_form_factory(self._tools_panel)
+    def _ensure_agents_tab_initialized(self) -> None:
+        """Build the agents tab widget."""
+        if self._tools_panel is None:
+            return
+        from .agent_tree import AgentTreeWidget
 
-        # Populate bulk renamer with functions from the binary.
-        # Defer to next event-loop tick so the panel paints first.
-        QTimer.singleShot(0, self._load_renamer_functions)
+        _t0 = time.monotonic()
+        self._agent_tree = AgentTreeWidget()
+        _early_log(
+            f"panel_core:_ensure_agents_tab_initialized:built:elapsed_ms="
+            f"{int((time.monotonic() - _t0) * 1000)}"
+        )
+        self._agent_tree.cancel_requested.connect(self._on_cancel_agent)
+        self._agent_tree.inject_summary_requested.connect(self._on_inject_summary)
+        self._tools_panel.set_agents_widget(self._agent_tree)
 
-        # Start tools polling timer
-        self._tools_poll_timer = QTimer(self)
-        self._tools_poll_timer.setInterval(100)
-        self._tools_poll_timer.timeout.connect(self._poll_tools_events)
-        self._tools_poll_timer.start()
+    def _ensure_a2a_tab_initialized(self) -> None:
+        """Build the A2A bridge widget on first A2A tab activation.
+
+        The previous design created ``A2ABridgeWidget`` in
+        ``ToolsPanel.__init__`` (which forced A2A imports +
+        ``A2ADispatcher()`` + a ``QTimer.singleShot(0, _refresh_agents)``
+        that ran the full discovery — PATH checks, ``orchestra.toml``
+        load, optional live HTTP agent-card fetches — on Tools open).
+        Deferring widget construction to first A2A-tab selection
+        removes that cost from the Tools open path.  Discovery is
+        also deferred to first Refresh (see ``A2ABridgeWidget``
+        changes); the placeholder tells the user to click Refresh.
+        """
+        if self._tools_panel is None:
+            return
+        from .a2a_widget import A2ABridgeWidget
+
+        _t0 = time.monotonic()
+        self._a2a_bridge_widget = A2ABridgeWidget(self)
+        _early_log(
+            f"panel_core:_ensure_a2a_tab_initialized:built:elapsed_ms="
+            f"{int((time.monotonic() - _t0) * 1000)}"
+        )
+        self._tools_panel.set_a2a_widget(self._a2a_bridge_widget)
+
+    def _ensure_knowledge_tab_initialized(self) -> None:
+        """Build the Knowledge panel on first Knowledge tab activation."""
+        if self._tools_panel is None:
+            return
+        from .knowledge_panel import KnowledgePanel
+
+        _t0 = time.monotonic()
+        self._knowledge_panel = KnowledgePanel()
+        _early_log(
+            f"panel_core:_ensure_knowledge_tab_initialized:built:elapsed_ms="
+            f"{int((time.monotonic() - _t0) * 1000)}"
+        )
+        try:
+            self._knowledge_panel.set_show_retrieved(
+                bool(getattr(self._config, "knowledge_show_retrieved_in_chat", False))
+            )
+        except Exception:
+            pass
+        self._knowledge_panel.set_disabled_state(
+            not bool(getattr(self._config, "knowledge_enabled", True))
+        )
+        self._knowledge_panel.show_retrieved_changed.connect(self._on_knowledge_show_changed)
+        self._knowledge_panel.refresh_requested.connect(self._refresh_knowledge_panel)
+        self._tools_panel.set_knowledge_widget(self._knowledge_panel)
+        # Debounce knowledge-panel refresh: many write-side events
+        # (e.g. exploration findings) can fire in a single burst, and
+        # we only need to repaint the table once.  Reusing a single
+        # QTimer coalesces bursts into one refresh ~50ms after the
+        # last event lands.
+        self._knowledge_refresh_timer = QTimer(self)
+        self._knowledge_refresh_timer.setSingleShot(True)
+        self._knowledge_refresh_timer.setInterval(50)
+        self._knowledge_refresh_timer.timeout.connect(self._refresh_knowledge_panel)
+        # Refresh on first activation.  Subsequent refreshes go through
+        # the event-driven debounce path in :meth:`_on_knowledge_event_refresh`.
+        self._schedule_initial_knowledge_refresh()
+
+    def _schedule_initial_knowledge_refresh(self) -> None:
+        """Schedule a one-shot initial knowledge refresh.
+
+        Skips the refresh entirely if the panel has been shut down or
+        replaced before the timer fires (e.g. the user closed the
+        panel during the first event-loop turn).  Uses
+        ``QTimer.singleShot`` rather than a member ``QTimer`` so the
+        reference cannot outlive the panel.
+        """
+        if self._is_shutdown:
+            return
+        if getattr(self, "_knowledge_panel", None) is None:
+            return
+
+        def _fire() -> None:
+            if self._is_shutdown:
+                return
+            if getattr(self, "_knowledge_panel", None) is None:
+                return
+            self._refresh_knowledge_panel()
+
+        QTimer.singleShot(0, _fire)
 
     def _get_or_create_subagent_manager(self):
         """Lazily create the SubagentManager."""
@@ -1625,6 +1977,58 @@ class RikuganPanelCore(QWidget):
             subagent_manager=self._get_or_create_subagent_manager(),
         )
 
+    def _start_renamer_load(self) -> None:
+        """Begin renamer function loading and apply any pending address.
+
+        Triggered by:
+          - the user selecting the Renamer tab (via the
+            ``_activate_tools_tab`` callback path),
+          - the user clicking the Refresh button (wired to
+            ``refresh_requested`` -> ``_start_renamer_load``),
+          - ``show_tools_with_renamer`` calling us indirectly through
+            ``_ensure_renamer_tab_initialized`` -> ``_start_renamer_load``.
+
+        If the caller stashed a ``_renamer_pending_select_address``
+        before the widget was ready (e.g. an IDA ``Send to Bulk
+        Rename`` action fired while the shell was still being built),
+        we forward it to the widget after the load completes via the
+        ``finish_function_load`` hook below.
+        """
+        if self._is_shutdown:
+            return
+        if not hasattr(self, "_bulk_renamer"):
+            return
+        if getattr(self, "_renamer_loaded", False):
+            # Already loaded — re-running is cheap via Refresh; let the
+            # existing path do its thing, and apply any pending
+            # select-after-load immediately.
+            self._apply_pending_renamer_select()
+            self._load_renamer_functions()
+            return
+        if getattr(self, "_renamer_loading", False):
+            # A load is already in flight; the deferred address will
+            # be applied when ``_renamer_chunk_step`` finishes.
+            return
+        self._renamer_loading = True
+        self._load_renamer_functions()
+
+    def _apply_pending_renamer_select(self) -> None:
+        """If ``show_tools_with_renamer`` was called before load finished,
+        forward the stored address to the widget now that the table is
+        ready.  Consumes the flag so it doesn't fire twice.
+        """
+        addr = getattr(self, "_renamer_pending_select_address", None)
+        if addr is None:
+            return
+        widget = getattr(self, "_bulk_renamer", None)
+        if widget is None:
+            return
+        self._renamer_pending_select_address = None
+        try:
+            widget.select_and_filter_address(addr)
+        except Exception as e:  # defensive — never crash Tools open
+            log_debug(f"pending renamer select failed: {e}")
+
     def _load_renamer_functions(self) -> None:
         """Populate the bulk renamer widget with functions from the binary.
 
@@ -1633,9 +2037,11 @@ class RikuganPanelCore(QWidget):
         so the widget gets accurate ``is_import`` and ``size_bytes``
         metadata.  Each chunk is delivered through a zero-interval
         QTimer so the UI thread stays responsive between pages.
+
+        This method does NOT touch any pending select-address state —
+        callers use :meth:`_start_renamer_load` instead so the
+        deferred select-after-load path is centralized.
         """
-        if not hasattr(self, "_bulk_renamer"):
-            return
 
         # Cancel any in-flight load before starting a new one
         # (the refresh button can be clicked multiple times in a row).
@@ -1710,6 +2116,12 @@ class RikuganPanelCore(QWidget):
             except Exception as e:
                 log_debug(f"bulk_renamer.finish_function_load failed: {e}")
         self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
+        # Mark the renamer as fully loaded and apply any pending
+        # address that ``show_tools_with_renamer`` stashed before the
+        # widget was ready.
+        self._renamer_loading = False
+        self._renamer_loaded = True
+        self._apply_pending_renamer_select()
         log_info("Bulk renamer function load complete")
 
     def _cleanup_renamer_chunk(
@@ -1723,6 +2135,10 @@ class RikuganPanelCore(QWidget):
         load), ``_renamer_chunk_step`` (on completion or failure),
         and from the panel-level shutdown / database-change paths
         (so an in-flight load cannot survive a teardown).
+
+        Also clears the in-progress / loaded flags so a subsequent
+        ``_start_renamer_load`` call doesn't short-circuit thinking
+        the previous load is still healthy.
         """
         timer = getattr(self, "_renamer_fetch_timer", None)
         if timer is not None:
@@ -1747,6 +2163,13 @@ class RikuganPanelCore(QWidget):
                     cancel_fn()
                 except Exception as e:  # defensive
                     log_debug(f"bulk_renamer.cancel_function_load failed: {e}")
+        # A failure path here means the load did not complete
+        # successfully — clear the cached "loaded" flag so the next
+        # ``_start_renamer_load`` actually re-runs the chunk pump.
+        # Successful completion paths set ``_renamer_loaded = True``
+        # after calling this; failures do not.
+        self._renamer_loading = False
+        self._renamer_loaded = False
 
     # --- Tools panel event handlers ---
 
@@ -1935,6 +2358,112 @@ class RikuganPanelCore(QWidget):
             return
         # Submit /undo command through the normal agent path
         self._start_agent(f"/undo {count}")
+
+    # ------------------------------------------------------------------
+    # Knowledge panel wiring
+    # ------------------------------------------------------------------
+
+    def _on_knowledge_show_changed(self, checked: bool) -> None:
+        """Persist the *Show retrieved knowledge in chat* toggle."""
+        try:
+            self._config.knowledge_show_retrieved_in_chat = bool(checked)
+            # Best-effort: don't crash UI if save() fails (e.g. read-only disk).
+            try:
+                self._config.save()
+            except Exception as e:
+                log_debug(f"config save after knowledge toggle failed: {e}")
+        except Exception as e:
+            log_debug(f"knowledge toggle persist failed: {e}")
+
+    def _refresh_knowledge_panel(self) -> None:
+        """Re-populate the Knowledge tab from the current IDB path.
+
+        Reads each JSONL record type exactly ONCE per refresh.  The
+        previous implementation called ``store.counts()`` (which reads
+        all four files) and then ``list_memories()`` / ``list_entities()``
+        / ``list_relations()`` (three more reads).  Now we read the
+        three queryable record types once, derive their counts from
+        the in-memory list, and use ``store.count_observations()`` for
+        the observation count.
+        """
+        if self._is_shutdown:
+            return
+        panel = getattr(self, "_knowledge_panel", None)
+        if panel is None:
+            return
+
+        if not bool(getattr(self._config, "knowledge_enabled", True)):
+            panel.set_disabled_state(True)
+            return
+
+        idb_path = ""
+        try:
+            idb_path = self._ctrl.session.idb_path if self._ctrl and self._ctrl.session else ""
+        except Exception:
+            idb_path = ""
+
+        if not idb_path:
+            panel.set_disabled_state(False)
+            panel.set_disabled_message("No IDB path is set. Open a binary to populate the knowledge store.")
+            return
+
+        try:
+            from ..memory.ingest import make_store
+            from ..memory.notes import list_notes
+
+            store, paths = make_store(idb_path)
+            if store is None or paths is None:
+                panel.set_disabled_state(False)
+                panel.set_disabled_message("Could not initialize the knowledge store.")
+                return
+
+            # One read per file (was: four via counts() + three more
+            # via the list_* calls = seven total).
+            memories = store.list_memories()
+            entities = store.list_entities()
+            relations = store.list_relations()
+            obs_count = store.count_observations()
+            panel.set_disabled_state(False)
+            panel.set_counts(
+                {
+                    "memories": len(memories),
+                    "entities": len(entities),
+                    "relations": len(relations),
+                    "observations": obs_count,
+                }
+            )
+            panel.populate(
+                memories=memories,
+                entities=entities,
+                relations=relations,
+                notes=[
+                    f"{(n.title or os.path.basename(n.path or 'note'))}: {(n.body or '').strip()[:400]}"
+                    for n in list_notes(paths.notes_dir)[:20]
+                ],
+            )
+        except Exception as e:
+            log_debug(f"knowledge panel refresh failed: {e}")
+            panel.set_disabled_message(f"Failed to load knowledge: {e}")
+
+    def _on_knowledge_event_refresh(self, event_type: str) -> None:
+        """Hook for relevant events to nudge the panel to refresh.
+
+        Coalesces bursty events (e.g. several ``EXPLORATION_FINDING``
+        events emitted back-to-back) into a single refresh via a
+        shared single-shot :class:`QTimer`.  ``.start()`` on a running
+        single-shot timer resets its deadline, so only the LAST event
+        in a burst ends up triggering the actual repaint.
+        """
+        del event_type  # unused — the timer coalesces regardless
+        if getattr(self, "_is_shutdown", False):
+            return
+        timer = getattr(self, "_knowledge_refresh_timer", None)
+        if timer is None:
+            return
+        try:
+            timer.start()  # 50ms debounce window
+        except Exception:
+            pass
 
     def _set_running(self, running: bool) -> None:
         # Keep input enabled so users can queue follow-up messages while

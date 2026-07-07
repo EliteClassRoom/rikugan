@@ -22,8 +22,8 @@ _SANITIZER_TAG_RE = re.compile(
     re.MULTILINE,
 )
 _SANITIZER_WRAP_RE = re.compile(
-    r"<(?:tool_result|mcp_result|binary_data|persistent_memory|skill)\b[^>]*>\n?"
-    r"|</(?:tool_result|mcp_result|binary_data|persistent_memory|skill)>\n?",
+    r"<(?:tool_result|mcp_result|binary_data|persistent_memory|retrieved_knowledge|skill)\b[^>]*>\n?"
+    r"|</(?:tool_result|mcp_result|binary_data|persistent_memory|retrieved_knowledge|skill)>\n?",
 )
 
 _TOOL_LANG_MAP = {

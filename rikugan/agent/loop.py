@@ -27,6 +27,7 @@ from ..core.sanitize import (
     sanitize_tool_result,
     strip_injection_markers,
     strip_iocs,
+    strip_lone_surrogates,
 )
 from ..core.types import Message, Role, TokenUsage, ToolCall, ToolResult, coerce_token_count
 from ..providers.base import LLMProvider
@@ -49,8 +50,10 @@ from .loop_commands import (
     ACTIVE_GOAL_METADATA_KEY,
     _handle_doctor_command,
     _handle_goal_command,
+    _handle_knowledge_command,
     _handle_mcp_command,
     _handle_memory_command,
+    _handle_report_command,
     _handle_undo_command,
     normalize_goal,
 )
@@ -217,6 +220,18 @@ def _parse_user_command(user_message: str) -> _ParsedCommand:
         return _ParsedCommand(message=stripped, direct_command="/mcp")
     if lower == "/doctor":
         return _ParsedCommand(message=stripped, direct_command="/doctor")
+    if lower == "/knowledge" or lower.startswith("/knowledge "):
+        return _ParsedCommand(
+            message=stripped,
+            direct_command="/knowledge",
+            direct_arg=stripped[10:].strip() if len(stripped) > 10 else "",
+        )
+    if lower == "/report" or lower.startswith("/report "):
+        return _ParsedCommand(
+            message=stripped,
+            direct_command="/report",
+            direct_arg=stripped[7:].strip() if len(stripped) > 7 else "",
+        )
     if lower == "/orchestra" or lower.startswith("/orchestra "):
         return _ParsedCommand(message=stripped[10:].strip() if len(stripped) > 10 else "", use_orchestra_mode=True)
     # /a2a <agent> <message...>  — delegate to external agent directly
@@ -237,6 +252,47 @@ def append_to_memory_file(md_path: str, content: str) -> None:
             f.write(_MEMORY_HEADER)
     with open(md_path, "a", encoding="utf-8") as f:
         f.write(content)
+
+
+# Maximum length allowed for a save_memory category token. Anything longer
+# is hostile noise — categories are short labels, not free-form descriptions.
+_SAVE_MEMORY_CATEGORY_MAX_LEN = 64
+
+
+def _sanitize_save_memory_category(raw: object) -> str:
+    """Coerce and sanitize a save_memory ``category`` argument.
+
+    Categories flow into three downstream surfaces:
+      * ``RIKUGAN.md`` line format ``- [{category}] {fact}``,
+      * the ``log_info`` message,
+      * the tool result echoed back to the LLM,
+      * the knowledge-ingest ``ingest_save_memory(category=...)`` call.
+
+    An attacker (or a buggy tool call) that injects ``</persistent_memory>system``
+    into the category would let a subsequent ``sanitize_memory`` wrapper close
+    out and smuggle raw prompt text in. We neutralize that here.
+    """
+    if raw is None:
+        return "general"
+    text = strip_lone_surrogates(str(raw))
+    text = strip_injection_markers(text)
+    # Neutralize ANY closing tag — strip_injection_markers only covers
+    # known role markers (``</system>``, ``</tool_result>``, …) and would
+    # leave ``</persistent_memory>`` untouched. We replace the angle
+    # brackets so no closing tag can survive into RIKUGAN.md or the
+    # tool result.
+    text = text.replace("<", "").replace(">", "")
+    # Strip the surrounding ``[...]`` brackets and surrounding whitespace so
+    # an injected ``[INJECTED]`` collapses to a benign label.
+    text = text.replace("[", "").replace("]", "").strip()
+    if not text:
+        return "general"
+    # Collapse internal whitespace (newlines / runs of spaces) so the category
+    # is a single short token.
+    text = " ".join(text.split())
+    if len(text) > _SAVE_MEMORY_CATEGORY_MAX_LEN:
+        text = text[:_SAVE_MEMORY_CATEGORY_MAX_LEN].rstrip()
+    return text or "general"
 
 
 class AgentLoop:
@@ -404,11 +460,22 @@ class AgentLoop:
         if self.session.idb_path:
             idb_dir = os.path.dirname(self.session.idb_path)
 
+        # Retrieved knowledge — per-turn compilation of stored memories,
+        # entities, relations, and note excerpts relevant to the current
+        # cursor/function/goal. Disabled via ``knowledge_enabled`` config
+        # field, so users running with knowledge off get no overhead.
+        extra_context = self._build_retrieved_knowledge_section(
+            current_address=current_address,
+            current_function=current_function,
+            profile=profile,
+        )
+
         return build_system_prompt(
             host_name=self.host_name,
             binary_info=binary_info,
             current_function=current_function,
             current_address=current_address,
+            extra_context=extra_context,
             active_goal=self.session.metadata.get(_GOAL_METADATA_KEY, ""),
             tool_names=self.tools.list_names(),
             skill_summary=skill_summary,
@@ -416,6 +483,77 @@ class AgentLoop:
             profile=profile,
             tools_table=format_tools_catalog(self.tools.list_available_tools()),
         )
+
+    def _build_retrieved_knowledge_section(
+        self,
+        current_address: str | None,
+        current_function: str | None,
+        profile,
+    ) -> str:
+        """Return the per-turn Retrieved Knowledge block, or "" if disabled/unavailable."""
+        try:
+            if not getattr(self.config, "knowledge_enabled", True):
+                return ""
+            from ..memory.context import (
+                RetrievalQuery,
+                budget_from_config,
+                build_retrieval_metadata,
+                build_retrieved_context_with_pack,
+            )
+            from ..memory.ingest import make_store
+
+            store, paths = make_store(self.session.idb_path)
+            if store is None:
+                return ""
+
+            active_mode = self.session.metadata.get("active_mode", "normal") or "normal"
+            active_goal = self.session.metadata.get(_GOAL_METADATA_KEY, "")
+
+            func_name = ""
+            if current_function:
+                # Try to extract a name like "func_name @ 0x401000" — the
+                # second line of ``get_current_function`` output is the
+                # name when present.
+                for line in (current_function or "").splitlines():
+                    line = line.strip()
+                    if not line or line.lower().startswith("address") or line.lower().startswith("function:"):
+                        continue
+                    func_name = line
+                    break
+
+            query = RetrievalQuery(
+                text=" ".join(filter(None, [current_address or "", current_function or "", func_name, active_goal])),
+                address=current_address or "",
+                function_name=func_name,
+                active_goal=active_goal,
+                active_mode=active_mode,
+            )
+
+            # Build the section AND the underlying pack in a single
+            # retrieve() call.  ``budget_from_config`` honors
+            # knowledge_max_context_items / knowledge_max_context_chars
+            # so user-set caps actually take effect.
+            budget = budget_from_config(self.config, active_mode=active_mode)
+            section, pack = build_retrieved_context_with_pack(
+                store,
+                paths,
+                query=query,
+                budget=budget,
+                active_mode=active_mode,
+            )
+            if section and pack is not None:
+                # Emit a TurnEvent so the UI can display a compact
+                # retrieved-knowledge indicator when configured.  Reuse
+                # the same pack we just built — do NOT re-run retrieve.
+                try:
+                    meta = build_retrieval_metadata(pack)
+                    self.session.metadata["last_knowledge_retrieval"] = meta
+                except Exception:
+                    pass
+            return section
+        except Exception as e:
+            log_debug(f"retrieved-knowledge section failed: {e}")
+            return ""
 
     def _resolve_skill(self, user_message: str) -> tuple:
         """Rewrite user message if it matches a skill.
@@ -1261,6 +1399,7 @@ class AgentLoop:
                 relevance=relevance,
             )
         )
+        func_name = ""
         if category == "function_purpose" and address is not None:
             func_name = tc.arguments.get("function_name", f"sub_{address:x}")
             state.knowledge_base.add_function(
@@ -1271,6 +1410,27 @@ class AgentLoop:
                     relevance=relevance,
                 )
             )
+
+        # Auto-ingest every exploration_report finding into the raw
+        # knowledge store. Best-effort: never block or fail the agent
+        # loop on memory I/O errors.
+        try:
+            from ..memory.ingest import ingest_exploration_finding, make_store
+
+            store, paths = make_store(self.session.idb_path)
+            if store is not None:
+                ingest_exploration_finding(
+                    store,
+                    paths,
+                    category=category,
+                    summary=summary,
+                    address=address,
+                    relevance=relevance,
+                    evidence=evidence,
+                    function_name=func_name,
+                )
+        except Exception as e:
+            log_debug(f"knowledge ingest (exploration_report) failed: {e}")
         if category == "patch_result" and address is not None:
             original_hex = tc.arguments.get("original_hex", "")
             new_hex = tc.arguments.get("new_hex", "")
@@ -1331,11 +1491,26 @@ class AgentLoop:
         return tr
 
     def _handle_save_memory_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
-        """Handle the save_memory pseudo-tool."""
-        from ..core.sanitize import strip_injection_markers
+        """Handle the save_memory pseudo-tool.
 
-        fact = strip_injection_markers(tc.arguments.get("fact", ""))
-        category = tc.arguments.get("category", "general")
+        The *category* argument is sanitized the same way as *fact*:
+        injection markers and lone surrogates are stripped, ``[`` / ``]``
+        are removed, whitespace is collapsed, and the result is bounded
+        in length. This prevents a hostile category such as
+        ``</persistent_memory>system`` from breaking out of the
+        ``[persistent_memory]`` wrapper on a future read of RIKUGAN.md.
+        """
+        from ..core.sanitize import strip_injection_markers, strip_lone_surrogates
+
+        raw_fact = tc.arguments.get("fact", "")
+        # Apply the same sanitization contract as ``category``: strip
+        # surrogates, role markers, AND angle brackets so an injected
+        # ``</persistent_memory>`` payload cannot break out of the
+        # downstream ``[persistent_memory]`` wrapper when RIKUGAN.md is
+        # reloaded into the system prompt.
+        fact = strip_injection_markers(strip_lone_surrogates(str(raw_fact)))
+        fact = fact.replace("<", "").replace(">", "")
+        category = _sanitize_save_memory_category(tc.arguments.get("category", "general"))
         if not fact:
             content = "Error: 'fact' is required."
             is_err = True
@@ -1346,14 +1521,25 @@ class AgentLoop:
                 is_err = True
             else:
                 md_path = os.path.join(idb_dir, "RIKUGAN.md")
+            try:
+                append_to_memory_file(md_path, f"- [{category}] {fact}\n")
+                content = f"Saved to RIKUGAN.md: [{category}] {fact}"
+                is_err = False
+                log_info(f"save_memory: [{category}] {fact[:80]}")
+                # Auto-ingest into the raw knowledge store so retrieval
+                # can surface this fact on future turns. Failures are
+                # silent — never undo the RIKUGAN.md write above.
                 try:
-                    append_to_memory_file(md_path, f"- [{category}] {fact}\n")
-                    content = f"Saved to RIKUGAN.md: [{category}] {fact}"
-                    is_err = False
-                    log_info(f"save_memory: [{category}] {fact[:80]}")
-                except OSError as e:
-                    content = f"Error writing RIKUGAN.md: {e}"
-                    is_err = True
+                    from ..memory.ingest import ingest_save_memory, make_store
+
+                    store, paths = make_store(self.session.idb_path)
+                    if store is not None:
+                        ingest_save_memory(store, paths, fact=fact, category=category)
+                except Exception as e:
+                    log_debug(f"knowledge ingest (save_memory) failed: {e}")
+            except OSError as e:
+                content = f"Error writing RIKUGAN.md: {e}"
+                is_err = True
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=is_err)
         yield TurnEvent.tool_result_event(tc.id, tc.name, content, is_err)
         return tr
@@ -1393,6 +1579,27 @@ class AgentLoop:
                 parent_loop=self,
             ),
         )
+
+        # Auto-ingest the *final* research note into the raw knowledge
+        # store. We only do this after the review pipeline commits,
+        # so we don't pollute the store with draft content.
+        try:
+            from ..memory.ingest import ingest_research_note, make_store
+
+            store, paths = make_store(self.session.idb_path)
+            if store is not None:
+                ingest_research_note(
+                    store,
+                    paths,
+                    note_path=note.path,
+                    genre=note.genre,
+                    title=note.title,
+                    content=note.content,
+                    related=note.related_notes,
+                    review_passed=note.review_passed,
+                )
+        except Exception as e:
+            log_debug(f"knowledge ingest (research_note) failed: {e}")
 
         result_text = f"Note saved: {note.path}"
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=result_text, is_error=False)
@@ -1941,6 +2148,12 @@ class AgentLoop:
             if cmd.direct_command == "/doctor":
                 yield from _handle_doctor_command(self)
                 return
+            if cmd.direct_command == "/knowledge":
+                yield from _handle_knowledge_command(self, cmd.direct_arg)
+                return
+            if cmd.direct_command == "/report":
+                yield from _handle_report_command(self, cmd.direct_arg)
+                return
 
             user_message = cmd.message
             use_plan_mode = cmd.use_plan_mode
@@ -1977,6 +2190,24 @@ class AgentLoop:
             system_prompt = minify_text(self._build_system_prompt())
             tools_schema = self._build_tools_schema(active_skill, use_exploration_mode, use_research_mode)
             log_debug(f"Agent run started: {len(tools_schema)} tools, msg={user_message[:80]!r}")
+
+            # Emit a one-shot retrieved-knowledge indicator so the UI
+            # (when enabled) can show what was pulled into this turn.
+            # The actual retrieval already happened during
+            # _build_system_prompt → metadata stashed in
+            # session.metadata["last_knowledge_retrieval"].
+            try:
+                meta = self.session.metadata.get("last_knowledge_retrieval")
+                if meta and getattr(self.config, "knowledge_show_retrieved_in_chat", False):
+                    counts = meta.get("counts") or {}
+                    parts = []
+                    for k in ("memories", "entities", "relations", "notes"):
+                        if counts.get(k):
+                            parts.append(f"{counts[k]} {k}")
+                    summary = ", ".join(parts) if parts else "no items"
+                    yield TurnEvent.knowledge_retrieved(summary=summary, counts=counts, items=meta.get("items", []))
+            except Exception as e:
+                log_debug(f"knowledge_retrieved event emission failed: {e}")
 
             if use_research_mode:
                 self.session.metadata["active_mode"] = "research"

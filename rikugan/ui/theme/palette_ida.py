@@ -9,11 +9,15 @@ from __future__ import annotations
 
 from typing import Any
 
+# QPalette comes from the shared Qt compatibility layer. Direct
+# PySide6/PyQt5 imports are forbidden here because palette_ida is loaded
+# on the panel startup path in IDA, where loading Qt6 into a Qt5 host can
+# crash the process.
 try:
-    from PySide6.QtGui import QPalette  # type: ignore[import-not-found]
+    from ..qt_compat import QPalette
 
     _HAS_QT = True
-except ImportError:  # pragma: no cover
+except (ImportError, ModuleNotFoundError):  # pragma: no cover
     QPalette = None  # type: ignore[assignment]
     _HAS_QT = False
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
+from rikugan.core.early_log import _early_log, _early_log_crash
 from rikugan.core.startup_timing import end, start
 from rikugan.ui.panel_core import RikuganPanelCore
 from rikugan.ui.qt_compat import QApplication, QVBoxLayout, QWidget
@@ -45,6 +46,19 @@ def _form_to_qt_widget(plugin_form_cls: Any, form: Any) -> Any:
         return plugin_form_cls.FormToPySideWidget(form)
     except (AttributeError, TypeError):
         return plugin_form_cls.FormToPyQtWidget(form)
+
+
+def _early_log_crash_safe(exc: BaseException) -> None:
+    """Crash-log sink tolerant of any failure.
+
+    Wraps :func:`_early_log_crash` to provide a single import path even if
+    ``_early_log_crash`` itself is unavailable (test environments that
+    stub the module).
+    """
+    try:
+        _early_log_crash(exc)
+    except Exception:
+        pass
 
 
 def _log_teardown(context: str, exc: BaseException) -> None:
@@ -200,6 +214,7 @@ class RikuganPanel(idaapi.PluginForm):
     """
 
     def __init__(self):
+        _early_log("ida_panel:init:entry")
         super().__init__()
         # Theme watcher is started by _apply_ida_theme() if the active
         # mode is AUTO or IDA_NATIVE (only those modes read QPalette).
@@ -209,13 +224,20 @@ class RikuganPanel(idaapi.PluginForm):
         self._form_widget: QWidget | None = None
         self._root: QWidget | None = None
         self._core: RikuganPanelCore | None = None
+        _early_log("ida_panel:init:done")
 
     def OnCreate(self, form: Any) -> None:
+        _early_log("ida_panel:on_create:entry")
         t_oncreate = start("ida_form.on_create_total")
 
-        t_widget = start("ida_form.to_qt_widget")
-        self._form_widget = _form_to_qt_widget(type(self), form)
-        end("ida_form.to_qt_widget", t_widget)
+        try:
+            t_widget = start("ida_form.to_qt_widget")
+            self._form_widget = _form_to_qt_widget(type(self), form)
+            end("ida_form.to_qt_widget", t_widget)
+            _early_log("ida_panel:on_create:to_qt_widget_done")
+        except Exception as _exc:
+            _early_log_crash_safe(_exc)
+            raise
 
         self._root = QWidget()
         form_layout = QVBoxLayout(self._form_widget)
@@ -226,25 +248,40 @@ class RikuganPanel(idaapi.PluginForm):
         root_layout.setContentsMargins(0, 0, 0, 0)
 
         # Create the core panel
-        t_core = start("ida_form.core_construct")
-        self._core = RikuganPanelCore(
-            controller_factory=IdaSessionController,
-            ui_hooks_factory=lambda panel_getter: RikuganUIHooks(panel_getter=panel_getter),
-            tools_form_factory=lambda tools_widget: RikuganToolsForm(tools_widget),
-            parent=self._root,
-        )
-        end("ida_form.core_construct", t_core)
+        try:
+            t_core = start("ida_form.core_construct")
+            self._core = RikuganPanelCore(
+                controller_factory=IdaSessionController,
+                ui_hooks_factory=lambda panel_getter: RikuganUIHooks(panel_getter=panel_getter),
+                tools_form_factory=lambda tools_widget: RikuganToolsForm(tools_widget),
+                parent=self._root,
+            )
+            end("ida_form.core_construct", t_core)
+            _early_log("ida_panel:on_create:core_constructed")
+        except Exception as _exc:
+            _early_log_crash_safe(_exc)
+            raise
+
         root_layout.addWidget(self._core)
 
         # Apply IDA theme-aware stylesheet
-        t_theme = start("ida_form.apply_theme")
-        self._apply_ida_theme()
-        end("ida_form.apply_theme", t_theme)
+        try:
+            t_theme = start("ida_form.apply_theme")
+            self._apply_ida_theme()
+            end("ida_form.apply_theme", t_theme)
+        except Exception as _exc:
+            _early_log_crash_safe(_exc)
+            raise
 
         # Apply custom font if configured
-        self._apply_font_override()
+        try:
+            self._apply_font_override()
+        except Exception as _exc:
+            _early_log_crash_safe(_exc)
+            raise
 
         end("ida_form.on_create_total", t_oncreate)
+        _early_log("ida_panel:on_create:done")
 
     def _apply_ida_theme(self) -> None:
         """Apply the IDA Pro theme-aware stylesheet to the panel.
