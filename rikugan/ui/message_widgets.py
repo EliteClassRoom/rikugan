@@ -339,7 +339,10 @@ class UserMessageWidget(QFrame):
         self._content = QLabel(text)
         self._content.setWordWrap(True)
         self._content.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         self._content.setMinimumWidth(0)
         self._content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -510,7 +513,10 @@ class _ThinkingBlock(QFrame):
         self._content.setWordWrap(True)
         self._content.setTextFormat(Qt.TextFormat.RichText)
         self._content.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         self._content.hide()
         layout.addWidget(self._content)
@@ -643,9 +649,11 @@ class AssistantMessageWidget(QFrame):
         self._content.setWordWrap(True)
         self._content.setTextFormat(Qt.TextFormat.RichText)
         self._content.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-            | Qt.TextInteractionFlag.TextSelectableByKeyboard
-            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+                | Qt.TextInteractionFlag.LinksAccessibleByMouse.value
+            )
         )
         self._content.setOpenExternalLinks(True)
         # Prevent the label from requesting more width than its parent
@@ -890,7 +898,10 @@ class QueuedMessageWidget(QFrame):
         self._content = QLabel(text)
         self._content.setWordWrap(True)
         self._content.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         content_layout.addWidget(self._content)
 
@@ -962,7 +973,10 @@ class UserQuestionWidget(QFrame):
         self._q_label = QLabel(question)
         self._q_label.setWordWrap(True)
         self._q_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         layout.addWidget(self._q_label)
 
@@ -1379,7 +1393,10 @@ class ErrorMessageWidget(QFrame):
         self._content = QLabel(error_text)
         self._content.setWordWrap(True)
         self._content.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         self._content.setMinimumWidth(0)
         self._content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)

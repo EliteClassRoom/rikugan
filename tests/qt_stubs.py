@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import types
+from enum import IntFlag
 
 _installed = False
 
@@ -503,8 +504,14 @@ def ensure_pyside6_stubs() -> None:
     _sentinel = type("_Qt", (), {})()
     _sentinel.ItemDataRole = type("_ItemDataRole", (), {"UserRole": 32})()
     _sentinel.TextFormat = type("_TextFormat", (), {"PlainText": 0, "RichText": 1, "AutoText": 2})()
-    _sentinel.TextInteractionFlag = type(
-        "_TextInteractionFlag", (),
+    # Production code (rikugan/ui/message_widgets.py, tool_widgets.py) uses
+    # the ``Qt.TextInteractionFlag(A.value | B.value)`` pattern to bypass
+    # IDA 9.4's PyQt5-shim ``__or__`` interceptor. That pattern needs the
+    # enum-like ``.value`` attribute and a callable wrapper, so the stub
+    # mirrors PySide6's IntFlag for this one enum. Other Qt enums keep the
+    # plain-int stub (production code still uses ``|`` directly on them).
+    _sentinel.TextInteractionFlag = IntFlag(
+        "_TextInteractionFlag",
         {
             "NoTextInteraction": 0,
             "TextSelectableByMouse": 1,
@@ -515,28 +522,42 @@ def ensure_pyside6_stubs() -> None:
             "LinksAccessibleByMouse": 8,
             "LinksAccessibleByKeyboard": 16,
         },
-    )()
+    )
     _sentinel.AlignmentFlag = type(
-        "_AlignmentFlag", (),
+        "_AlignmentFlag",
+        (),
         {
-            "AlignLeft": 1, "AlignRight": 2, "AlignHCenter": 4,
-            "AlignTop": 32, "AlignBottom": 64, "AlignVCenter": 128,
-            "AlignCenter": 132, "AlignAbsolute": 16, "AlignLeading": 1,
+            "AlignLeft": 1,
+            "AlignRight": 2,
+            "AlignHCenter": 4,
+            "AlignTop": 32,
+            "AlignBottom": 64,
+            "AlignVCenter": 128,
+            "AlignCenter": 132,
+            "AlignAbsolute": 16,
+            "AlignLeading": 1,
             "AlignTrailing": 2,
         },
     )()
-    _sentinel.Orientation = type(
-        "_Orientation", (), {"Horizontal": 1, "Vertical": 2}
-    )()
+    _sentinel.Orientation = type("_Orientation", (), {"Horizontal": 1, "Vertical": 2})()
     _sentinel.WindowModality = type(
-        "_WindowModality", (),
+        "_WindowModality",
+        (),
         {"NonModal": 0, "WindowModal": 1, "ApplicationModal": 2},
     )()
     _sentinel.StandardButton = type(
-        "_StandardButton", (),
+        "_StandardButton",
+        (),
         {
-            "NoButton": 0, "Ok": 1, "Cancel": 2, "Yes": 3, "No": 4,
-            "Save": 32, "Open": 1024, "Close": 2048, "Apply": 33554432,
+            "NoButton": 0,
+            "Ok": 1,
+            "Cancel": 2,
+            "Yes": 3,
+            "No": 4,
+            "Save": 32,
+            "Open": 1024,
+            "Close": 2048,
+            "Apply": 33554432,
         },
     )()
 
@@ -564,10 +585,16 @@ def ensure_pyside6_stubs() -> None:
     # QSizePolicy needs nested Policy enum
     _size_policy = _qt_class("QSizePolicy")
     _size_policy.Policy = type(
-        "_SizePolicyPolicy", (),
+        "_SizePolicyPolicy",
+        (),
         {
-            "Fixed": 0, "Minimum": 1, "Maximum": 4, "Preferred": 5,
-            "Expanding": 7, "MinimumExpanding": 3, "Ignored": 13,
+            "Fixed": 0,
+            "Minimum": 1,
+            "Maximum": 4,
+            "Preferred": 5,
+            "Expanding": 7,
+            "MinimumExpanding": 3,
+            "Ignored": 13,
         },
     )()
 
@@ -575,10 +602,18 @@ def ensure_pyside6_stubs() -> None:
     # highlighter can mark keywords as bold without hitting AttributeError.
     _qfont = _qt_class("QFont")
     _qfont.Weight = type(
-        "_QFontWeight", (),
+        "_QFontWeight",
+        (),
         {
-            "Thin": 0, "ExtraLight": 12, "Light": 25, "Normal": 50, "Medium": 63,
-            "DemiBold": 75, "Bold": 75, "ExtraBold": 81, "Black": 87,
+            "Thin": 0,
+            "ExtraLight": 12,
+            "Light": 25,
+            "Normal": 50,
+            "Medium": 63,
+            "DemiBold": 75,
+            "Bold": 75,
+            "ExtraBold": 81,
+            "Black": 87,
         },
     )()
 
@@ -587,26 +622,44 @@ def ensure_pyside6_stubs() -> None:
 
     # QLineEdit needs a nested EchoMode enum (used by setEchoMode).
     _widget_stubs["QLineEdit"].EchoMode = type(
-        "_LineEditEchoMode", (),
+        "_LineEditEchoMode",
+        (),
         {"Normal": 0, "NoEcho": 1, "Password": 2, "PasswordEchoOnEdit": 3},
     )()
     # QAbstractItemView SelectionMode / EditTrigger (used by QListWidget,
     # QTableWidget, QTreeWidget).
     _widget_stubs["QAbstractItemView"].SelectionMode = type(
-        "_SelMode", (), {"SingleSelection": 1, "MultiSelection": 2, "ExtendedSelection": 3, "ContiguousSelection": 4, "NoSelection": 0},
+        "_SelMode",
+        (),
+        {"SingleSelection": 1, "MultiSelection": 2, "ExtendedSelection": 3, "ContiguousSelection": 4, "NoSelection": 0},
     )()
     _widget_stubs["QAbstractItemView"].SelectionBehavior = type(
-        "_SelBeh", (), {"SelectItems": 0, "SelectRows": 1, "SelectColumns": 2},
+        "_SelBeh",
+        (),
+        {"SelectItems": 0, "SelectRows": 1, "SelectColumns": 2},
     )()
     _widget_stubs["QAbstractItemView"].EditTrigger = type(
-        "_EditTrig", (),
-        {"NoEditTriggers": 0, "CurrentChanged": 1, "DoubleClicked": 2, "SelectedClicked": 4, "EditKeyPressed": 8, "AnyKeyPressed": 16, "AllEditTriggers": 31},
+        "_EditTrig",
+        (),
+        {
+            "NoEditTriggers": 0,
+            "CurrentChanged": 1,
+            "DoubleClicked": 2,
+            "SelectedClicked": 4,
+            "EditKeyPressed": 8,
+            "AnyKeyPressed": 16,
+            "AllEditTriggers": 31,
+        },
     )()
     _widget_stubs["QAbstractItemView"].DragDropMode = type(
-        "_DDMode", (), {"NoDragDrop": 0, "DragOnly": 1, "DropOnly": 2, "DragDrop": 3, "InternalMove": 4},
+        "_DDMode",
+        (),
+        {"NoDragDrop": 0, "DragOnly": 1, "DropOnly": 2, "DragDrop": 3, "InternalMove": 4},
     )()
     _widget_stubs["QDialog"].DialogCode = type(
-        "_DialogCode", (), {"Accepted": 1, "Rejected": 0},
+        "_DialogCode",
+        (),
+        {"Accepted": 1, "Rejected": 0},
     )()
     # QDialog subclasses (SettingsDialog) call self.accept() / self.reject()
     # from the Ok/Cancel button wiring.
@@ -616,13 +669,28 @@ def ensure_pyside6_stubs() -> None:
     _widget_stubs["QDialog"].exec = lambda self: 0
     _widget_stubs["QDialog"].open = lambda self: None
     _widget_stubs["QDialogButtonBox"].StandardButton = type(
-        "_DialogBoxStandardButton", (),
+        "_DialogBoxStandardButton",
+        (),
         {
-            "NoButton": 0, "Ok": 1024, "Open": 8192, "Save": 2048, "Cancel": 4194304,
-            "Close": 2097152, "Discard": 8388608, "Apply": 33554432, "Reset": 67108864,
-            "RestoreDefaults": 134217728, "Help": 16777216, "SaveAll": 268435456,
-            "Yes": 16384, "YesToAll": 32768, "No": 65536, "NoToAll": 131072,
-            "Abort": 262144, "Retry": 524288, "Ignore": 1048576,
+            "NoButton": 0,
+            "Ok": 1024,
+            "Open": 8192,
+            "Save": 2048,
+            "Cancel": 4194304,
+            "Close": 2097152,
+            "Discard": 8388608,
+            "Apply": 33554432,
+            "Reset": 67108864,
+            "RestoreDefaults": 134217728,
+            "Help": 16777216,
+            "SaveAll": 268435456,
+            "Yes": 16384,
+            "YesToAll": 32768,
+            "No": 65536,
+            "NoToAll": 131072,
+            "Abort": 262144,
+            "Retry": 524288,
+            "Ignore": 1048576,
         },
     )()
     # QDialogButtonBox needs accepted/rejected/clicked signals for the
@@ -631,11 +699,14 @@ def ensure_pyside6_stubs() -> None:
     _widget_stubs["QDialogButtonBox"].rejected = _Signal()
     _widget_stubs["QDialogButtonBox"].clicked = _Signal()
     _widget_stubs["QFrame"].Shape = type(
-        "_FrameShape", (),
+        "_FrameShape",
+        (),
         {"NoFrame": 0, "Box": 1, "Panel": 2, "StyledPanel": 6, "HLine": 4, "VLine": 5, "WinPanel": 3},
     )()
     _widget_stubs["QFrame"].Shadow = type(
-        "_FrameShadow", (), {"Plain": 16, "Raised": 32, "Sunken": 48},
+        "_FrameShadow",
+        (),
+        {"Plain": 16, "Raised": 32, "Sunken": 48},
     )()
 
     # QFont lives under QtGui, but we build it here so we can attach the

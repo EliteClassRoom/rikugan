@@ -563,7 +563,10 @@ class ToolCallWidget(QFrame):
         self._args_label.setObjectName("tool_content")
         self._args_label.setWordWrap(True)
         self._args_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         self._detail_layout.addWidget(self._args_label)
 
@@ -578,7 +581,10 @@ class ToolCallWidget(QFrame):
         self._result_label.setObjectName("tool_content")
         self._result_label.setWordWrap(True)
         self._result_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         self._result_label.setVisible(False)
         self._detail_layout.addWidget(self._result_label)
