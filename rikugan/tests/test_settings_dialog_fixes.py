@@ -1810,5 +1810,518 @@ class TestKnowledgeEnabledSetting(unittest.TestCase):
             dlg.done(0)
 
 
+# ----------------------------------------------------------------------------
+# H. Max Output Tokens spin box follows selected model metadata
+# ----------------------------------------------------------------------------
+
+
+class TestMaxOutputTokensModelDrivenRange(unittest.TestCase):
+    """The ``Max Output Tokens`` spin box must follow the selected model.
+
+    Previously the spin box was hard-capped at 65536 and clamped to
+    ``min(m.max_output_tokens, 16384)`` regardless of the model's
+    advertised limit.  This regressed models with large output budgets
+    (e.g. MiniMax-M3's 524288) and silently truncated the configured
+    value.  The fix drives the upper bound from ``ModelInfo.max_output_tokens``
+    and removes the 16384 clamp.
+    """
+
+    def _make_dialog(self):
+        from rikugan.core.config import RikuganConfig
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        _ensure_qapplication()
+        config = RikuganConfig()
+        config.provider.name = "anthropic"
+        config.provider.model = "claude-sonnet-4-20250514"
+        dlg = SettingsDialog(config)
+        return dlg, config
+
+    def test_initial_spin_box_range_is_generous(self) -> None:
+        dlg, _cfg = self._make_dialog()
+        try:
+            minimum = dlg._max_tokens_spin.minimum()
+            maximum = dlg._max_tokens_spin.maximum()
+            # Lower bound of 1 matches provider/API minimums and the
+            # RikuganConfig.validate() contract (positivity only).
+            self.assertEqual(minimum, 1)
+            # Upper bound is generous until a model with known metadata
+            # is selected.  This avoids the old hard 65536 cap.
+            self.assertGreaterEqual(maximum, 1_000_000)
+        finally:
+            dlg.done(0)
+
+    def test_model_with_high_max_output_tokens_sets_range(self) -> None:
+        dlg, cfg = self._make_dialog()
+        try:
+            from rikugan.core.types import ModelInfo
+
+            dlg._fetched_models = [
+                ModelInfo(
+                    id="big-model",
+                    name="Big Model",
+                    provider="anthropic",
+                    context_window=200000,
+                    max_output_tokens=524_288,
+                    supports_tools=True,
+                )
+            ]
+            dlg._model_combo.addItem("Big Model  (big-model)", "big-model")
+            dlg._model_combo.setCurrentIndex(0)
+            # On model change, value snaps to the model limit (not clamped).
+            self.assertEqual(dlg._max_tokens_spin.value(), 524_288)
+            self.assertEqual(dlg._max_tokens_spin.maximum(), 524_288)
+            self.assertEqual(dlg._context_spin.value(), 200000)
+        finally:
+            dlg.done(0)
+
+    def test_update_generation_defaults_no_longer_clamps_to_16384(self) -> None:
+        """``_update_generation_defaults`` must NOT clamp to 16384.
+
+        The previous implementation did
+        ``min(m.max_output_tokens, 16384)`` which silently truncated
+        models with larger output budgets.
+        """
+        dlg, _cfg = self._make_dialog()
+        try:
+            from rikugan.core.types import ModelInfo
+
+            dlg._fetched_models = [
+                ModelInfo(
+                    id="huge",
+                    name="Huge",
+                    provider="anthropic",
+                    context_window=200000,
+                    max_output_tokens=128_000,
+                    supports_tools=True,
+                )
+            ]
+            dlg._model_combo.addItem("Huge  (huge)", "huge")
+            dlg._model_combo.setCurrentIndex(0)
+            # Ensure the "model change" branch ran (model_id != saved).
+            self.assertEqual(dlg._max_tokens_spin.value(), 128_000)
+            self.assertNotEqual(
+                dlg._max_tokens_spin.value(),
+                16_384,
+                "Must not clamp to 16384.",
+            )
+        finally:
+            dlg.done(0)
+
+    def test_same_model_preserves_saved_custom_max_tokens(self) -> None:
+        """When the selected model matches the saved config, the
+        user's custom ``max_tokens`` value is preserved (only clamped
+        if it exceeds the model limit)."""
+        dlg, cfg = self._make_dialog()
+        try:
+            from rikugan.core.types import ModelInfo
+
+            cfg.provider.model = "claude-sonnet-4-20250514"
+            cfg.provider.max_tokens = 8192
+            dlg._max_tokens_spin.setValue(8192)
+            dlg._fetched_models = [
+                ModelInfo(
+                    id="claude-sonnet-4-20250514",
+                    name="Claude Sonnet 4",
+                    provider="anthropic",
+                    context_window=200000,
+                    max_output_tokens=8192,
+                    supports_tools=True,
+                )
+            ]
+            dlg._model_combo.addItem(
+                "Claude Sonnet 4  (claude-sonnet-4-20250514)",
+                "claude-sonnet-4-20250514",
+            )
+            dlg._model_combo.setCurrentIndex(0)
+            # Same model as saved — custom value preserved.
+            self.assertEqual(dlg._max_tokens_spin.value(), 8192)
+        finally:
+            dlg.done(0)
+
+    def test_saved_value_clamped_when_exceeds_model_limit(self) -> None:
+        """If the saved value exceeds the model's limit, it is clamped down."""
+        dlg, cfg = self._make_dialog()
+        try:
+            from rikugan.core.types import ModelInfo
+
+            cfg.provider.model = "claude-sonnet-4-20250514"
+            cfg.provider.max_tokens = 999_999  # absurdly high
+            dlg._max_tokens_spin.setValue(999_999)
+            dlg._fetched_models = [
+                ModelInfo(
+                    id="claude-sonnet-4-20250514",
+                    name="Claude Sonnet 4",
+                    provider="anthropic",
+                    context_window=200000,
+                    max_output_tokens=8192,
+                    supports_tools=True,
+                )
+            ]
+            dlg._model_combo.addItem(
+                "Claude Sonnet 4  (claude-sonnet-4-20250514)",
+                "claude-sonnet-4-20250514",
+            )
+            dlg._model_combo.setCurrentIndex(0)
+            # Clamped to model limit.
+            self.assertEqual(dlg._max_tokens_spin.value(), 8192)
+        finally:
+            dlg.done(0)
+
+    def test_unknown_model_uses_generous_fallback(self) -> None:
+        """A manually typed model with no metadata uses a generous
+        fallback upper bound (>= 1_000_000) and keeps the current value."""
+        dlg, cfg = self._make_dialog()
+        try:
+            dlg._fetched_models = []  # no metadata
+            dlg._model_combo.addItem("my-custom-model", "my-custom-model")
+            dlg._model_combo.setCurrentIndex(0)
+            dlg._max_tokens_spin.setValue(50000)
+            dlg._update_generation_defaults()
+            self.assertGreaterEqual(dlg._max_tokens_spin.maximum(), 1_000_000)
+            # Current value preserved when model is unknown.
+            self.assertEqual(dlg._max_tokens_spin.value(), 50000)
+        finally:
+            dlg.done(0)
+
+    def test_populate_builtin_models_local_compat_uses_generous_max(self) -> None:
+        """``_populate_builtin_models`` must not synthesize a bare
+        ``ModelInfo`` for local / custom OpenAI-compatible providers —
+        a bare ``ModelInfo`` defaults ``max_output_tokens`` to ``4096``
+        which would clamp the spin box to a bogus 4096 limit.  The
+        local-compat path should leave ``_fetched_models`` empty and
+        fall through to the ``_MANUAL_MAX_TOKENS`` upper bound."""
+        dlg, cfg = self._make_dialog()
+        try:
+            from rikugan.providers.minimax_provider import MiniMaxProvider
+
+            # Pre-populate stale metadata to verify it gets cleared by
+            # the local-compat path — otherwise a previous provider's
+            # metadata could keep leaking into the spin box maximum.
+            cfg.provider.name = "openai_compat"
+            cfg.provider.model = "my-llama"
+            dlg._fetched_models = [
+                MiniMaxProvider._builtin_models()[0],
+            ]
+
+            dlg._provider_combo.setCurrentText("openai_compat")
+            dlg._populate_builtin_models()
+
+            # Stale metadata cleared — manual path uses the generous fallback.
+            self.assertEqual(dlg._fetched_models, [])
+            self.assertGreaterEqual(dlg._max_tokens_spin.maximum(), 1_000_000)
+            # Sanity: the openai_compat provider's static _builtin_models
+            # would have had default 4096 limits if we had used them.
+            self.assertNotEqual(dlg._max_tokens_spin.maximum(), 4096)
+        finally:
+            dlg.done(0)
+
+    def test_populate_builtin_models_ollama_uses_generous_max(self) -> None:
+        """Same regression for the Ollama provider."""
+        dlg, cfg = self._make_dialog()
+        try:
+            cfg.provider.name = "ollama"
+            cfg.provider.model = "llama3.1:70b"
+            dlg._provider_combo.setCurrentText("ollama")
+            dlg._populate_builtin_models()
+
+            self.assertEqual(dlg._fetched_models, [])
+            self.assertGreaterEqual(dlg._max_tokens_spin.maximum(), 1_000_000)
+            self.assertNotEqual(dlg._max_tokens_spin.maximum(), 4096)
+        finally:
+            dlg.done(0)
+
+    def test_minimax_m3_settings_spin_max_is_524288(self) -> None:
+        """The Settings dialog must surface MiniMax-M3's documented
+        ``524288`` upper bound for ``Max Output Tokens``."""
+        dlg, cfg = self._make_dialog()
+        try:
+            cfg.provider.name = "minimax"
+            cfg.provider.model = "MiniMax-M3"
+            dlg._provider_combo.setCurrentText("minimax")
+            dlg._populate_builtin_models()
+
+            # Built-in models populated M3 metadata into ``_fetched_models``.
+            info = dlg._find_model_info("MiniMax-M3")
+            self.assertIsNotNone(info)
+            assert info is not None  # type-narrow for the assert below
+            self.assertEqual(info.max_output_tokens, 524_288)
+            # Spin upper bound is driven by the model's metadata, not a
+            # dataclass default or a hard-coded 4096.
+            self.assertEqual(dlg._max_tokens_spin.maximum(), 524_288)
+            self.assertNotEqual(dlg._max_tokens_spin.maximum(), 4096)
+        finally:
+            dlg.done(0)
+
+
+# ----------------------------------------------------------------------------
+# I. MiniMax provider: defaults, model metadata, automatic M3 thinking
+# ----------------------------------------------------------------------------
+
+
+class TestMiniMaxDefaultsAndMetadata(unittest.TestCase):
+    """MiniMax default model and builtin metadata follow current docs."""
+
+    def test_default_model_is_minimax_m3(self) -> None:
+        from rikugan.core.config import PROVIDER_DEFAULT_MODELS
+
+        self.assertEqual(PROVIDER_DEFAULT_MODELS["minimax"], "MiniMax-M3")
+
+    def test_minimax_provider_default_model_is_m3(self) -> None:
+        from rikugan.providers.minimax_provider import MiniMaxProvider
+
+        provider = MiniMaxProvider(api_key="sk-test")
+        self.assertEqual(provider.model, "MiniMax-M3")
+
+    def test_builtin_models_include_m3_with_documented_limits(self) -> None:
+        from rikugan.providers.minimax_provider import MiniMaxProvider
+
+        models = MiniMaxProvider._builtin_models()
+        ids = [m.id for m in models]
+        self.assertIn("MiniMax-M3", ids)
+        self.assertIn("MiniMax-M2.7", ids)
+        self.assertIn("MiniMax-M2.7-highspeed", ids)
+        m3 = next(m for m in models if m.id == "MiniMax-M3")
+        self.assertEqual(m3.context_window, 1_000_000)
+        self.assertEqual(m3.max_output_tokens, 524_288)
+        for m in models:
+            if m.id.startswith("MiniMax-M2"):
+                self.assertEqual(m.context_window, 204_800)
+                self.assertEqual(m.max_output_tokens, 204_800)
+
+    def test_capabilities_reflect_largest_documented_model(self) -> None:
+        from rikugan.providers.minimax_provider import MiniMaxProvider
+
+        caps = MiniMaxProvider(api_key="sk-test").capabilities
+        self.assertEqual(caps.max_context_window, 1_000_000)
+        self.assertEqual(caps.max_output_tokens, 524_288)
+        self.assertTrue(caps.tool_use)
+
+
+class TestMiniMaxAutomaticThinking(unittest.TestCase):
+    """``_build_request_kwargs`` must enable automatic thinking for M3
+    and not add a manual thinking budget for M2.x."""
+
+    def _kwargs(self, model: str, max_tokens: int = 8192):
+        from rikugan.providers.minimax_provider import MiniMaxProvider
+
+        provider = MiniMaxProvider(api_key="sk-test", model=model)
+        return provider._build_request_kwargs(
+            messages=[],
+            tools=None,
+            temperature=0.5,
+            max_tokens=max_tokens,
+            system="",
+        )
+
+    def test_m3_includes_adaptive_thinking(self) -> None:
+        kwargs = self._kwargs("MiniMax-M3", max_tokens=131072)
+        self.assertEqual(kwargs.get("thinking"), {"type": "adaptive"})
+        # Caller's max_tokens preserved exactly (no override).
+        self.assertEqual(kwargs.get("max_tokens"), 131072)
+
+    def test_m3_thinking_case_insensitive(self) -> None:
+        kwargs = self._kwargs("minimax-m3")
+        self.assertEqual(kwargs.get("thinking"), {"type": "adaptive"})
+
+    def test_m2_does_not_add_thinking_payload(self) -> None:
+        """M2.x models cannot disable thinking; we must not add a
+        separate ``budget_tokens`` or other manual thinking field."""
+        kwargs = self._kwargs("MiniMax-M2.5", max_tokens=65536)
+        self.assertNotIn("thinking", kwargs)
+        # No budget_tokens field should leak into the top-level kwargs.
+        self.assertNotIn("budget_tokens", kwargs)
+        self.assertEqual(kwargs.get("max_tokens"), 65536)
+
+    def test_m27_does_not_add_thinking_payload(self) -> None:
+        kwargs = self._kwargs("MiniMax-M2.7", max_tokens=65536)
+        self.assertNotIn("thinking", kwargs)
+
+    def test_strips_cache_control_from_request(self) -> None:
+        """The MiniMax adapter continues to strip unsupported ``cache_control``."""
+        kwargs = self._kwargs("MiniMax-M3")
+        # system: empty string passes through; tools: None → not in kwargs.
+        # The strip is defensive — assert no ``cache_control`` keys leaked.
+        def _walk(obj):
+            if isinstance(obj, dict):
+                if "cache_control" in obj:
+                    yield obj
+                for v in obj.values():
+                    yield from _walk(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    yield from _walk(v)
+
+        self.assertEqual(list(_walk(kwargs)), [])
+
+
+# ----------------------------------------------------------------------------
+# J. Anthropic-compatible raw content block preservation
+# ----------------------------------------------------------------------------
+
+
+class TestAnthropicRawPartsPreservation(unittest.TestCase):
+    """Raw Anthropic content blocks (thinking signatures, text, tool_use)
+    are collected during streaming and replayed by ``_format_messages``."""
+
+    def _stream_chunks(self, events):
+        from rikugan.providers.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="sk-test", model="claude-sonnet-4-20250514")
+        return list(provider._stream_chunks(_FakeAnthropicClient(events), {}))
+
+    def test_stream_emits_final_raw_parts_with_signature(self) -> None:
+        events = [
+            SimpleNamespace(
+                type="content_block_start",
+                content_block=SimpleNamespace(type="thinking", thinking=""),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                delta=SimpleNamespace(type="thinking_delta", thinking="hmm"),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                delta=SimpleNamespace(type="signature_delta", signature="sig-xyz"),
+            ),
+            SimpleNamespace(type="content_block_stop"),
+            SimpleNamespace(
+                type="content_block_start",
+                content_block=SimpleNamespace(type="text", text=""),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                delta=SimpleNamespace(type="text_delta", text="hi"),
+            ),
+            SimpleNamespace(type="content_block_stop"),
+        ]
+        chunks = self._stream_chunks(events)
+        # The visible UI text chunks are unchanged: <think>\n, hmm, \n</think>\n, hi.
+        text_chunks = [c.text for c in chunks if c.text]
+        self.assertIn("<think>\n", text_chunks)
+        self.assertIn("hmm", text_chunks)
+        self.assertIn("\n</think>\n", text_chunks)
+        self.assertIn("hi", text_chunks)
+
+        # The last chunk carries the complete raw block list.
+        last_with_raw = [c for c in chunks if c.raw_parts is not None]
+        self.assertEqual(len(last_with_raw), 1)
+        raw = last_with_raw[0].raw_parts
+        self.assertEqual(len(raw), 2)
+        self.assertEqual(raw[0]["type"], "thinking")
+        self.assertEqual(raw[0]["thinking"], "hmm")
+        self.assertEqual(raw[0]["signature"], "sig-xyz")
+        self.assertEqual(raw[1]["type"], "text")
+        self.assertEqual(raw[1]["text"], "hi")
+
+    def test_stream_collects_tool_use_raw_block(self) -> None:
+        events = [
+            SimpleNamespace(
+                type="content_block_start",
+                content_block=SimpleNamespace(
+                    type="tool_use", id="t1", name="do_thing", input=None
+                ),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                delta=SimpleNamespace(type="input_json_delta", partial_json='{"a":'),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                delta=SimpleNamespace(type="input_json_delta", partial_json="1}"),
+            ),
+            SimpleNamespace(type="content_block_stop"),
+        ]
+        chunks = self._stream_chunks(events)
+        last_with_raw = [c for c in chunks if c.raw_parts is not None]
+        self.assertEqual(len(last_with_raw), 1)
+        raw = last_with_raw[0].raw_parts
+        self.assertEqual(len(raw), 1)
+        self.assertEqual(raw[0]["type"], "tool_use")
+        self.assertEqual(raw[0]["id"], "t1")
+        self.assertEqual(raw[0]["name"], "do_thing")
+        self.assertEqual(raw[0]["input"], {"a": 1})
+
+    def test_stream_malformed_tool_use_json_degrades_gracefully(self) -> None:
+        """Malformed partial JSON must not raise; the raw block falls
+        back to an empty input dict so downstream replay still works."""
+        events = [
+            SimpleNamespace(
+                type="content_block_start",
+                content_block=SimpleNamespace(
+                    type="tool_use", id="t1", name="broken", input=None
+                ),
+            ),
+            SimpleNamespace(
+                type="content_block_delta",
+                delta=SimpleNamespace(
+                    type="input_json_delta", partial_json='{"a": '
+                ),
+            ),
+            SimpleNamespace(type="content_block_stop"),
+        ]
+        chunks = self._stream_chunks(events)
+        last_with_raw = [c for c in chunks if c.raw_parts is not None]
+        self.assertEqual(len(last_with_raw), 1)
+        raw = last_with_raw[0].raw_parts
+        self.assertEqual(raw[0]["input"], {})
+
+    def test_format_messages_replays_raw_parts(self) -> None:
+        """When an assistant message carries Anthropic-shaped ``_raw_parts``,
+        ``_format_messages`` must replay them verbatim instead of
+        reconstructing from ``content`` + ``tool_calls``."""
+        from rikugan.core.types import Message, Role
+        from rikugan.providers.anthropic_provider import AnthropicProvider
+
+        raw = [
+            {"type": "thinking", "thinking": "reasoning", "signature": "abc"},
+            {"type": "text", "text": "answer"},
+            {"type": "tool_use", "id": "t1", "name": "do_thing", "input": {"x": 1}},
+        ]
+        msg = Message(role=Role.ASSISTANT, content="answer")
+        msg._raw_parts = raw
+        provider = AnthropicProvider(api_key="sk-test")
+        formatted = provider._format_messages([msg])
+        self.assertEqual(formatted[0]["content"], raw)
+
+    def test_format_messages_falls_back_without_raw_parts(self) -> None:
+        """Without ``_raw_parts``, the existing reconstruction path
+        is used (text + tool_use dicts)."""
+        from rikugan.core.types import Message, Role, ToolCall
+        from rikugan.providers.anthropic_provider import AnthropicProvider
+
+        msg = Message(
+            role=Role.ASSISTANT,
+            content="hi",
+            tool_calls=[ToolCall(id="t1", name="do", arguments={"a": 1})],
+        )
+        provider = AnthropicProvider(api_key="sk-test")
+        formatted = provider._format_messages([msg])
+        content = formatted[0]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "hi"})
+        self.assertEqual(
+            content[1],
+            {"type": "tool_use", "id": "t1", "name": "do", "input": {"a": 1}},
+        )
+
+    def test_format_messages_rejects_gemini_shaped_raw_parts(self) -> None:
+        """Non-dict raw parts (e.g. Gemini ``Part`` objects) must
+        not be forwarded as Anthropic content blocks."""
+        from rikugan.core.types import Message, Role
+        from rikugan.providers.anthropic_provider import AnthropicProvider
+
+        # Simulate a Gemini-shaped raw part (SDK object with attributes).
+        class _FakeGeminiPart:
+            type = "text"
+            text = "hello"
+
+        msg = Message(role=Role.ASSISTANT, content="hello")
+        msg._raw_parts = [_FakeGeminiPart()]
+        provider = AnthropicProvider(api_key="sk-test")
+        formatted = provider._format_messages([msg])
+        # Falls back to reconstruction (text block with content).
+        self.assertEqual(formatted[0]["content"][0], {"type": "text", "text": "hello"})
+
+
 if __name__ == "__main__":
     unittest.main()

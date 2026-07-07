@@ -45,7 +45,7 @@ PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o",
     "gemini": "gemini-2.0-flash",
     "ollama": "llama3.1",
-    "minimax": "MiniMax-M2.5",
+    "minimax": "MiniMax-M3",
     # openai_compat is intentionally omitted — user must configure
 }
 

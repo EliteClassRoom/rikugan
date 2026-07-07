@@ -251,7 +251,23 @@ class AnthropicProvider(LLMProvider):
         ]
 
     def _format_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
-        """Convert to Anthropic's messages format."""
+        """Convert to Anthropic's messages format.
+
+        For assistant messages, if ``_raw_parts`` is a valid Anthropic-shaped
+        ``list[dict]`` (collected during a previous streaming or non-streaming
+        call from an Anthropic-compatible provider such as MiniMax), replay
+        those blocks as-is so ``signature`` fields on ``thinking`` blocks and
+        the exact ``id`` / ``name`` ordering of ``tool_use`` blocks survive
+        the round trip.  This matters for MiniMax-M3: the provider requires
+        thinking signatures on follow-up tool-use turns, and reconstructing
+        content from our internal ``content`` + ``tool_calls`` would strip
+        them.
+
+        The guard (``isinstance(raw_parts, list)`` + ``all dict`` +
+        recognised ``type``) deliberately rejects Gemini-shaped raw parts
+        (``list[genai_types.Part]``) so an Anthropic provider never tries to
+        forward Gemini SDK objects as Anthropic content blocks.
+        """
         formatted = []
         for msg in messages:
             if msg.role == Role.SYSTEM:
@@ -261,6 +277,15 @@ class AnthropicProvider(LLMProvider):
                 formatted.append({"role": "user", "content": msg.content})
 
             elif msg.role == Role.ASSISTANT:
+                raw_parts = getattr(msg, "_raw_parts", None)
+                if self._is_valid_anthropic_raw_parts(raw_parts):
+                    # Replay the original Anthropic-shaped block list
+                    # (thinking + text + tool_use with signatures).
+                    formatted.append(
+                        {"role": "assistant", "content": list(raw_parts)}  # type: ignore[list-item]
+                    )
+                    continue
+
                 content: list = []
                 if msg.content:
                     content.append({"type": "text", "text": msg.content})
@@ -295,6 +320,60 @@ class AnthropicProvider(LLMProvider):
 
         return formatted
 
+    @staticmethod
+    def _is_valid_anthropic_raw_parts(raw_parts: Any) -> bool:
+        """True if *raw_parts* is an Anthropic-shaped ``list[dict]`` we can replay.
+
+        Accepts a non-empty list of plain ``dict`` blocks whose ``type`` is
+        one of the recognised Anthropic content-block types.  This rules
+        out Gemini SDK ``Part`` objects and other provider-native types.
+        """
+        if not isinstance(raw_parts, list) or not raw_parts:
+            return False
+        valid_types = {"thinking", "text", "tool_use", "tool_result"}
+        for block in raw_parts:
+            if not isinstance(block, dict):
+                return False
+            if block.get("type") not in valid_types:
+                return False
+        return True
+
+    @staticmethod
+    def _block_to_dict(block: Any) -> dict[str, Any] | None:
+        """Convert an Anthropic SDK content block to an Anthropic-shaped dict.
+
+        Returns ``None`` for unknown block types so the caller can skip them
+        rather than forwarding an unrecognised shape to the API.
+        """
+        btype = getattr(block, "type", None)
+        if btype == "thinking":
+            out: dict[str, Any] = {
+                "type": "thinking",
+                "thinking": getattr(block, "thinking", "") or "",
+            }
+            signature = getattr(block, "signature", None)
+            if signature:
+                out["signature"] = signature
+            return out
+        if btype == "text":
+            return {"type": "text", "text": getattr(block, "text", "") or ""}
+        if btype == "tool_use":
+            tool_input = getattr(block, "input", None)
+            if isinstance(tool_input, str):
+                try:
+                    tool_input = json.loads(tool_input) if tool_input else {}
+                except json.JSONDecodeError:
+                    tool_input = {}
+            elif not isinstance(tool_input, dict):
+                tool_input = {}
+            return {
+                "type": "tool_use",
+                "id": getattr(block, "id", ""),
+                "name": getattr(block, "name", ""),
+                "input": tool_input,
+            }
+        return None
+
     def _format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert OpenAI-style tool schemas to Anthropic format."""
         anthropic_tools = []
@@ -313,6 +392,7 @@ class AnthropicProvider(LLMProvider):
         """Convert Anthropic response to internal Message."""
         content_text = ""
         tool_calls = []
+        raw_blocks: list[dict[str, Any]] = []
 
         for block in response.content:
             if block.type == "thinking":
@@ -320,13 +400,27 @@ class AnthropicProvider(LLMProvider):
             elif block.type == "text":
                 content_text += block.text
             elif block.type == "tool_use":
+                tool_input = block.input
+                if isinstance(tool_input, str):
+                    try:
+                        tool_input = json.loads(tool_input) if tool_input else {}
+                    except json.JSONDecodeError:
+                        tool_input = {}
+                elif not isinstance(tool_input, dict):
+                    tool_input = {}
                 tool_calls.append(
                     ToolCall(
                         id=block.id,
                         name=block.name,
-                        arguments=block.input if isinstance(block.input, dict) else json.loads(block.input),
+                        arguments=tool_input,
                     )
                 )
+            # Preserve the Anthropic-shaped block list for the next turn's
+            # request, so thinking signatures and tool_use id/name ordering
+            # round-trip intact (required by MiniMax-M3).
+            block_dict = self._block_to_dict(block)
+            if block_dict is not None:
+                raw_blocks.append(block_dict)
 
         usage_obj = getattr(response, "usage", None)
         if usage_obj is None:
@@ -342,12 +436,15 @@ class AnthropicProvider(LLMProvider):
                 cache_creation_tokens=coerce_token_count(getattr(usage_obj, "cache_creation_input_tokens", 0)),
             )
 
-        return Message(
+        msg = Message(
             role=Role.ASSISTANT,
             content=content_text,
             tool_calls=tool_calls,
             token_usage=usage,
         )
+        if raw_blocks:
+            msg._raw_parts = raw_blocks
+        return msg
 
     def _handle_api_error(self, e: Exception) -> NoReturn:
         """Raise the appropriate Rikugan error from an Anthropic API error."""
@@ -521,6 +618,67 @@ class AnthropicProvider(LLMProvider):
 
                 in_thinking = False
 
+                # Anthropic-shaped raw content block list collected in
+                # parallel with the UI text/tool chunks.  Emitted as a
+                # final ``StreamChunk(raw_parts=...)`` once the stream
+                # ends so the agent loop can attach it to the assistant
+                # ``Message._raw_parts`` for later replay.
+                raw_blocks: list[dict[str, Any]] = []
+                # Working buffer for the block currently being built.
+                _raw_text: list[str] = []
+                _raw_thinking: list[str] = []
+                _raw_signature: str | None = None
+                _raw_tool_input_parts: list[str] = []
+                _raw_tool_id: str | None = None
+                _raw_tool_name: str | None = None
+
+                def _flush_current_block() -> None:
+                    """Append the in-progress block (if any) to ``raw_blocks``."""
+                    nonlocal _raw_text, _raw_thinking, _raw_signature
+                    nonlocal _raw_tool_input_parts, _raw_tool_id, _raw_tool_name
+                    if _raw_text:
+                        raw_blocks.append({"type": "text", "text": "".join(_raw_text)})
+                    elif _raw_thinking or _raw_signature is not None:
+                        thinking_block: dict[str, Any] = {
+                            "type": "thinking",
+                            "thinking": "".join(_raw_thinking),
+                        }
+                        if _raw_signature:
+                            thinking_block["signature"] = _raw_signature
+                        raw_blocks.append(thinking_block)
+                    elif _raw_tool_id is not None:
+                        raw_input = "".join(_raw_tool_input_parts)
+                        parsed_input: Any = {}
+                        if raw_input:
+                            try:
+                                parsed_input = json.loads(raw_input)
+                            except json.JSONDecodeError as je:
+                                # Malformed partial JSON — degrade gracefully
+                                # to an empty input rather than raising.  The
+                                # existing tool-call path already tolerates
+                                # empty arguments, so the downstream request
+                                # will still go through.
+                                log_debug(
+                                    f"AnthropicProvider raw block: tool_use JSON parse failed "
+                                    f"(id={_raw_tool_id}, name={_raw_tool_name}): {je}"
+                                )
+                                parsed_input = {}
+                        raw_blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": _raw_tool_id,
+                                "name": _raw_tool_name or "",
+                                "input": parsed_input if isinstance(parsed_input, dict) else {},
+                            }
+                        )
+                    # Reset working buffers
+                    _raw_text = []
+                    _raw_thinking = []
+                    _raw_signature = None
+                    _raw_tool_input_parts = []
+                    _raw_tool_id = None
+                    _raw_tool_name = None
+
                 for event in stream:
                     etype = event.type
 
@@ -529,6 +687,8 @@ class AnthropicProvider(LLMProvider):
                         if block.type == "tool_use":
                             current_tool_id = block.id
                             current_tool_name = block.name
+                            _raw_tool_id = block.id
+                            _raw_tool_name = block.name
                             yield StreamChunk(
                                 tool_call_id=block.id,
                                 tool_name=block.name,
@@ -539,15 +699,23 @@ class AnthropicProvider(LLMProvider):
                             yield StreamChunk(text="<think>\n")
                         elif block.type == "text":
                             if block.text:
+                                _raw_text.append(block.text)
                                 yield StreamChunk(text=block.text)
 
                     elif etype == "content_block_delta":
                         delta = event.delta
                         if delta.type == "thinking_delta":
+                            _raw_thinking.append(delta.thinking)
                             yield StreamChunk(text=delta.thinking)
                         elif delta.type == "text_delta":
+                            _raw_text.append(delta.text)
                             yield StreamChunk(text=delta.text)
+                        elif delta.type == "signature_delta":
+                            # Anthropic emits a separate ``signature_delta``
+                            # event for the thinking block's signature.
+                            _raw_signature = getattr(delta, "signature", None)
                         elif delta.type == "input_json_delta":
+                            _raw_tool_input_parts.append(delta.partial_json)
                             yield StreamChunk(
                                 tool_call_id=current_tool_id,
                                 tool_name=current_tool_name,
@@ -555,6 +723,7 @@ class AnthropicProvider(LLMProvider):
                             )
 
                     elif etype == "content_block_stop":
+                        _flush_current_block()
                         if in_thinking:
                             yield StreamChunk(text="\n</think>\n")
                             in_thinking = False
@@ -600,6 +769,18 @@ class AnthropicProvider(LLMProvider):
                                     ),
                                 )
                             )
+
+                # Final flush: in case the stream ended without an explicit
+                # content_block_stop for the last block (defensive).
+                _flush_current_block()
+
+                # Emit the complete raw block list exactly once at the end
+                # of the stream.  The agent loop in
+                # ``rikugan/agent/loop.py`` captures the last
+                # ``chunk.raw_parts`` it sees and attaches it to the
+                # assistant ``Message._raw_parts``.
+                if raw_blocks:
+                    yield StreamChunk(raw_parts=list(raw_blocks))
 
         except Exception as e:
             # If the watchdog closed the stream mid-iteration, the SDK raises

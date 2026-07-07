@@ -95,7 +95,7 @@ def _get_minimax_auth(
 
     # Model name: prefer provider-level, then providers dict,
     # then the hard-coded default.
-    model_name = config.provider.model or minimax_cfg.get("model") or "MiniMax-M2.5"
+    model_name = config.provider.model or minimax_cfg.get("model") or "MiniMax-M3"
 
     return api_key, api_host, model_name
 

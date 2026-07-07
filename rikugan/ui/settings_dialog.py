@@ -48,6 +48,12 @@ from .theme.manager import ThemeManager
 _DEFAULT_MINIMAX_URL = "https://api.minimax.io/anthropic"
 _CUSTOM_PROVIDER_URL_PLACEHOLDER = "https://api.example.com/v1"
 
+# Generous upper bound for the Max Output Tokens spin box when the
+# selected model has no metadata (manual / custom models).  Matches the
+# built-in ``QSpinBox`` range so the spin box never silently truncates a
+# legitimate value the user typed.
+_MANUAL_MAX_TOKENS = 2_000_000
+
 # Known default API base URLs per provider — used to auto-clear on switch
 _PROVIDER_BASES = {
     "ollama": DEFAULT_OLLAMA_URL,
@@ -321,6 +327,15 @@ class SettingsDialog(QDialog):
         # Connect provider/key change signals AFTER everything is built
         self._provider_combo.currentTextChanged.connect(self._on_provider_changed)
         self._api_key_edit.editingFinished.connect(self._on_key_edited)
+        # Updating the selected model should immediately refresh the
+        # Max Output Tokens range / value and Context Window.  The slot
+        # is idempotent (it just reads the current combo state) so the
+        # programmatic ``setCurrentIndex`` calls inside
+        # ``_on_models_ready`` are safe — they trigger a re-application
+        # that is a no-op when the model matches the saved config.
+        self._model_combo.currentIndexChanged.connect(
+            lambda _idx: self._update_generation_defaults()
+        )
 
     def _on_tab_changed_lazy(self, index: int) -> None:
         """Lazy-construct Skills / MCP / Profiles tabs on first selection."""
@@ -494,7 +509,12 @@ class SettingsDialog(QDialog):
         gen_form.addRow("Temperature:", self._temp_spin)
 
         self._max_tokens_spin = QSpinBox()
-        self._max_tokens_spin.setRange(256, 65536)
+        # Generous initial range. ``_update_generation_defaults()`` refines
+        # the upper bound to the selected model's ``max_output_tokens`` once
+        # the model combo is populated.  Lower bound of 1 matches the
+        # provider/API minimum and ``RikuganConfig.validate()`` which only
+        # requires positivity.
+        self._max_tokens_spin.setRange(1, 2_000_000)
         self._max_tokens_spin.setSingleStep(1024)
         self._max_tokens_spin.setValue(self._config.provider.max_tokens)
         gen_form.addRow("Max Output Tokens:", self._max_tokens_spin)
@@ -833,15 +853,21 @@ class SettingsDialog(QDialog):
             if self._is_local_compat_provider(provider_name):
                 # Don't fall back to OpenAI's static list — that would
                 # silently replace the user's Ollama / custom model
-                # with "gpt-4o".  Show only the preserved manual model.
-                if manual_model:
-                    models = [
-                        ModelInfo(
-                            id=manual_model,
-                            name=manual_model,
-                            provider=provider_name,
-                        )
-                    ]
+                # with "gpt-4o".  And don't synthesize a bare ``ModelInfo``
+                # here either: a ``ModelInfo`` constructed without
+                # ``max_output_tokens`` would default the dataclass
+                # field to ``4096``, and ``_update_generation_defaults``
+                # would then clamp the spin box to that bogus 4096
+                # limit.  Treat the manual model as unknown metadata —
+                # let ``_update_generation_defaults`` use the
+                # ``_MANUAL_MAX_TOKENS`` fallback instead.
+                self._set_manual_model_text(manual_model)
+                self._fetched_models = []
+                self._update_generation_defaults()
+                self._model_status.setText("Click Refresh to fetch live models.")
+                self._model_status.setStyleSheet(get_hint_status_style())
+                self._model_restore_hint = ""
+                return
             else:
                 provider = self._registry.new_instance(
                     provider_name,
@@ -1150,17 +1176,52 @@ class SettingsDialog(QDialog):
         self._model_restore_hint = ""
 
     def _update_generation_defaults(self) -> None:
+        """Apply model-driven generation defaults to the spin boxes.
+
+        Behavior:
+
+        * The Max Output Tokens spin box upper bound is always updated to
+          the selected model's ``max_output_tokens`` (or a generous
+          ``_MANUAL_MAX_TOKENS`` fallback for unknown / custom models).
+        * If the user picked a *different* model from the combo, Max
+          Output Tokens is set to that model's ``max_output_tokens`` and
+          Context Window is set to ``model.context_window``.
+        * If the model matches the saved config, the user's custom
+          ``max_tokens`` value is preserved — we only clamp it down if it
+          exceeds the newly discovered model limit (e.g. the user typed
+          a high value and the new provider metadata has a lower cap).
+        * Context Window is left alone on same-model population so a user
+          who has manually tuned it is not silently overridden.
+        """
         model_id = self._get_selected_model_id()
+        info = self._find_model_info(model_id)
+        if info is None:
+            # Manual / custom model with no metadata.  Use a generous
+            # fallback upper bound but keep the current value.
+            self._max_tokens_spin.setMaximum(_MANUAL_MAX_TOKENS)
+            return
+
+        self._max_tokens_spin.setMaximum(info.max_output_tokens)
+
+        if model_id != self._config.provider.model:
+            # User picked a different model — auto-fill from metadata.
+            self._context_spin.setValue(info.context_window)
+            self._max_tokens_spin.setValue(info.max_output_tokens)
+            return
+
+        # Same model as the saved config: only clamp if the saved value
+        # exceeds the model's advertised limit.
+        if self._max_tokens_spin.value() > info.max_output_tokens:
+            self._max_tokens_spin.setValue(info.max_output_tokens)
+
+    def _find_model_info(self, model_id: str) -> ModelInfo | None:
+        """Return ``ModelInfo`` for *model_id* in the current fetched list."""
+        if not model_id:
+            return None
         for m in self._fetched_models:
             if m.id == model_id:
-                # Only apply model defaults when the user selected a
-                # different model.  If the model matches the saved config,
-                # the user may have intentionally customized context_window
-                # — don't overwrite it with the model's default.
-                if model_id != self._config.provider.model:
-                    self._context_spin.setValue(m.context_window)
-                self._max_tokens_spin.setValue(min(m.max_output_tokens, 16384))
-                break
+                return m
+        return None
 
     def _get_selected_model_id(self) -> str:
         idx = self._model_combo.currentIndex()

@@ -29,11 +29,64 @@ class MiniMaxProvider(AnthropicProvider):
 
     DEFAULT_API_BASE = "https://api.minimax.io/anthropic"
 
+    # Model metadata is not exposed by MiniMax's /anthropic/v1/models endpoint,
+    # so we maintain it locally and resolve it by model id.  Values follow the
+    # MiniMax Anthropic-compatible Messages API documentation.
+    _MODEL_LIMITS: dict[str, dict[str, int]] = {
+        "MiniMax-M3": {
+            "context_window": 1_000_000,
+            "max_output_tokens": 524_288,
+        },
+        "MiniMax-M2.7": {
+            "context_window": 204_800,
+            "max_output_tokens": 204_800,
+        },
+        "MiniMax-M2.7-highspeed": {
+            "context_window": 204_800,
+            "max_output_tokens": 204_800,
+        },
+        "MiniMax-M2.5": {
+            "context_window": 204_800,
+            "max_output_tokens": 204_800,
+        },
+        "MiniMax-M2.5-highspeed": {
+            "context_window": 204_800,
+            "max_output_tokens": 204_800,
+        },
+        "MiniMax-M2.1": {
+            "context_window": 204_800,
+            "max_output_tokens": 204_800,
+        },
+        "MiniMax-M2.1-highspeed": {
+            "context_window": 204_800,
+            "max_output_tokens": 204_800,
+        },
+        "MiniMax-M2": {
+            "context_window": 204_800,
+            "max_output_tokens": 204_800,
+        },
+    }
+
+    @classmethod
+    def _limits_for_model(cls, model_id: str) -> tuple[int, int]:
+        """Return ``(context_window, max_output_tokens)`` for a MiniMax model id.
+
+        MiniMax's /anthropic/v1/models endpoint only returns id/display_name
+        metadata — no context or output-token limits — so we resolve them from
+        the local ``_MODEL_LIMITS`` table.  Unknown ids fall back to the
+        documented M2.x defaults.
+        """
+        if not model_id:
+            limits = cls._MODEL_LIMITS["MiniMax-M2.5"]
+        else:
+            limits = cls._MODEL_LIMITS.get(model_id) or cls._MODEL_LIMITS["MiniMax-M2.5"]
+        return limits["context_window"], limits["max_output_tokens"]
+
     def __init__(
         self,
         api_key: str = "",
         api_base: str = "",
-        model: str = "MiniMax-M2.5",
+        model: str = "MiniMax-M3",
         **kwargs: Any,
     ) -> None:
         # Bypass AnthropicProvider.__init__ — MiniMax uses plain API keys only,
@@ -52,12 +105,16 @@ class MiniMaxProvider(AnthropicProvider):
 
     @property
     def capabilities(self) -> ProviderCapabilities:
+        # Documented maximum across the MiniMax family — M3 supports a
+        # 1M context window and 524288 output tokens.  We expose the
+        # largest supported advertised limit so the UI's spin box can be
+        # driven by ``ModelInfo.max_output_tokens`` rather than this value.
         return ProviderCapabilities(
             streaming=True,
             tool_use=True,
             vision=False,
-            max_context_window=204800,
-            max_output_tokens=8192,
+            max_context_window=1_000_000,
+            max_output_tokens=524_288,
             supports_system_prompt=True,
             supports_cache_control=False,
         )
@@ -85,67 +142,50 @@ class MiniMaxProvider(AnthropicProvider):
             return "API Key", "ok"
         return "", "none"
 
-    @staticmethod
-    def _builtin_models() -> list[ModelInfo]:
+    @classmethod
+    def _builtin_models(cls) -> list[ModelInfo]:
+        def _make(model_id: str, display_name: str) -> ModelInfo:
+            ctx, max_out = cls._limits_for_model(model_id)
+            return ModelInfo(
+                id=model_id,
+                name=display_name,
+                provider="minimax",
+                context_window=ctx,
+                max_output_tokens=max_out,
+                supports_tools=True,
+            )
+
         return [
-            ModelInfo(
-                id="MiniMax-M2.5",
-                name="MiniMax M2.5",
-                provider="minimax",
-                context_window=204800,
-                max_output_tokens=8192,
-                supports_tools=True,
-            ),
-            ModelInfo(
-                id="MiniMax-M2.5-highspeed",
-                name="MiniMax M2.5 Highspeed",
-                provider="minimax",
-                context_window=204800,
-                max_output_tokens=8192,
-                supports_tools=True,
-            ),
-            ModelInfo(
-                id="MiniMax-M2.1",
-                name="MiniMax M2.1",
-                provider="minimax",
-                context_window=204800,
-                max_output_tokens=8192,
-                supports_tools=True,
-            ),
-            ModelInfo(
-                id="MiniMax-M2.1-highspeed",
-                name="MiniMax M2.1 Highspeed",
-                provider="minimax",
-                context_window=204800,
-                max_output_tokens=8192,
-                supports_tools=True,
-            ),
-            ModelInfo(
-                id="MiniMax-M2",
-                name="MiniMax M2",
-                provider="minimax",
-                context_window=204800,
-                max_output_tokens=8192,
-                supports_tools=True,
-            ),
+            _make("MiniMax-M3", "MiniMax M3"),
+            _make("MiniMax-M2.7", "MiniMax M2.7"),
+            _make("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
+            _make("MiniMax-M2.5", "MiniMax M2.5"),
+            _make("MiniMax-M2.5-highspeed", "MiniMax M2.5 Highspeed"),
+            _make("MiniMax-M2.1", "MiniMax M2.1"),
+            _make("MiniMax-M2.1-highspeed", "MiniMax M2.1 Highspeed"),
+            _make("MiniMax-M2", "MiniMax M2"),
         ]
 
     def _fetch_models_live(self) -> list[ModelInfo]:
         try:
             client = self._get_client()
             response = client.models.list(limit=50)
-            models = [
-                ModelInfo(
-                    id=m.id,
-                    name=getattr(m, "display_name", None) or m.id,
-                    provider="minimax",
-                    context_window=204800,
-                    max_output_tokens=8192,
-                    supports_tools=True,
+            models: list[ModelInfo] = []
+            for m in response.data:
+                model_id = m.id
+                if not model_id.lower().startswith("minimax"):
+                    continue
+                ctx, max_out = self._limits_for_model(model_id)
+                models.append(
+                    ModelInfo(
+                        id=model_id,
+                        name=getattr(m, "display_name", None) or model_id,
+                        provider="minimax",
+                        context_window=ctx,
+                        max_output_tokens=max_out,
+                        supports_tools=True,
+                    )
                 )
-                for m in response.data
-                if m.id.lower().startswith("minimax")
-            ]
             return models or self._builtin_models()
         except Exception:
             return self._builtin_models()
@@ -158,7 +198,13 @@ class MiniMaxProvider(AnthropicProvider):
         max_tokens: int,
         system: str,
     ) -> dict[str, Any]:
-        """Build request kwargs, stripping cache_control (not supported by MiniMax)."""
+        """Build request kwargs, stripping cache_control (not supported by MiniMax).
+
+        Additionally enables automatic ``thinking`` for ``MiniMax-M3`` (per the
+        MiniMax Anthropic-compatible API docs: ``thinking: {"type": "adaptive"}``).
+        M2.x models already have thinking permanently enabled and cannot disable
+        it, so no explicit ``thinking`` payload is added for them.
+        """
         kwargs = super()._build_request_kwargs(messages, tools, temperature, max_tokens, system)
 
         # System prompt: strip cache_control from blocks
@@ -181,6 +227,11 @@ class MiniMaxProvider(AnthropicProvider):
         for tool in kwargs.get("tools", []):
             if isinstance(tool, dict):
                 tool.pop("cache_control", None)
+
+        # MiniMax-M3 thinking: enabled automatically.  The MiniMax docs only
+        # describe the ``adaptive`` mode for M3 — no manual token budget.
+        if (self.model or "").strip().lower() == "minimax-m3":
+            kwargs["thinking"] = {"type": "adaptive"}
 
         return kwargs
 
