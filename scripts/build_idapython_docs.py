@@ -7,6 +7,8 @@ docs/superpowers/specs/2026-07-07-idapython-offline-docs-design.md
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import sys
 import time
@@ -110,6 +112,38 @@ def fetch_with_retry(
     return None
 
 
+def write_atomic(path: Path, content: str | bytes) -> None:
+    """Write ``content`` to ``path`` atomically (no partial reads ever).
+
+    Strategy: write to ``path.with_suffix(path.suffix + ".tmp")`` in the
+    same directory, fsync, then ``os.replace()`` (POSIX-atomic, atomic
+    on Windows for same-volume). If the parent directory does not exist,
+    create it.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = content.encode("utf-8") if isinstance(content, str) else content
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        # Best-effort cleanup of leftover temp file
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
+
+
+def sha256_text(text: str) -> str:
+    """Return hex SHA-256 digest of ``text`` (UTF-8 encoded)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 __all__ = [
     "BACKOFF_MULTIPLIER",
     "BASE_URL",
@@ -123,4 +157,6 @@ __all__ = [
     "UPSTREAM_INDEX_URL",
     "discover_modules_from_index",
     "fetch_with_retry",
+    "sha256_text",
+    "write_atomic",
 ]
