@@ -1,0 +1,2421 @@
+ida_lumina
+==========
+
+.. py:module:: ida_lumina
+
+
+Attributes
+----------
+
+.. autoapisummary::
+
+   ida_lumina.PAT_TYPE_UNKNOWN
+   ida_lumina.PAT_TYPE_MD5
+   ida_lumina.PDRES_BADPTN
+   ida_lumina.PDRES_NOT_FOUND
+   ida_lumina.PDRES_ERROR
+   ida_lumina.PDRES_OK
+   ida_lumina.PDRES_ADDED
+   ida_lumina.PMF_PUSH_MODE_MASK
+   ida_lumina.PMF_PUSH_OVERRIDE_IF_BETTER_OR_DIFFERENT
+   ida_lumina.PMF_PUSH_OVERRIDE
+   ida_lumina.PMF_PUSH_DO_NOT_OVERRIDE
+   ida_lumina.PMF_PUSH_MERGE
+   ida_lumina.UOT_ADD
+   ida_lumina.UOT_EDIT
+   ida_lumina.UOT_DEL
+   ida_lumina.GST_NONE
+   ida_lumina.GST_NAME
+   ida_lumina.DMD_SORT_NONE
+   ida_lumina.DMD_SORT_HASH
+   ida_lumina.UF_IS_ADMIN
+   ida_lumina.UF_CAN_DEL_HISTORY
+   ida_lumina.URF_IGNORE_LICID
+   ida_lumina.BOPF_DETAILS
+   ida_lumina.BOPF_CHRONOLOGICAL_ORDER
+   ida_lumina.BOPF_LAST_FUNC_RECORD
+   ida_lumina.BOPF_FIELD_LICENSE_NAME
+   ida_lumina.BOPF_FIELD_LICENSE_EMAIL
+   ida_lumina.BOPF_FIELD_LICENSE_ID
+   ida_lumina.BOPF_SHOW_FIELD_INPUT_HASH
+   ida_lumina.BOPF_SHOW_FIELD_INPUT_PATH
+   ida_lumina.BOPF_SHOW_FIELD_IDB_PATH
+   ida_lumina.BOPF_SHOW_FIELD_CALCREL_HASH
+   ida_lumina.BOPF_SHOW_FIELD_FUNC_EA
+   ida_lumina.BOPF_SHOW_FIELD_FUNC_ID
+   ida_lumina.BOPF_SHOW_FIELD_USERNAME
+   ida_lumina.BOPF_SHOW_FIELD_ALL
+   ida_lumina.BOPF_PUSHES_FIELD_ALL
+   ida_lumina.STF_DETAILS
+   ida_lumina.DEFAULT_TLM_FLUSH_TIMEOUT
+   ida_lumina.DEFAULT_TLM_FLUSH_EVCNT
+   ida_lumina.LUMINA_GET_POP_DEFAULT_NRESULTS
+   ida_lumina.WKFC_INTERRUPTED
+   ida_lumina.MDK_NONE
+   ida_lumina.MDK_TYPE
+   ida_lumina.MDK_VD_ELAPSED
+   ida_lumina.MDK_FCMT
+   ida_lumina.MDK_FRPTCMT
+   ida_lumina.MDK_CMTS
+   ida_lumina.MDK_RPTCMTS
+   ida_lumina.MDK_EXTRACMTS
+   ida_lumina.MDK_USER_STKPNTS
+   ida_lumina.MDK_FRAME_DESC
+   ida_lumina.MDK_OPS
+   ida_lumina.MDK_OPS_EX
+   ida_lumina.MDK_LAST
+   ida_lumina.MDKF_NONE
+   ida_lumina.MDKF_STR
+   ida_lumina.MDKF_TYPE
+   ida_lumina.MDKF_INT64
+   ida_lumina.MDKF_UINT64
+   ida_lumina.MDKF_DCSTRLIST
+   ida_lumina.MDKF_DSVALLIST
+   ida_lumina.MDKF_FRAME_DESC
+   ida_lumina.MDKF_NLSTRLIST
+   ida_lumina.MDKF_DOPSLIST
+   ida_lumina.LFEAT_PRIMARY_MD
+   ida_lumina.LFEAT_DEC
+   ida_lumina.LFEAT_TLM
+   ida_lumina.LFEAT_SECONDARY_MD
+   ida_lumina.GCSF_NO_CONNECT
+   ida_lumina.GSCF_FEAT_MASK
+   ida_lumina.AMDF_UPGRADE
+   ida_lumina.AMDF_FORCE
+   ida_lumina.DMOF_COMPUTE_AND_DIFF_SCORE
+   ida_lumina.PROTOCOL_VERSION
+   ida_lumina.PKT_RPC_OK
+   ida_lumina.PKT_RPC_FAIL
+   ida_lumina.PKT_RPC_NOTIFY
+   ida_lumina.PKT_HELO
+   ida_lumina.PKT_PULL_MD
+   ida_lumina.PKT_PULL_MD_RESULT
+   ida_lumina.PKT_PUSH_MD
+   ida_lumina.PKT_PUSH_MD_RESULT
+   ida_lumina.PKT_GET_POP
+   ida_lumina.PKT_GET_POP_RESULT
+   ida_lumina.PKT_GET_LUMINA_INFO
+   ida_lumina.PKT_GET_LUMINA_INFO_RESULT
+   ida_lumina.PKT_HELO_RESULT
+   ida_lumina.PULL_MD_AUTO_APPLY
+   ida_lumina.PULL_MD_SEEN_FILE
+
+
+Classes
+-------
+
+.. autoapisummary::
+
+   ida_lumina.lumina_op_res_vec_t
+   ida_lumina.func_info_vec_t
+   ida_lumina.func_info_and_frequency_vec_t
+   ida_lumina.func_info_and_pattern_vec_t
+   ida_lumina.func_info_pattern_and_frequency_vec_t
+   ida_lumina.insn_cmts_t
+   ida_lumina.user_stkpnts_t
+   ida_lumina.frame_mems_t
+   ida_lumina.extra_cmts_t
+   ida_lumina.skipped_funcs_t
+   ida_lumina.insn_ops_reprs_t
+   ida_lumina.pattern_ids_t
+   ida_lumina.pop_fun_vec_t
+   ida_lumina.mdkey_vec_t
+   ida_lumina.insn_site_t
+   ida_lumina.insn_cmt_t
+   ida_lumina.user_stkpnt_t
+   ida_lumina.extra_cmt_t
+   ida_lumina.oprepr_t
+   ida_lumina.insn_ops_repr_t
+   ida_lumina.metadata_iterator_t
+   ida_lumina.md_type_parts_t
+   ida_lumina.func_md_diff_handler_t
+   ida_lumina.pattern_id_t
+   ida_lumina.func_info_base_t
+   ida_lumina.func_info_t
+   ida_lumina.input_file_t
+   ida_lumina.func_info_and_frequency_t
+   ida_lumina.func_info_and_pattern_t
+   ida_lumina.func_info_pattern_and_frequency_t
+   ida_lumina.pop_fun_t
+   ida_lumina.serialized_tinfo
+   ida_lumina.frame_mem_t
+   ida_lumina.frame_desc_t
+   ida_lumina.skipped_func_t
+   ida_lumina.user_license_info_t
+   ida_lumina.lumina_user_t
+   ida_lumina.peer_conn_t
+   ida_lumina.lumina_server_info_t
+   ida_lumina.lumina_info_t
+   ida_lumina.pkt_rpc_ok_t
+   ida_lumina.pkt_rpc_fail_t
+   ida_lumina.pkt_rpc_notify_t
+   ida_lumina.pkt_helo_t
+   ida_lumina.pkt_pull_md_t
+   ida_lumina.pkt_pull_md_result_t
+   ida_lumina.pkt_push_md_t
+   ida_lumina.pkt_push_md_result_t
+   ida_lumina.pkt_get_pop_t
+   ida_lumina.pkt_get_pop_result_t
+   ida_lumina.pkt_get_lumina_info_t
+   ida_lumina.pkt_get_lumina_info_result_t
+   ida_lumina.pkt_helo_result_t
+   ida_lumina.push_md_opts_t
+   ida_lumina.push_md_result_t
+   ida_lumina.lumina_client_t
+   ida_lumina.simple_idb_diff_handler_t
+
+
+Functions
+---------
+
+.. autoapisummary::
+
+   ida_lumina.new_packet
+   ida_lumina.calc_func_metadata
+   ida_lumina.extract_insn_cmts_from_metadata
+   ida_lumina.extract_extra_cmts_from_metadata
+   ida_lumina.extract_user_stkpnts_from_metadata
+   ida_lumina.extract_frame_desc_from_metadata
+   ida_lumina.extract_insn_opreprs_from_metadata
+   ida_lumina.extract_insn_opreprs_from_metadata_ex
+   ida_lumina.get_server_connection
+   ida_lumina.get_server_connection2
+   ida_lumina.apply_metadata
+   ida_lumina.score_metadata
+   ida_lumina.backup_metadata
+   ida_lumina.revert_metadata
+   ida_lumina.has_backup_metadata
+   ida_lumina.diff_metadata
+   ida_lumina.get_lumina_rpc_packet_t_index_from_base
+   ida_lumina.extract_type_from_metadata
+   ida_lumina.split_metadata
+
+
+Module Contents
+---------------
+
+.. py:class:: lumina_op_res_vec_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> lumina_op_res_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> lumina_op_res_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: lumina_op_res_vec_t) -> None
+
+
+   .. py:method:: extract() -> lumina_op_res_t *
+
+
+   .. py:method:: inject(s: lumina_op_res_t *, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< lumina_op_res_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< lumina_op_res_t >::const_iterator
+
+
+   .. py:method:: insert(it: qvector< lumina_op_res_t >::iterator, x: lumina_op_res_t const &) -> qvector< lumina_op_res_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< lumina_op_res_t >::iterator
+
+
+   .. py:method:: find(*args) -> qvector< lumina_op_res_t >::const_iterator
+
+
+   .. py:method:: has(x: lumina_op_res_t const &) -> bool
+
+
+   .. py:method:: add_unique(x: lumina_op_res_t const &) -> bool
+
+
+   .. py:method:: append(x: lumina_op_res_t const &) -> None
+
+
+   .. py:method:: extend(x: lumina_op_res_vec_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: func_info_vec_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> func_info_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> func_info_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: func_info_vec_t) -> None
+
+
+   .. py:method:: extract() -> func_info_t *
+
+
+   .. py:method:: inject(s: func_info_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< func_info_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< func_info_t >::const_iterator
+
+
+   .. py:method:: insert(it: func_info_t, x: func_info_t) -> qvector< func_info_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< func_info_t >::iterator
+
+
+   .. py:method:: append(x: func_info_t) -> None
+
+
+   .. py:method:: extend(x: func_info_vec_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: func_info_and_frequency_vec_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> func_info_and_frequency_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> func_info_and_frequency_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: func_info_and_frequency_vec_t) -> None
+
+
+   .. py:method:: extract() -> func_info_and_frequency_t *
+
+
+   .. py:method:: inject(s: func_info_and_frequency_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< func_info_and_frequency_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< func_info_and_frequency_t >::const_iterator
+
+
+   .. py:method:: insert(it: func_info_and_frequency_t, x: func_info_and_frequency_t) -> qvector< func_info_and_frequency_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< func_info_and_frequency_t >::iterator
+
+
+   .. py:method:: append(x: func_info_and_frequency_t) -> None
+
+
+   .. py:method:: extend(x: func_info_and_frequency_vec_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: func_info_and_pattern_vec_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> func_info_and_pattern_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> func_info_and_pattern_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: func_info_and_pattern_vec_t) -> None
+
+
+   .. py:method:: extract() -> func_info_and_pattern_t *
+
+
+   .. py:method:: inject(s: func_info_and_pattern_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< func_info_and_pattern_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< func_info_and_pattern_t >::const_iterator
+
+
+   .. py:method:: insert(it: func_info_and_pattern_t, x: func_info_and_pattern_t) -> qvector< func_info_and_pattern_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< func_info_and_pattern_t >::iterator
+
+
+   .. py:method:: append(x: func_info_and_pattern_t) -> None
+
+
+   .. py:method:: extend(x: func_info_and_pattern_vec_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: func_info_pattern_and_frequency_vec_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> func_info_pattern_and_frequency_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> func_info_pattern_and_frequency_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: func_info_pattern_and_frequency_vec_t) -> None
+
+
+   .. py:method:: extract() -> func_info_pattern_and_frequency_t *
+
+
+   .. py:method:: inject(s: func_info_pattern_and_frequency_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< func_info_pattern_and_frequency_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< func_info_pattern_and_frequency_t >::const_iterator
+
+
+   .. py:method:: insert(it: func_info_pattern_and_frequency_t, x: func_info_pattern_and_frequency_t) -> qvector< func_info_pattern_and_frequency_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< func_info_pattern_and_frequency_t >::iterator
+
+
+   .. py:method:: append(x: func_info_pattern_and_frequency_t) -> None
+
+
+   .. py:method:: extend(x: func_info_pattern_and_frequency_vec_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: insn_cmts_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> insn_cmt_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> insn_cmt_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: insn_cmts_t) -> None
+
+
+   .. py:method:: extract() -> insn_cmt_t *
+
+
+   .. py:method:: inject(s: insn_cmt_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< insn_cmt_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< insn_cmt_t >::const_iterator
+
+
+   .. py:method:: insert(it: insn_cmt_t, x: insn_cmt_t) -> qvector< insn_cmt_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< insn_cmt_t >::iterator
+
+
+   .. py:method:: append(x: insn_cmt_t) -> None
+
+
+   .. py:method:: extend(x: insn_cmts_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: user_stkpnts_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> user_stkpnt_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> user_stkpnt_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: user_stkpnts_t) -> None
+
+
+   .. py:method:: extract() -> user_stkpnt_t *
+
+
+   .. py:method:: inject(s: user_stkpnt_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< user_stkpnt_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< user_stkpnt_t >::const_iterator
+
+
+   .. py:method:: insert(it: user_stkpnt_t, x: user_stkpnt_t) -> qvector< user_stkpnt_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< user_stkpnt_t >::iterator
+
+
+   .. py:method:: append(x: user_stkpnt_t) -> None
+
+
+   .. py:method:: extend(x: user_stkpnts_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: frame_mems_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> frame_mem_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> frame_mem_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: frame_mems_t) -> None
+
+
+   .. py:method:: extract() -> frame_mem_t *
+
+
+   .. py:method:: inject(s: frame_mem_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< frame_mem_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< frame_mem_t >::const_iterator
+
+
+   .. py:method:: insert(it: frame_mem_t, x: frame_mem_t) -> qvector< frame_mem_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< frame_mem_t >::iterator
+
+
+   .. py:method:: append(x: frame_mem_t) -> None
+
+
+   .. py:method:: extend(x: frame_mems_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: extra_cmts_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> extra_cmt_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> extra_cmt_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: extra_cmts_t) -> None
+
+
+   .. py:method:: extract() -> extra_cmt_t *
+
+
+   .. py:method:: inject(s: extra_cmt_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< extra_cmt_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< extra_cmt_t >::const_iterator
+
+
+   .. py:method:: insert(it: extra_cmt_t, x: extra_cmt_t) -> qvector< extra_cmt_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< extra_cmt_t >::iterator
+
+
+   .. py:method:: append(x: extra_cmt_t) -> None
+
+
+   .. py:method:: extend(x: extra_cmts_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: skipped_funcs_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> skipped_func_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> skipped_func_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: skipped_funcs_t) -> None
+
+
+   .. py:method:: extract() -> skipped_func_t *
+
+
+   .. py:method:: inject(s: skipped_func_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< skipped_func_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< skipped_func_t >::const_iterator
+
+
+   .. py:method:: insert(it: skipped_func_t, x: skipped_func_t) -> qvector< skipped_func_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< skipped_func_t >::iterator
+
+
+   .. py:method:: append(x: skipped_func_t) -> None
+
+
+   .. py:method:: extend(x: skipped_funcs_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: insn_ops_reprs_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> insn_ops_repr_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> insn_ops_repr_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: insn_ops_reprs_t) -> None
+
+
+   .. py:method:: extract() -> insn_ops_repr_t *
+
+
+   .. py:method:: inject(s: insn_ops_repr_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< insn_ops_repr_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< insn_ops_repr_t >::const_iterator
+
+
+   .. py:method:: insert(it: insn_ops_repr_t, x: insn_ops_repr_t) -> qvector< insn_ops_repr_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< insn_ops_repr_t >::iterator
+
+
+   .. py:method:: append(x: insn_ops_repr_t) -> None
+
+
+   .. py:method:: extend(x: insn_ops_reprs_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: pattern_ids_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> pattern_id_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> pattern_id_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: pattern_ids_t) -> None
+
+
+   .. py:method:: extract() -> pattern_id_t *
+
+
+   .. py:method:: inject(s: pattern_id_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< pattern_id_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< pattern_id_t >::const_iterator
+
+
+   .. py:method:: insert(it: pattern_id_t, x: pattern_id_t) -> qvector< pattern_id_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< pattern_id_t >::iterator
+
+
+   .. py:method:: append(x: pattern_id_t) -> None
+
+
+   .. py:method:: extend(x: pattern_ids_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: pop_fun_vec_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> pop_fun_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> pop_fun_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: pop_fun_vec_t) -> None
+
+
+   .. py:method:: extract() -> pop_fun_t *
+
+
+   .. py:method:: inject(s: pop_fun_t, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< pop_fun_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< pop_fun_t >::const_iterator
+
+
+   .. py:method:: insert(it: pop_fun_t, x: pop_fun_t) -> qvector< pop_fun_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< pop_fun_t >::iterator
+
+
+   .. py:method:: append(x: pop_fun_t) -> None
+
+
+   .. py:method:: extend(x: pop_fun_vec_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:class:: mdkey_vec_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: push_back(*args) -> mdkey_t &
+
+
+   .. py:method:: pop_back() -> None
+
+
+   .. py:method:: size() -> int
+
+
+   .. py:method:: empty() -> bool
+
+
+   .. py:method:: at(_idx: int) -> mdkey_t const &
+
+
+   .. py:method:: qclear() -> None
+
+
+   .. py:method:: clear() -> None
+
+
+   .. py:method:: resize(*args) -> None
+
+
+   .. py:method:: grow(*args) -> None
+
+
+   .. py:method:: capacity() -> int
+
+
+   .. py:method:: reserve(cnt: int) -> None
+
+
+   .. py:method:: truncate() -> None
+
+
+   .. py:method:: swap(r: mdkey_vec_t) -> None
+
+
+   .. py:method:: extract() -> mdkey_t *
+
+
+   .. py:method:: inject(s: mdkey_t *, len: int) -> None
+
+
+   .. py:method:: begin(*args) -> qvector< mdkey_t >::const_iterator
+
+
+   .. py:method:: end(*args) -> qvector< mdkey_t >::const_iterator
+
+
+   .. py:method:: insert(it: qvector< mdkey_t >::iterator, x: mdkey_t const &) -> qvector< mdkey_t >::iterator
+
+
+   .. py:method:: erase(*args) -> qvector< mdkey_t >::iterator
+
+
+   .. py:method:: find(*args) -> qvector< mdkey_t >::const_iterator
+
+
+   .. py:method:: has(x: mdkey_t const &) -> bool
+
+
+   .. py:method:: add_unique(x: mdkey_t const &) -> bool
+
+
+   .. py:method:: append(x: mdkey_t const &) -> None
+
+
+   .. py:method:: extend(x: mdkey_vec_t) -> None
+
+
+   .. py:attribute:: front
+
+
+   .. py:attribute:: back
+
+
+.. py:data:: PAT_TYPE_UNKNOWN
+
+.. py:data:: PAT_TYPE_MD5
+
+.. py:data:: PDRES_BADPTN
+
+.. py:data:: PDRES_NOT_FOUND
+
+.. py:data:: PDRES_ERROR
+
+.. py:data:: PDRES_OK
+
+.. py:data:: PDRES_ADDED
+
+.. py:data:: PMF_PUSH_MODE_MASK
+
+.. py:data:: PMF_PUSH_OVERRIDE_IF_BETTER_OR_DIFFERENT
+
+.. py:data:: PMF_PUSH_OVERRIDE
+
+.. py:data:: PMF_PUSH_DO_NOT_OVERRIDE
+
+.. py:data:: PMF_PUSH_MERGE
+
+.. py:data:: UOT_ADD
+
+.. py:data:: UOT_EDIT
+
+.. py:data:: UOT_DEL
+
+.. py:data:: GST_NONE
+
+.. py:data:: GST_NAME
+
+.. py:data:: DMD_SORT_NONE
+
+.. py:data:: DMD_SORT_HASH
+
+.. py:data:: UF_IS_ADMIN
+
+.. py:data:: UF_CAN_DEL_HISTORY
+
+.. py:data:: URF_IGNORE_LICID
+
+.. py:data:: BOPF_DETAILS
+
+.. py:data:: BOPF_CHRONOLOGICAL_ORDER
+
+.. py:data:: BOPF_LAST_FUNC_RECORD
+
+.. py:data:: BOPF_FIELD_LICENSE_NAME
+
+.. py:data:: BOPF_FIELD_LICENSE_EMAIL
+
+.. py:data:: BOPF_FIELD_LICENSE_ID
+
+.. py:data:: BOPF_SHOW_FIELD_INPUT_HASH
+
+.. py:data:: BOPF_SHOW_FIELD_INPUT_PATH
+
+.. py:data:: BOPF_SHOW_FIELD_IDB_PATH
+
+.. py:data:: BOPF_SHOW_FIELD_CALCREL_HASH
+
+.. py:data:: BOPF_SHOW_FIELD_FUNC_EA
+
+.. py:data:: BOPF_SHOW_FIELD_FUNC_ID
+
+.. py:data:: BOPF_SHOW_FIELD_USERNAME
+
+.. py:data:: BOPF_SHOW_FIELD_ALL
+
+.. py:data:: BOPF_PUSHES_FIELD_ALL
+
+.. py:data:: STF_DETAILS
+
+.. py:data:: DEFAULT_TLM_FLUSH_TIMEOUT
+
+.. py:data:: DEFAULT_TLM_FLUSH_EVCNT
+
+.. py:data:: LUMINA_GET_POP_DEFAULT_NRESULTS
+
+.. py:data:: WKFC_INTERRUPTED
+
+.. py:data:: MDK_NONE
+
+.. py:data:: MDK_TYPE
+
+.. py:data:: MDK_VD_ELAPSED
+
+.. py:data:: MDK_FCMT
+
+.. py:data:: MDK_FRPTCMT
+
+.. py:data:: MDK_CMTS
+
+.. py:data:: MDK_RPTCMTS
+
+.. py:data:: MDK_EXTRACMTS
+
+.. py:data:: MDK_USER_STKPNTS
+
+.. py:data:: MDK_FRAME_DESC
+
+.. py:data:: MDK_OPS
+
+.. py:data:: MDK_OPS_EX
+
+.. py:data:: MDK_LAST
+
+.. py:data:: MDKF_NONE
+
+.. py:data:: MDKF_STR
+
+.. py:data:: MDKF_TYPE
+
+.. py:data:: MDKF_INT64
+
+.. py:data:: MDKF_UINT64
+
+.. py:data:: MDKF_DCSTRLIST
+
+.. py:data:: MDKF_DSVALLIST
+
+.. py:data:: MDKF_FRAME_DESC
+
+.. py:data:: MDKF_NLSTRLIST
+
+.. py:data:: MDKF_DOPSLIST
+
+.. py:class:: insn_site_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: fchunk_nr
+      :type:  int
+
+
+   .. py:attribute:: fchunk_off
+      :type:  int
+
+
+   .. py:method:: toea(pfn: func_t const *) -> ida_idaapi.ea_t
+
+
+.. py:class:: insn_cmt_t
+
+   Bases: :py:obj:`insn_site_t`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: cmt
+      :type:  str
+
+
+.. py:class:: user_stkpnt_t
+
+   Bases: :py:obj:`insn_site_t`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: delta
+      :type:  int64
+
+
+.. py:class:: extra_cmt_t
+
+   Bases: :py:obj:`insn_site_t`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: prev
+      :type:  str
+
+
+   .. py:attribute:: next
+      :type:  str
+
+
+.. py:class:: oprepr_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: flags
+      :type:  flags64_t
+
+
+   .. py:attribute:: opinfo
+      :type:  opinfo_t
+
+
+.. py:class:: insn_ops_repr_t
+
+   Bases: :py:obj:`insn_site_t`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: flags
+      :type:  flags64_t
+
+
+   .. py:attribute:: ops
+      :type:  opinfo_t [8]
+
+
+.. py:class:: metadata_iterator_t(_md: metadata_t const &)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: data
+      :type:  uchar const *
+
+
+   .. py:attribute:: size
+      :type:  int
+
+
+   .. py:attribute:: key
+      :type:  mdkey_t
+
+
+   .. py:method:: next() -> bool
+
+
+   .. py:method:: data_end() -> uchar const *
+
+
+.. py:function:: new_packet(code: uchar, ptr: uchar const * = None, len: int = 0, version: int = -1) -> rpc_packet_data_t *
+
+.. py:data:: LFEAT_PRIMARY_MD
+
+.. py:data:: LFEAT_DEC
+
+.. py:data:: LFEAT_TLM
+
+.. py:data:: LFEAT_SECONDARY_MD
+
+.. py:function:: calc_func_metadata(out_fi: func_info_t, pfn: func_t const *, append_metadata: metadata_appender_t * = None) -> md5_t *
+
+.. py:class:: md_type_parts_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: userti
+      :type:  bool
+
+
+   .. py:attribute:: type
+      :type:  qtype
+
+
+   .. py:attribute:: fields
+      :type:  qtype
+
+
+.. py:function:: extract_insn_cmts_from_metadata(out: insn_cmts_t, ptr: uchar const *) -> None
+
+.. py:function:: extract_extra_cmts_from_metadata(out: extra_cmts_t, ptr: uchar const *) -> None
+
+.. py:function:: extract_user_stkpnts_from_metadata(out: user_stkpnts_t, ptr: uchar const *) -> None
+
+.. py:function:: extract_frame_desc_from_metadata(out: frame_desc_t, ptr: uchar const *) -> None
+
+.. py:function:: extract_insn_opreprs_from_metadata(out: insn_ops_reprs_t, ptr: uchar const *) -> None
+
+.. py:function:: extract_insn_opreprs_from_metadata_ex(out: insn_ops_reprs_t, ptr: uchar const *) -> None
+
+.. py:function:: get_server_connection() -> lumina_client_t *
+
+.. py:function:: get_server_connection2(flags: int) -> lumina_client_t *
+
+.. py:data:: GCSF_NO_CONNECT
+
+.. py:data:: GSCF_FEAT_MASK
+
+.. py:data:: AMDF_UPGRADE
+
+   apply kvps that seem to be of higher "quality" than what's currently in the IDB 
+           
+
+
+.. py:data:: AMDF_FORCE
+
+   apply kvps regardless of what's currently in the IDB, possibly removing some attributes currently present (e.g., name, or prototype could be lost) 
+           
+
+
+.. py:function:: apply_metadata(ea: ida_idaapi.ea_t, fi: func_info_t, flags: int = 0) -> None
+
+.. py:function:: score_metadata(fi: func_info_t) -> int
+
+.. py:function:: backup_metadata(ea: ida_idaapi.ea_t) -> bool
+
+.. py:function:: revert_metadata(ea: ida_idaapi.ea_t) -> bool
+
+.. py:function:: has_backup_metadata(ea: ida_idaapi.ea_t) -> bool
+
+.. py:class:: func_md_diff_handler_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: on_score_changed(l: int, r: int) -> None
+
+
+   .. py:method:: on_name_changed(l: str, r: str) -> None
+
+
+   .. py:method:: on_proto_changed(l: md_type_parts_t, r: md_type_parts_t) -> None
+
+
+   .. py:method:: on_function_comment_changed(l: str, r: str, rep: bool) -> None
+
+
+   .. py:method:: on_comment_changed(fchunk_nr: int, fchunk_off: int, l: str, r: str, rep: bool) -> None
+
+
+   .. py:method:: on_extra_comment_changed(fchunk_nr: int, fchunk_off: int, l: str, r: str, is_prev: bool) -> None
+
+
+   .. py:method:: on_user_stkpnt_changed(fchunk_nr: int, fchunk_off: int, l: int64 const *, r: int64 const *) -> None
+
+
+   .. py:method:: on_frame_member_changed(offset: int, l: frame_mem_t, r: frame_mem_t) -> None
+
+
+   .. py:method:: on_insn_ops_repr_changed(fchunk_nr: int, fchunk_off: int, l: insn_ops_repr_t, r: insn_ops_repr_t) -> None
+
+
+.. py:data:: DMOF_COMPUTE_AND_DIFF_SCORE
+
+.. py:function:: diff_metadata(handler: func_md_diff_handler_t, left: func_info_t, right: func_info_t, flags: int = 0) -> bool
+
+.. py:data:: PROTOCOL_VERSION
+
+.. py:class:: pattern_id_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: type
+      :type:  pattern_type_t
+
+
+   .. py:attribute:: data
+      :type:  bytevec_t
+
+
+.. py:class:: func_info_base_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: name
+      :type:  str
+
+
+   .. py:attribute:: metadata
+      :type:  metadata_t
+
+
+.. py:class:: func_info_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: name
+      :type:  str
+
+
+   .. py:attribute:: size
+      :type:  int
+
+
+   .. py:attribute:: metadata
+      :type:  metadata_t
+
+
+.. py:class:: input_file_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: path
+      :type:  str
+
+
+   .. py:attribute:: md5
+      :type:  md5_t
+
+
+.. py:class:: func_info_and_frequency_t(__frequency: int = 0)
+
+   Bases: :py:obj:`func_info_t`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: frequency
+      :type:  int
+
+
+.. py:class:: func_info_and_pattern_t(*args)
+
+   Bases: :py:obj:`func_info_t`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: pattern_id
+      :type:  pattern_id_t
+
+
+.. py:class:: func_info_pattern_and_frequency_t(__frequency: int = 0)
+
+   Bases: :py:obj:`func_info_and_pattern_t`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: frequency
+      :type:  int
+
+
+.. py:class:: pop_fun_t(*args)
+
+   Bases: :py:obj:`func_info_pattern_and_frequency_t`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: hostname
+      :type:  str
+
+
+   .. py:attribute:: input
+      :type:  input_file_t
+
+
+   .. py:attribute:: ea64
+      :type:  ea64_t
+
+
+.. py:class:: serialized_tinfo(__type: type_t const * = None, __fields: type_t const * = None)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: type
+      :type:  qtype
+
+
+   .. py:attribute:: fields
+      :type:  qtype
+
+
+.. py:class:: frame_mem_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: name
+      :type:  str
+
+
+   .. py:attribute:: type
+      :type:  serialized_tinfo
+
+
+   .. py:attribute:: cmt
+      :type:  str
+
+
+   .. py:attribute:: rptcmt
+      :type:  str
+
+
+   .. py:attribute:: offset
+      :type:  ea64_t
+
+
+   .. py:attribute:: info
+      :type:  oprepr_t
+
+
+   .. py:attribute:: nbytes
+      :type:  asize_t
+
+
+.. py:class:: frame_desc_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: frsize
+      :type:  int
+
+
+   .. py:attribute:: argsize
+      :type:  asize_t
+
+
+   .. py:attribute:: frregs
+      :type:  ushort
+
+
+   .. py:attribute:: members
+      :type:  frame_mems_t
+
+
+.. py:class:: skipped_func_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: pattern_id
+      :type:  pattern_id_t
+
+
+   .. py:attribute:: count
+      :type:  int
+
+
+.. py:class:: user_license_info_t(__id: str = None, __name: str = None, __email: str = None)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: id
+      :type:  str
+
+
+   .. py:attribute:: name
+      :type:  str
+
+
+   .. py:attribute:: email
+      :type:  str
+
+
+.. py:class:: lumina_user_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: license_info
+      :type:  user_license_info_t
+
+
+   .. py:attribute:: name
+      :type:  str
+
+
+   .. py:attribute:: karma
+      :type:  int
+
+
+   .. py:attribute:: last_active
+      :type:  utc_timestamp_t
+
+
+   .. py:attribute:: features
+      :type:  int
+
+
+   .. py:method:: is_admin() -> bool
+
+
+   .. py:method:: set_is_admin(v: bool = True) -> None
+
+
+   .. py:method:: can_del_history() -> bool
+
+
+   .. py:method:: set_can_del_history(v: bool = True) -> None
+
+
+.. py:class:: peer_conn_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: session_id
+      :type:  int
+
+
+   .. py:attribute:: peer_name
+      :type:  str
+
+
+   .. py:attribute:: user
+      :type:  lumina_user_t
+
+
+   .. py:attribute:: established
+      :type:  utc_timestamp_t
+
+
+.. py:class:: lumina_server_info_t(__macaddr: str = None, __verstr: str = None, __start_time: utc_timestamp_t = 0, __current_time: utc_timestamp_t = 0)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: macaddr
+      :type:  str
+
+
+   .. py:attribute:: verstr
+      :type:  str
+
+
+   .. py:attribute:: start_time
+      :type:  utc_timestamp_t
+
+
+   .. py:attribute:: current_time
+      :type:  utc_timestamp_t
+
+
+.. py:class:: lumina_info_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: client
+      :type:  peer_conn_t
+
+
+   .. py:attribute:: server
+      :type:  lumina_server_info_t
+
+
+.. py:data:: PKT_RPC_OK
+
+.. py:data:: PKT_RPC_FAIL
+
+.. py:data:: PKT_RPC_NOTIFY
+
+.. py:data:: PKT_HELO
+
+.. py:data:: PKT_PULL_MD
+
+.. py:data:: PKT_PULL_MD_RESULT
+
+.. py:data:: PKT_PUSH_MD
+
+.. py:data:: PKT_PUSH_MD_RESULT
+
+.. py:data:: PKT_GET_POP
+
+.. py:data:: PKT_GET_POP_RESULT
+
+.. py:data:: PKT_GET_LUMINA_INFO
+
+.. py:data:: PKT_GET_LUMINA_INFO_RESULT
+
+.. py:data:: PKT_HELO_RESULT
+
+.. py:function:: get_lumina_rpc_packet_t_index_from_base(code: lumina_rpc_packet_t) -> uchar
+
+.. py:class:: pkt_rpc_ok_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+.. py:class:: pkt_rpc_fail_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: result
+      :type:  int
+
+
+   .. py:attribute:: error
+      :type:  str
+
+
+.. py:class:: pkt_rpc_notify_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: type
+      :type:  rpc_notification_type_t
+
+
+   .. py:attribute:: text
+      :type:  str
+
+
+.. py:class:: pkt_helo_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: client_version
+      :type:  int
+
+
+   .. py:attribute:: key
+      :type:  bytevec_t
+
+
+   .. py:attribute:: license_id
+      :type:  uchar [6]
+
+
+   .. py:attribute:: record_conv
+      :type:  bool
+
+
+   .. py:attribute:: username
+      :type:  str
+
+
+   .. py:attribute:: password
+      :type:  str
+
+
+.. py:class:: pkt_pull_md_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: flags
+      :type:  int
+
+
+   .. py:attribute:: keys
+      :type:  mdkey_vec_t
+
+
+   .. py:attribute:: pattern_ids
+      :type:  pattern_ids_t
+
+
+.. py:class:: pkt_pull_md_result_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: codes
+      :type:  lumina_op_res_vec_t
+
+
+   .. py:attribute:: results
+      :type:  func_info_and_frequency_vec_t
+
+
+.. py:class:: pkt_push_md_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: flags
+      :type:  int
+
+
+   .. py:attribute:: idb
+      :type:  str
+
+
+   .. py:attribute:: input
+      :type:  input_file_t
+
+
+   .. py:attribute:: hostname
+      :type:  str
+
+
+   .. py:attribute:: contents
+      :type:  func_info_and_pattern_vec_t
+
+
+   .. py:attribute:: ea64s
+      :type:  ea64vec_t
+
+
+.. py:class:: pkt_push_md_result_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: codes
+      :type:  lumina_op_res_vec_t
+
+
+.. py:class:: pkt_get_pop_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: nresults
+      :type:  int
+
+
+.. py:class:: pkt_get_pop_result_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: results
+      :type:  pop_fun_vec_t
+
+
+.. py:class:: pkt_get_lumina_info_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+.. py:class:: pkt_get_lumina_info_result_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: info
+      :type:  lumina_info_t
+
+
+.. py:class:: pkt_helo_result_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: user
+      :type:  lumina_user_t
+
+
+.. py:class:: push_md_opts_t(*args)
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: eas
+      :type:  eavec_t
+
+
+   .. py:attribute:: min_func_size
+      :type:  int
+
+
+.. py:class:: push_md_result_t
+
+   Bases: :py:obj:`object`
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:attribute:: eas
+      :type:  eavec_t
+
+
+   .. py:attribute:: codes
+      :type:  lumina_op_res_vec_t
+
+
+   .. py:attribute:: contents
+      :type:  func_info_and_pattern_vec_t
+
+
+.. py:class:: lumina_client_t(*args, **kwargs)
+
+   Bases: :py:obj:`object`
+
+
+   Lumina server connection client.
+
+   Use `get_server_connection()` to obtain an instance.
+
+
+   .. py:attribute:: thisown
+
+
+   .. py:method:: set_pattern_id_md5(out: pattern_id_t, md5: md5_t const &) -> None
+
+
+   .. py:method:: is_pattern_id(pid: pattern_id_t, md5: md5_t const &) -> bool
+
+
+   .. py:method:: pull_md(*args) -> pkt_pull_md_result_t
+
+      Pull metadata from the Lumina server.
+      See lumina.hpp's lumina_client_t::pull_md() for authoritative documentation.
+
+      This method has the following signatures:
+
+          1. pull_md(funcs: ida_pro.eavec_t, pull_md_flags: int = 0) -> pkt_pull_md_result_t
+          2. pull_md(pattern_ids: pattern_ids_t, pull_md_flags: int = 0) -> pkt_pull_md_result_t
+
+      Note: The C++ `errbuf` parameter is not exposed in Python.
+
+      :param funcs: vector of function addresses (if empty, will be filled with "interesting" functions)
+      :param pattern_ids: vector of pattern IDs (will be consumed/destroyed)
+      :param pull_md_flags: combination of PULL_MD_* flags:
+          - PULL_MD_AUTO_APPLY (0x01): automatically apply metadata
+          - PULL_MD_SEEN_FILE (0x02): do not increase frequency count
+      :returns: pkt_pull_md_result_t with `results` (func_info_and_frequency_vec_t)
+                and `codes` (lumina_op_res_vec_t) for per-input status
+
+
+
+   .. py:method:: push_md(result: push_md_result_t, opts: push_md_opts_t, append_metadata: metadata_appender_t * = None, flags: int = 0) -> bool
+
+
+   .. py:method:: get_pop(nresults: int = 10) -> pkt_get_pop_result_t *
+
+
+   .. py:method:: del_history(funcs: eavec_t const &) -> bool
+
+
+.. py:data:: PULL_MD_AUTO_APPLY
+
+.. py:data:: PULL_MD_SEEN_FILE
+
+.. py:function:: extract_type_from_metadata(out: tinfo_t, _in: bytevec_t const &) -> bool
+
+.. py:function:: split_metadata(metadata: bytes) -> dict
+
+   Split the metadata blob into a set of KVP's
+
+   :param metadata: a metadata blob
+   :returns: a set of KVP's
+
+
+.. py:class:: simple_idb_diff_handler_t(pfn)
+
+   Bases: :py:obj:`func_md_diff_handler_t`
+
+
+   .. py:attribute:: NO_DATA_MARKER
+      :value: None
+
+
+
+   .. py:class:: indenter_t(handler)
+
+      Bases: :py:obj:`object`
+
+
+      .. py:attribute:: handler
+
+
+
+   .. py:attribute:: pfn
+
+
+   .. py:attribute:: header_generated
+      :value: False
+
+
+
+   .. py:attribute:: lines
+      :value: []
+
+
+
+   .. py:attribute:: indent
+      :value: 0
+
+
+
+   .. py:method:: on_score_changed(l, r)
+
+
+   .. py:method:: on_name_changed(l, r)
+
+
+   .. py:method:: on_proto_changed(l, r)
+
+
+   .. py:method:: on_function_comment_changed(l, r, rep)
+
+
+   .. py:method:: on_comment_changed(fchunk_nr, fchunk_off, l, r, rep)
+
+
+   .. py:method:: on_extra_comment_changed(fchunk_nr, fchunk_off, l, r, is_prev)
+
+
+   .. py:method:: on_user_stkpnt_changed(fchunk_nr, fchunk_off, l, r)
+
+
+   .. py:method:: on_frame_member_changed(offset, l, r)
+
+
+   .. py:method:: on_insn_ops_repr_changed(fchunk_nr, fchunk_off, l, r)
+
+
+   .. py:method:: ensure_header_generated()
+
+
+   .. py:method:: where(fchunk_nr, fchunk_off)
+
+
+   .. py:method:: format_type(type_parts)
+
+
+   .. py:method:: format_extra_cmt(cmt)
+
+
+   .. py:method:: format_stkpnt(stkpnt)
+
+
+   .. py:method:: format_frame_member(m)
+
+
+   .. py:method:: format_insn_ops(ro)
+
+
+   .. py:method:: put(msg)
+
+
+   .. py:method:: put2(l, r, topic)
+
+

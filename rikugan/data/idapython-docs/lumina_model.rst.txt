@@ -1,0 +1,146 @@
+lumina_model
+============
+
+.. py:module:: lumina_model
+
+
+Attributes
+----------
+
+.. autoapisummary::
+
+   lumina_model.dquot_escaped_str
+   lumina_model.int_types
+
+
+Classes
+-------
+
+.. autoapisummary::
+
+   lumina_model.func_md_t
+   lumina_model.idb_md_t
+   lumina_model.differ_t
+   lumina_model.diff2script_t
+
+
+Functions
+---------
+
+.. autoapisummary::
+
+   lumina_model.escaped_bytestr
+
+
+Module Contents
+---------------
+
+.. py:data:: dquot_escaped_str
+
+.. py:data:: int_types
+
+.. py:function:: escaped_bytestr(bts)
+
+.. py:class:: func_md_t(pfn, retrieve=True)
+
+   .. py:attribute:: pfn_ea
+
+
+   .. py:attribute:: func_info
+
+
+   .. py:method:: pfn()
+
+
+.. py:class:: idb_md_t
+
+   .. py:attribute:: functions
+      :value: []
+
+
+
+.. py:class:: differ_t(flags=0)
+
+   .. py:attribute:: flags
+      :value: 0
+
+
+
+   .. py:attribute:: lines
+      :value: []
+
+
+
+   .. py:attribute:: pfn_ea
+      :value: None
+
+
+
+   .. py:method:: put(line)
+
+
+   .. py:method:: on_function_diff_start(pfn_ea)
+
+
+   .. py:method:: on_score_changed(pfn, was, now)
+
+
+   .. py:method:: on_func_name_changed(pfn, was, now)
+
+
+   .. py:method:: on_func_proto_changed(pfn, was, now)
+
+
+   .. py:method:: on_func_cmt_changed(pfn, was, now, rep)
+
+
+   .. py:method:: on_cmt_changed(ea, was, now, rep)
+
+
+   .. py:method:: on_extra_cmt_changed(ea, was, now, is_prev)
+
+
+   .. py:method:: on_user_stkpnt_changed(ea, was, now)
+
+
+   .. py:method:: on_frame_mem_changed(offset, was, now)
+
+
+   .. py:method:: on_insn_ops_repr_changed(ea, was, now)
+
+
+   .. py:method:: diff_function(left, right)
+
+
+.. py:class:: diff2script_t(flags=0)
+
+   Bases: :py:obj:`differ_t`
+
+
+   .. py:method:: on_function_diff_start(pfn_ea)
+
+
+   .. py:method:: on_func_name_changed(pfn, was, now)
+
+
+   .. py:method:: on_func_proto_changed(pfn, was, now)
+
+
+   .. py:method:: on_func_cmt_changed(pfn, was, now, rep)
+
+
+   .. py:method:: on_cmt_changed(ea, was, now, rep)
+
+
+   .. py:method:: on_extra_cmt_changed(ea, was, now, is_prev)
+
+
+   .. py:method:: on_user_stkpnt_changed(ea, was, now)
+
+
+   .. py:method:: on_frame_mem_changed(offset, was, now)
+
+
+   .. py:method:: on_insn_ops_repr_changed(ea, was, now)
+
+
