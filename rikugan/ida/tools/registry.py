@@ -53,6 +53,7 @@ _ADVANCED_MODULE_NAMES = (
     "rikugan.ida.tools.microcode",
     "rikugan.tools.web",
     "rikugan.tools.web_fetch",
+    "rikugan.tools.idapython_docs",
 )
 
 # ---------------------------------------------------------------------------
