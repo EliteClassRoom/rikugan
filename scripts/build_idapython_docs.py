@@ -8,6 +8,10 @@ docs/superpowers/specs/2026-07-07-idapython-offline-docs-design.md
 from __future__ import annotations
 
 import re
+import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -58,6 +62,54 @@ def discover_modules_from_index(html_content: str) -> list[str]:
     return sorted(modules)
 
 
+def fetch_with_retry(
+    url: str,
+    max_retries: int = MAX_RETRIES,
+    timeout: float = HTTP_TIMEOUT_SECONDS,
+) -> str | None:
+    """Fetch ``url`` with exponential backoff on transient network errors.
+
+    Retryable errors (caught and retried up to ``max_retries`` times):
+        ``socket.timeout``, ``ConnectionError``, ``TimeoutError``,
+        ``urllib.error.URLError`` (network-level). HTTP 5xx is also
+        treated as transient and retried.
+
+    Non-retryable (return ``None`` immediately, no retry):
+        ``urllib.error.HTTPError`` with a 4xx status — the module path is
+        genuinely wrong and retrying will not help.
+
+    Args:
+        url: URL to fetch.
+        max_retries: Maximum number of attempts before giving up.
+        timeout: Per-request timeout in seconds.
+
+    Returns:
+        Response body as a UTF-8 string on success, or ``None`` if all
+        attempts fail. This function does NOT raise — it logs warnings to
+        stderr and returns ``None`` so the build loop can continue.
+    """
+    last_error: BaseException | None = None
+    backoff = INITIAL_BACKOFF_SECONDS
+    for attempt in range(max_retries):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                return resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            # 4xx is permanent (bad URL/path); 5xx is transient
+            if 400 <= exc.code < 500:
+                print(f"[skip] {url}: HTTP {exc.code}", file=sys.stderr)
+                return None
+            last_error = exc
+        except (TimeoutError, ConnectionError, urllib.error.URLError, OSError) as exc:
+            last_error = exc
+        # Backoff before next attempt (skip on last attempt)
+        if attempt < max_retries - 1:
+            time.sleep(backoff)
+            backoff *= BACKOFF_MULTIPLIER
+    print(f"[fail] {url}: {type(last_error).__name__}: {last_error}", file=sys.stderr)
+    return None
+
+
 __all__ = [
     "BACKOFF_MULTIPLIER",
     "BASE_URL",
@@ -70,4 +122,5 @@ __all__ = [
     "SOURCES_URL_TEMPLATE",
     "UPSTREAM_INDEX_URL",
     "discover_modules_from_index",
+    "fetch_with_retry",
 ]
