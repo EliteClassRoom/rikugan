@@ -393,9 +393,7 @@ class A2ABridgeWidget(QWidget):
         # reference the enum via the base class because the qt_stubs
         # attach ``SelectionMode`` there (consistent with agent_tree.py
         # and bulk_renamer.py).
-        self._agent_list.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
-        )
+        self._agent_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         _safe_connect(self._agent_list, "itemDoubleClicked", self._on_agent_double_clicked)
         layout.addWidget(self._agent_list, 1)
 
@@ -488,9 +486,7 @@ class A2ABridgeWidget(QWidget):
         # Same QAbstractItemView-via-base-class trick for the
         # ``SelectionBehavior`` and ``EditTrigger`` enums. The qt_stubs
         # only attach them to the base class.
-        self._history_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
+        self._history_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._history_table.verticalHeader().setVisible(False)
         # Stretch the Result column so long outputs are readable.

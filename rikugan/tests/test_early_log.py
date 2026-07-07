@@ -93,6 +93,7 @@ class TestEarlyLogSinksExceptions(unittest.TestCase):
         # Should not raise.
         el._early_log("anything")
         el._early_log("anything else")
+
         # Force _file to an object whose methods always raise.
         class _RaisingFile:
             def write(self, *_args, **_kwargs):  # pragma: no cover - tested below
@@ -188,15 +189,11 @@ class TestEarlyLogImportIsolation(unittest.TestCase):
         # cwd to ``sys.path`` on Python >= 3.4, so we have to pass it
         # explicitly. Without this the test fails for environment reasons,
         # not for any early_log regression.
-        repo_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         env = os.environ.copy()
         existing_pp = env.get("PYTHONPATH", "")
         sep = os.pathsep
-        env["PYTHONPATH"] = (
-            repo_root + (sep + existing_pp if existing_pp else "")
-        )
+        env["PYTHONPATH"] = repo_root + (sep + existing_pp if existing_pp else "")
         result = subprocess.run(
             [sys.executable, "-c", snippet],
             capture_output=True,

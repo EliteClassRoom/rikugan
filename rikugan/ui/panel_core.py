@@ -1621,8 +1621,7 @@ class RikuganPanelCore(QWidget):
                 self._tools_panel._tabs.setCurrentIndex(tab_index)
         self._tools_btn.setChecked(True)
         _early_log(
-            f"panel_core:show_tools_panel:done:tab={tab_index}:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
+            f"panel_core:show_tools_panel:done:tab={tab_index}:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
         )
 
     def show_tools_with_renamer(self, address: int | None = None) -> None:
@@ -1714,10 +1713,7 @@ class RikuganPanelCore(QWidget):
             log_error(f"ToolsPanel lazy creation failed: {e}")
             self._tools_panel = None
             return
-        _early_log(
-            f"panel_core:_ensure_tools_panel_created:done:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"panel_core:_ensure_tools_panel_created:done:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
 
     def _activate_tools_tab(self, index: int) -> None:
         """Lazy-init the tab that became active.
@@ -1763,10 +1759,7 @@ class RikuganPanelCore(QWidget):
         except Exception as e:
             log_error(f"Tab {index} initialization failed: {e}")
             return
-        _early_log(
-            f"panel_core:tab_init:index={index}:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"panel_core:tab_init:index={index}:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
 
     # -- Per-tab initializers -----------------------------------------------
 
@@ -1784,8 +1777,7 @@ class RikuganPanelCore(QWidget):
         _t0 = time.monotonic()
         self._bulk_renamer = BulkRenamerWidget()
         _early_log(
-            f"panel_core:_ensure_renamer_tab_initialized:built:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
+            f"panel_core:_ensure_renamer_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
         )
         self._bulk_renamer.start_requested.connect(self._on_renamer_start)
         self._bulk_renamer.pause_requested.connect(self._on_renamer_pause)
@@ -1808,10 +1800,7 @@ class RikuganPanelCore(QWidget):
 
         _t0 = time.monotonic()
         self._agent_tree = AgentTreeWidget()
-        _early_log(
-            f"panel_core:_ensure_agents_tab_initialized:built:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"panel_core:_ensure_agents_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
         self._agent_tree.cancel_requested.connect(self._on_cancel_agent)
         self._agent_tree.inject_summary_requested.connect(self._on_inject_summary)
         self._tools_panel.set_agents_widget(self._agent_tree)
@@ -1835,10 +1824,7 @@ class RikuganPanelCore(QWidget):
 
         _t0 = time.monotonic()
         self._a2a_bridge_widget = A2ABridgeWidget(self)
-        _early_log(
-            f"panel_core:_ensure_a2a_tab_initialized:built:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"panel_core:_ensure_a2a_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
         self._tools_panel.set_a2a_widget(self._a2a_bridge_widget)
 
     def _ensure_knowledge_tab_initialized(self) -> None:
@@ -1850,8 +1836,7 @@ class RikuganPanelCore(QWidget):
         _t0 = time.monotonic()
         self._knowledge_panel = KnowledgePanel()
         _early_log(
-            f"panel_core:_ensure_knowledge_tab_initialized:built:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
+            f"panel_core:_ensure_knowledge_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
         )
         try:
             self._knowledge_panel.set_show_retrieved(
@@ -1859,9 +1844,7 @@ class RikuganPanelCore(QWidget):
             )
         except Exception:
             pass
-        self._knowledge_panel.set_disabled_state(
-            not bool(getattr(self._config, "knowledge_enabled", True))
-        )
+        self._knowledge_panel.set_disabled_state(not bool(getattr(self._config, "knowledge_enabled", True)))
         self._knowledge_panel.show_retrieved_changed.connect(self._on_knowledge_show_changed)
         self._knowledge_panel.refresh_requested.connect(self._refresh_knowledge_panel)
         self._tools_panel.set_knowledge_widget(self._knowledge_panel)

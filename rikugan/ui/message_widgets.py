@@ -1443,7 +1443,7 @@ class KnowledgeContextWidget(QFrame):
             _tool_frame_style(
                 tokens=tokens,
                 accent=color,
-                background=_blend_hex(tokens.alt_base, tokens.mid, 0.85),
+                background=blend_hex(tokens.alt_base, tokens.mid, 0.85),
             )
         )
         self._icon.setStyleSheet(
