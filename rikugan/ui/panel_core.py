@@ -24,6 +24,7 @@ from .export_formatting import (
 )
 from .input_area import InputArea
 from .mutation_log_view import MutationLogPanel
+from .profiling import probe as ui_probe
 from .qt_compat import (
     QCheckBox,
     QDialog,
@@ -43,8 +44,6 @@ from .qt_compat import (
     QToolButton,
     QVBoxLayout,
     QWidget,
-    qt_flags,
-    qt_run,
 )
 from .styles import (
     build_small_button_stylesheet,
@@ -151,7 +150,7 @@ class _AddButtonTabBar(QTabBar):
         menu = QMenu(self)
         export_action = menu.addAction("Export Chat")
         fork_action = menu.addAction("Fork Session")
-        action = qt_run(menu, self.mapToGlobal(pos))
+        action = menu.exec(self.mapToGlobal(pos))
         if action == export_action and self._export_tab_callback is not None:
             self._export_tab_callback(index)
         elif action == fork_action and self._fork_tab_callback is not None:
@@ -340,16 +339,13 @@ class RikuganPanelCore(QWidget):
             pw_edit.setPlaceholderText("Password")
             layout.addWidget(pw_edit)
             buttons = QDialogButtonBox(
-                qt_flags(
-                    QDialogButtonBox.StandardButton.Ok,
-                    QDialogButtonBox.StandardButton.Cancel,
-                ),
+                QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             )
             buttons.accepted.connect(dlg.accept)
             buttons.rejected.connect(dlg.reject)
             layout.addWidget(buttons)
 
-            if qt_run(dlg) != QDialog.DialogCode.Accepted:
+            if dlg.exec() != QDialog.DialogCode.Accepted:
                 break  # user cancelled — keys stay empty
             if self._config.decrypt_stored_keys(pw_edit.text()):
                 log_debug("API keys decrypted successfully")
@@ -859,16 +855,11 @@ class RikuganPanelCore(QWidget):
             cb = QCheckBox(f"Include subagent logs ({len(session.subagent_logs)} subagent runs)")
             cb.setChecked(True)
             layout.addWidget(cb)
-            buttons = QDialogButtonBox(
-                qt_flags(
-                    QDialogButtonBox.StandardButton.Ok,
-                    QDialogButtonBox.StandardButton.Cancel,
-                )
-            )
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
             buttons.accepted.connect(dlg.accept)
             buttons.rejected.connect(dlg.reject)
             layout.addWidget(buttons)
-            if not qt_run(dlg):
+            if not dlg.exec():
                 return
             include_subagents = cb.isChecked()
 
@@ -1274,7 +1265,7 @@ class RikuganPanelCore(QWidget):
                 tool_registry=self._ctrl.tool_registry,
                 is_running_callback=lambda: self._ctrl.is_agent_running,
             )
-            result = qt_run(dlg)
+            result = dlg.exec()
             if result:
                 self._config.save(password=dlg.encryption_password)
                 self._ctrl.update_settings()
@@ -1311,7 +1302,7 @@ class RikuganPanelCore(QWidget):
         )
         no_btn = dlg.addButton("No", QMessageBox.ButtonRole.RejectRole)
         dlg.setDefaultButton(no_btn)
-        qt_run(dlg)
+        dlg.exec()
         clicked = dlg.clickedButton()
         if clicked is clear_btn:
             return "clear"
@@ -1359,6 +1350,7 @@ class RikuganPanelCore(QWidget):
         if self._polling or self._is_shutdown:
             return
         self._polling = True
+        events_processed = 0
         try:
             chat_view = self._active_chat_view()
             container = chat_view._container if chat_view is not None else None
@@ -1370,13 +1362,15 @@ class RikuganPanelCore(QWidget):
             if container is not None:
                 container.setUpdatesEnabled(False)
             try:
-                for _ in range(30):
-                    event = self._ctrl.get_event(timeout=0)
-                    if event is None:
-                        if not self._ctrl.is_agent_running:
-                            self._on_agent_finished()
-                        return
-                    self._on_event(event)
+                with ui_probe("ui.poll_events", events=0):
+                    for _ in range(30):
+                        event = self._ctrl.get_event(timeout=0)
+                        if event is None:
+                            if not self._ctrl.is_agent_running:
+                                self._on_agent_finished()
+                            return
+                        self._on_event(event)
+                        events_processed += 1
             finally:
                 if container is not None:
                     container.setUpdatesEnabled(True)
@@ -1627,8 +1621,7 @@ class RikuganPanelCore(QWidget):
                 self._tools_panel._tabs.setCurrentIndex(tab_index)
         self._tools_btn.setChecked(True)
         _early_log(
-            f"panel_core:show_tools_panel:done:tab={tab_index}:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
+            f"panel_core:show_tools_panel:done:tab={tab_index}:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
         )
 
     def show_tools_with_renamer(self, address: int | None = None) -> None:
@@ -1720,10 +1713,7 @@ class RikuganPanelCore(QWidget):
             log_error(f"ToolsPanel lazy creation failed: {e}")
             self._tools_panel = None
             return
-        _early_log(
-            f"panel_core:_ensure_tools_panel_created:done:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"panel_core:_ensure_tools_panel_created:done:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
 
     def _activate_tools_tab(self, index: int) -> None:
         """Lazy-init the tab that became active.
@@ -1769,10 +1759,7 @@ class RikuganPanelCore(QWidget):
         except Exception as e:
             log_error(f"Tab {index} initialization failed: {e}")
             return
-        _early_log(
-            f"panel_core:tab_init:index={index}:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"panel_core:tab_init:index={index}:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
 
     # -- Per-tab initializers -----------------------------------------------
 
@@ -1790,8 +1777,7 @@ class RikuganPanelCore(QWidget):
         _t0 = time.monotonic()
         self._bulk_renamer = BulkRenamerWidget()
         _early_log(
-            f"panel_core:_ensure_renamer_tab_initialized:built:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
+            f"panel_core:_ensure_renamer_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
         )
         self._bulk_renamer.start_requested.connect(self._on_renamer_start)
         self._bulk_renamer.pause_requested.connect(self._on_renamer_pause)
@@ -1814,10 +1800,7 @@ class RikuganPanelCore(QWidget):
 
         _t0 = time.monotonic()
         self._agent_tree = AgentTreeWidget()
-        _early_log(
-            f"panel_core:_ensure_agents_tab_initialized:built:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"panel_core:_ensure_agents_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
         self._agent_tree.cancel_requested.connect(self._on_cancel_agent)
         self._agent_tree.inject_summary_requested.connect(self._on_inject_summary)
         self._tools_panel.set_agents_widget(self._agent_tree)
@@ -1841,10 +1824,7 @@ class RikuganPanelCore(QWidget):
 
         _t0 = time.monotonic()
         self._a2a_bridge_widget = A2ABridgeWidget(self)
-        _early_log(
-            f"panel_core:_ensure_a2a_tab_initialized:built:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"panel_core:_ensure_a2a_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
         self._tools_panel.set_a2a_widget(self._a2a_bridge_widget)
 
     def _ensure_knowledge_tab_initialized(self) -> None:
@@ -1856,8 +1836,7 @@ class RikuganPanelCore(QWidget):
         _t0 = time.monotonic()
         self._knowledge_panel = KnowledgePanel()
         _early_log(
-            f"panel_core:_ensure_knowledge_tab_initialized:built:elapsed_ms="
-            f"{int((time.monotonic() - _t0) * 1000)}"
+            f"panel_core:_ensure_knowledge_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
         )
         try:
             self._knowledge_panel.set_show_retrieved(
@@ -1865,9 +1844,7 @@ class RikuganPanelCore(QWidget):
             )
         except Exception:
             pass
-        self._knowledge_panel.set_disabled_state(
-            not bool(getattr(self._config, "knowledge_enabled", True))
-        )
+        self._knowledge_panel.set_disabled_state(not bool(getattr(self._config, "knowledge_enabled", True)))
         self._knowledge_panel.show_retrieved_changed.connect(self._on_knowledge_show_changed)
         self._knowledge_panel.refresh_requested.connect(self._refresh_knowledge_panel)
         self._tools_panel.set_knowledge_widget(self._knowledge_panel)

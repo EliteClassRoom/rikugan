@@ -530,8 +530,15 @@ class SessionControllerBase:
         if session and self.config.checkpoint_auto_save and session.messages:
             try:
                 history = SessionHistory(self.config)
-                path = history.save_session(session)
-                log_debug(f"Session auto-saved: {path}")
+                # Off-main-thread: the JSON dump of the whole transcript can
+                # take long enough to visibly freeze IDA at end of turn.
+                # Fire-and-forget is safe here — the next turn re-reads from
+                # the in-memory session, not the file, and a missed save is
+                # recovered on the next checkpoint. The single-worker
+                # executor inside SessionHistory serialises back-to-back
+                # saves so the latest state always wins.
+                future = history.save_session_async(session)
+                future.add_done_callback(self._on_async_save_done)
             except (OSError, ValueError) as e:
                 log_error(f"Failed to auto-save session: {e}")
 
@@ -541,6 +548,18 @@ class SessionControllerBase:
         log_debug(f"Draining queue after run: {len(self._pending_messages)} remaining")
         return next_message
 
+    @staticmethod
+    def _on_async_save_done(future: Any) -> None:
+        """Log the outcome of a fire-and-forget ``save_session_async`` call.
+
+        Exceptions raised inside the worker thread are captured by the
+        Future and would otherwise be silently dropped. This callback
+        surfaces them so a corrupted save is visible in the log.
+        """
+        exc = future.exception()
+        if exc is not None:
+            log_error(f"Background session save failed: {exc}")
+
     def new_chat(self) -> None:
         """Reset the active tab to a fresh session."""
         self._pending_messages.clear()
@@ -548,7 +567,12 @@ class SessionControllerBase:
         if session and self.config.checkpoint_auto_save and session.messages:
             try:
                 history = SessionHistory(self.config)
-                history.save_session(session)
+                # Off-main-thread for the same reason as on_agent_finished:
+                # the dump freezes IDA's shared event loop otherwise. Safe to
+                # fire-and-forget — the session object stays alive via the
+                # Future's reference until the worker finishes.
+                future = history.save_session_async(session)
+                future.add_done_callback(self._on_async_save_done)
             except OSError as e:
                 log_debug(f"Failed to save session on new chat: {e}")
         self._sessions[self._active_tab_id] = SessionState(

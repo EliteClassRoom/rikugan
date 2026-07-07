@@ -101,9 +101,7 @@ class ToolsPanel(QWidget):
         self._tabs.addTab(self._knowledge_widget, "Knowledge")
 
         main_layout.addWidget(self._tabs)
-        _early_log(
-            f"tools_panel:init:done:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
-        )
+        _early_log(f"tools_panel:init:done:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
 
     def _on_tab_changed(self, index: int) -> None:
         """Forward tab selection to panel_core so it can lazy-init that tab.

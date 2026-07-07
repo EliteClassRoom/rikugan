@@ -9,6 +9,7 @@ from typing import ClassVar
 
 from ..core.logging import get_logger
 from .markdown import md_to_html
+from .profiling import probe as ui_probe
 from .qt_compat import (
     QFrame,
     QHBoxLayout,
@@ -21,7 +22,6 @@ from .qt_compat import (
     QVBoxLayout,
     QWidget,
     Signal,
-    qt_flags,
 )
 from .styles import host_stylesheet
 from .theme.manager import ThemeManager, blend_hex
@@ -339,9 +339,9 @@ class UserMessageWidget(QFrame):
         self._content = QLabel(text)
         self._content.setWordWrap(True)
         self._content.setTextInteractionFlags(
-            qt_flags(
-                Qt.TextInteractionFlag.TextSelectableByMouse,
-                Qt.TextInteractionFlag.TextSelectableByKeyboard,
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
             )
         )
         self._content.setMinimumWidth(0)
@@ -509,13 +509,13 @@ class _ThinkingBlock(QFrame):
         header.addWidget(self._header_label, 1)
         layout.addLayout(header)
 
-        self._content = QLabel()
+        self._content = _HeightCachedLabel()
         self._content.setWordWrap(True)
         self._content.setTextFormat(Qt.TextFormat.RichText)
         self._content.setTextInteractionFlags(
-            qt_flags(
-                Qt.TextInteractionFlag.TextSelectableByMouse,
-                Qt.TextInteractionFlag.TextSelectableByKeyboard,
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
             )
         )
         self._content.hide()
@@ -583,6 +583,7 @@ class _ThinkingBlock(QFrame):
         # all match the active theme.
         if self._source_text:
             self._content.setText(md_to_html(self._source_text, self))
+            self._content.pin_height()
 
     def _on_toggle(self) -> None:
         self._expanded = not self._expanded
@@ -593,6 +594,7 @@ class _ThinkingBlock(QFrame):
         self._source_text = text
         self._in_progress = in_progress
         self._content.setText(md_to_html(text, self))
+        self._content.pin_height()
         label = "Thinking\u2026" if in_progress else "Thinking"
         self._header_label.setText(label)
         self.show()
@@ -622,6 +624,10 @@ class AssistantMessageWidget(QFrame):
         self._pending_delta = 0
         self._last_render_time: float = 0.0
         self._deferred_pending: bool = False
+        # Pre-rendered HTML cache populated by the restore worker thread
+        # (see ``set_html_deferred``). Empty by default; consumed on the
+        # first ``_render`` to avoid running md_to_html on the UI thread.
+        self._cached_html: str = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -632,14 +638,21 @@ class AssistantMessageWidget(QFrame):
         self._thinking_block = _ThinkingBlock()
         layout.addWidget(self._thinking_block)
 
-        self._content = QLabel()
+        # Use _HeightCachedLabel so this word-wrapped label opts out of Qt's
+        # heightForWidth protocol. In a chat with many long messages, a plain
+        # QLabel triggers an O(text_length) heightForWidth() call on every
+        # sibling during each layout pass — the root cause of whole-IDA lag
+        # when the conversation grows large. pin_height() is called after
+        # every _render() so the height stays correct without re-entering
+        # the protocol.
+        self._content = _HeightCachedLabel()
         self._content.setWordWrap(True)
         self._content.setTextFormat(Qt.TextFormat.RichText)
         self._content.setTextInteractionFlags(
-            qt_flags(
-                Qt.TextInteractionFlag.TextSelectableByMouse,
-                Qt.TextInteractionFlag.TextSelectableByKeyboard,
-                Qt.TextInteractionFlag.LinksAccessibleByMouse,
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+                | Qt.TextInteractionFlag.LinksAccessibleByMouse.value
             )
         )
         self._content.setOpenExternalLinks(True)
@@ -680,17 +693,34 @@ class AssistantMessageWidget(QFrame):
             self._render()
 
     def _render(self) -> None:
-        thinking, visible = _split_thinking(self._full_text)
-        if thinking:
-            in_progress = "<think>" in self._full_text and "</think>" not in self._full_text
-            self._thinking_block.set_thinking(thinking, in_progress=in_progress)
-        else:
-            self._thinking_block.hide()
-        if visible:
-            self._content.setText(md_to_html(visible, self))
-            self._content.show()
-        else:
-            self._content.hide()
+        text_len = len(self._full_text)
+        with ui_probe("ui.render", text_len=text_len):
+            thinking, visible = _split_thinking(self._full_text)
+            if thinking:
+                in_progress = "<think>" in self._full_text and "</think>" not in self._full_text
+                self._thinking_block.set_thinking(thinking, in_progress=in_progress)
+            else:
+                self._thinking_block.hide()
+            # Prefer a pre-rendered HTML cache (populated by the restore
+            # worker thread) to avoid running md_to_html on the UI thread.
+            # The cache is cleared after first use so subsequent renders
+            # (streaming deltas, theme changes) recompute fresh HTML.
+            cached_html = getattr(self, "_cached_html", None)
+            if visible:
+                if cached_html:
+                    self._content.setText(cached_html)
+                    self._cached_html = ""
+                else:
+                    self._content.setText(md_to_html(visible, self))
+                self._content.show()
+            else:
+                self._content.hide()
+        # Pin the content height once per render so subsequent layout passes
+        # skip the O(text_length) heightForWidth() walk for this widget.
+        # Guarded for plain QLabel (tests / non-cached callers).
+        pin = getattr(self._content, "pin_height", None)
+        if pin is not None:
+            pin()
         self._pending_delta = 0
         self._last_render_time = _time.monotonic()
 
@@ -737,6 +767,25 @@ class AssistantMessageWidget(QFrame):
         self._deferred_pending = True
         # If we're already visible (e.g. restoring into the active tab),
         # render immediately so the message is shown.
+        if self.isVisible():
+            self._render_if_pending()
+
+    def set_html_deferred(self, text: str, html: str) -> None:
+        """Set pre-rendered HTML without invoking ``md_to_html`` on the UI thread.
+
+        Used by the async restore path: ``RestoreWorker`` renders the
+        markdown + pygments HTML off the main thread and passes both the
+        raw source (for ``_full_text`` / theme re-render) and the rendered
+        HTML. This skips the 50-200ms per-message ``md_to_html`` cost on
+        the UI thread that caused the 6.6s freeze on a 677-message restore.
+
+        On first ``showEvent`` the cached HTML is applied via
+        ``_apply_cached_html``; if the widget is already visible it is
+        applied immediately.
+        """
+        self._full_text = text
+        self._cached_html = html
+        self._deferred_pending = True
         if self.isVisible():
             self._render_if_pending()
 
@@ -849,9 +898,9 @@ class QueuedMessageWidget(QFrame):
         self._content = QLabel(text)
         self._content.setWordWrap(True)
         self._content.setTextInteractionFlags(
-            qt_flags(
-                Qt.TextInteractionFlag.TextSelectableByMouse,
-                Qt.TextInteractionFlag.TextSelectableByKeyboard,
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
             )
         )
         content_layout.addWidget(self._content)
@@ -924,9 +973,9 @@ class UserQuestionWidget(QFrame):
         self._q_label = QLabel(question)
         self._q_label.setWordWrap(True)
         self._q_label.setTextInteractionFlags(
-            qt_flags(
-                Qt.TextInteractionFlag.TextSelectableByMouse,
-                Qt.TextInteractionFlag.TextSelectableByKeyboard,
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
             )
         )
         layout.addWidget(self._q_label)
@@ -1394,7 +1443,7 @@ class KnowledgeContextWidget(QFrame):
             _tool_frame_style(
                 tokens=tokens,
                 accent=color,
-                background=_blend_hex(tokens.alt_base, tokens.mid, 0.85),
+                background=blend_hex(tokens.alt_base, tokens.mid, 0.85),
             )
         )
         self._icon.setStyleSheet(
@@ -1434,9 +1483,9 @@ class ErrorMessageWidget(QFrame):
         self._content = QLabel(error_text)
         self._content.setWordWrap(True)
         self._content.setTextInteractionFlags(
-            qt_flags(
-                Qt.TextInteractionFlag.TextSelectableByMouse,
-                Qt.TextInteractionFlag.TextSelectableByKeyboard,
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
             )
         )
         self._content.setMinimumWidth(0)

@@ -21,7 +21,9 @@ import hashlib as _hashlib
 import html as _html
 import importlib.util as _importlib_util
 import re as _re
+from typing import Any
 
+from .profiling import probe as ui_probe
 from .styles import is_host_theme
 from .theme.manager import ThemeManager, blend_hex
 
@@ -70,26 +72,27 @@ _HAS_MARKDOWN_IT = _importlib_util.find_spec("markdown_it") is not None
 
 # Resolved on first use. ``None`` means "not yet attempted".
 _md_instance: object | None = None
-_qt_renderer: object | None = None
 _markdown_it_failed = False
 
 
-def _resolve_markdown_it() -> tuple | None:
-    """Lazily import ``markdown_it`` and the Qt renderer.
+def _resolve_markdown_it() -> Any | None:
+    """Lazily import ``markdown_it`` and return a cached parser instance.
 
-    Returns ``(MarkdownIt, QtRenderer)`` on success, ``None`` if the
-    package is unavailable or has been seen to fail.  Cached after first
-    successful call.
+    Returns the cached ``MarkdownIt`` parser on success, ``None`` if the
+    package is unavailable or has been seen to fail. The parser is
+    stateless across ``parse()`` calls, so a single shared instance is
+    safe for concurrent use. The companion ``QtRenderer`` is no longer
+    cached here — it carries a per-render ``_styles`` attribute that two
+    concurrent callers would overwrite; a fresh renderer is created in
+    ``_render_with_markdown_it`` for each call instead.
     """
-    global _md_instance, _qt_renderer, _markdown_it_failed
+    global _md_instance, _markdown_it_failed
     if _md_instance is not None:
-        return _md_instance, _qt_renderer
+        return _md_instance
     if _markdown_it_failed or not _HAS_MARKDOWN_IT:
         return None
     try:
         from markdown_it import MarkdownIt  # intentional lazy import
-
-        from .markdown_renderer import QtRenderer
     except ImportError:
         _markdown_it_failed = True
         return None
@@ -104,25 +107,30 @@ def _resolve_markdown_it() -> tuple | None:
     # markup instead of the browser interpreting it. See CLAUDE.md
     # section 3 (binary-as-prompt-injection attack surface).
     md = MarkdownIt("commonmark", {"html": False}).enable("table").enable("strikethrough")
-    renderer = QtRenderer(md)
-    _md_instance, _qt_renderer = md, renderer
-    return md, renderer
+    _md_instance = md
+    return md
 
 
 def _render_with_markdown_it(text: str, source=None) -> str | None:
     """Render using markdown-it-py. Returns None if unavailable."""
-    resolved = _resolve_markdown_it()
-    if resolved is None:
+    md = _resolve_markdown_it()
+    if md is None:
         return None
-    md, qt_renderer = resolved
 
     # Imported lazily — pulls in pygments via markdown_renderer only on
     # the first markdown render, not at module load.
-    from .markdown_renderer import _build_theme_styles
+    from .markdown_renderer import QtRenderer, _build_theme_styles
 
     styles = _build_theme_styles(source)
     tokens = md.parse(text)
-    return qt_renderer.render_with_styles(tokens, md.options, {}, styles)
+    # Fresh QtRenderer per call: the renderer stores the active ``styles``
+    # map on ``self`` for its recursive helpers to read. A shared singleton
+    # would let two concurrent callers (main thread streaming + RestoreWorker
+    # background render) overwrite each other's ``self._styles`` mid-render.
+    # ``QtRenderer.__init__`` is O(1) (two attribute assignments), so the
+    # per-call cost is negligible versus the markdown parse.
+    renderer = QtRenderer(md)
+    return renderer.render_with_styles(tokens, md.options, {}, styles)
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +406,10 @@ def md_to_html(text: str, source=None) -> str:
     if cached is not None:
         return cached
 
-    result = _render_with_markdown_it(text, source)
-    if result is None:
-        result = _legacy_md_to_html(text, source)
+    with ui_probe("ui.md_to_html", text_len=len(text), cache="miss"):
+        result = _render_with_markdown_it(text, source)
+        if result is None:
+            result = _legacy_md_to_html(text, source)
 
     # Bounded cache: cap at 256 entries to keep memory in check.
     if len(_HTML_CACHE) >= 256:

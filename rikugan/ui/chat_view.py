@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from ..agent.turn import TurnEvent, TurnEventType
 from ..core.types import Message, Role, ToolResult
+from .markdown import md_to_html
 from .message_widgets import (
     AssistantMessageWidget,
     ErrorMessageWidget,
@@ -53,6 +54,15 @@ _THINKING_MIN_DISPLAY_MS = 500
 # a single ``chunk_ready`` signal to the main thread.  Larger chunks
 # reduce per-emit overhead but increase latency-to-first-paint.
 _RESTORE_CHUNK_SIZE = 20
+
+# Default cap on how many messages the async restore path materialises
+# into real widgets. Only the most recent N messages are built; older
+# messages keep their lightweight placeholder so the scrollbar geometry
+# stays correct. This caps the main-thread cost of opening a plugin with
+# a very large session (a 677-message session measured 6.3s of Qt widget
+# creation — inherent cost, not a bug). Callers can override via
+# ``RestoreWorker(max_rendered=...)``; ``None`` disables the cap (legacy).
+_RESTORE_DEFAULT_MAX_RENDERED = 100
 
 # Collapse consecutive tool runs once they reach this many calls.
 # A single tool call is shown inline with its name visible;
@@ -105,6 +115,11 @@ class MessageSpec:
     # USER / ASSISTANT raw text (assistant text is the *markdown* source;
     # HTML is rendered on the main thread inside set_text_deferred).
     content: str = ""
+    # Pre-rendered HTML for ASSISTANT content, produced in the worker thread
+    # by ``md_to_html`` so the main thread can ``setText`` directly without
+    # paying the markdown + pygments cost synchronously at restore time.
+    # Empty for USER messages (no markdown) and legacy specs.
+    content_html: str = ""
     # USER_QUESTION payload
     question_options: tuple[str, ...] = ()
     # TOOL side: list of ToolSpec (call + result)
@@ -203,10 +218,16 @@ class RestoreWorker(QThread):
     chunk_ready = Signal(object)  # _RenderedChunk
     finished_ok = Signal()
 
-    def __init__(self, messages: list[Message], parent=None):
+    def __init__(self, messages: list[Message], parent=None, max_rendered: int | None = _RESTORE_DEFAULT_MAX_RENDERED):
         super().__init__(parent)
         self._messages = messages
         self._stop_requested = False
+        # When set, only messages at index >= (n - max_rendered) are
+        # materialised into real widgets. Earlier messages keep their
+        # placeholder (see ``restore_from_messages_async``) so the
+        # scrollbar still spans the full conversation height. ``None``
+        # disables the cap (legacy / opt-in callers).
+        self._max_rendered = max_rendered
 
     def cancel(self) -> None:
         """Request the worker to stop at the next safe point."""
@@ -216,9 +237,36 @@ class RestoreWorker(QThread):
         chunk = _RenderedChunk()
         i = 0
         n = len(self._messages)
+        # When ``max_rendered`` is set, skip building specs for messages
+        # older than the most-recent window. Those messages keep the
+        # placeholder inserted by ``restore_from_messages_async`` so the
+        # scrollbar still spans the full conversation; they simply never
+        # get a real widget (cheap spacer, not a full AssistantMessageWidget
+        # + ToolCallWidgets). ASSISTANT+TOOL pairs are consumed together,
+        # so the window is computed by message index — a TOOL paired with
+        # a kept ASSISTANT is always built alongside its ASSISTANT.
+        # ``max_rendered=None`` disables the cap (legacy / opt-in callers).
+        cutoff = 0
+        if self._max_rendered is not None and self._max_rendered >= 0:
+            cutoff = max(0, n - self._max_rendered)
         while i < n:
             if self._stop_requested:
                 return
+            if i < cutoff:
+                # Skip: advance past this message and any TOOL it would
+                # consume. Pairing rule mirrors _build_spec so the cutoff
+                # stays aligned with render units.
+                consumed = 0
+                msg = self._messages[i]
+                if (
+                    msg.role == Role.ASSISTANT
+                    and msg.tool_calls
+                    and i + 1 < n
+                    and self._messages[i + 1].role == Role.TOOL
+                ):
+                    consumed = 1
+                i += 1 + consumed
+                continue
             msg = self._messages[i]
             next_msg = self._messages[i + 1] if i + 1 < n else None
             spec, consumed = self._build_spec(msg, i, next_msg)
@@ -285,11 +333,24 @@ class RestoreWorker(QThread):
             consumed = 0
             if tool_calls and next_msg is not None and next_msg.role == Role.TOOL:
                 consumed = 1
+            # Pre-render the visible portion to HTML here (in the worker
+            # thread) so the main thread only does a cheap setText at build
+            # time. This moves the markdown + pygments cost off the UI
+            # thread — the fix for the 6.6s main-thread freeze measured on
+            # a 677-message restore. ``content_html`` carries the rendered
+            # HTML; ``content`` stays as the raw source for set_text_deferred
+            # callers that did not opt in (kept for the sync restore path).
+            visible_text = ""
+            if content:
+                _thinking, visible_text = _split_thinking(content)
+            render_source = visible_text if visible_text else content
+            content_html = md_to_html(render_source) if render_source else ""
             return (
                 MessageSpec(
                     msg_id=msg_id,
                     role=Role.ASSISTANT.value,
                     content=content,
+                    content_html=content_html,
                     tool_specs=tuple(tool_specs),
                     estimated_height=estimated or _estimate_assistant_height(content),
                 ),
@@ -486,6 +547,15 @@ class ChatView(QScrollArea):
         self._restore_messages: list[Message] = []
         self._restore_units: list[tuple[int, int]] = []
         self._restore_pages: list[tuple[int, int]] = []
+        # Cap on how many recent messages the async restore path
+        # materialises (see ``RestoreWorker.max_rendered``). Grows when
+        # the user clicks "Load older" so they can page back into the
+        # history without paying the full restore cost up front.
+        self._restore_max_rendered: int = _RESTORE_DEFAULT_MAX_RENDERED
+        # "Load older" nav button shown at the top of the chat when the
+        # session has more messages than the current cap. ``None`` when
+        # no button is currently in the layout.
+        self._load_older_btn: QPushButton | None = None
         self._restore_first_page: int = 0
         self._restore_last_page: int = 0
         self._restore_paged: bool = False
@@ -1619,11 +1689,28 @@ class ChatView(QScrollArea):
         Idempotency: calling this method twice cancels the first
         worker and discards its late signals.
         """
+        # Detect a "Load older" re-restore: same message list, grown cap.
+        # In that case we must NOT reset the cap (the caller grew it on
+        # purpose). A different message list (new session / new tab)
+        # resets to the default cap.
+        is_load_older = (
+            messages is self._restore_messages and self._restore_max_rendered > _RESTORE_DEFAULT_MAX_RENDERED
+        )
+
         # Cancel any prior worker ΓÇö late signals are dropped via
         # ``_restore_generation`` below.
         self._cancel_restore()
 
         self.clear_chat()
+        if not is_load_older:
+            self._restore_max_rendered = _RESTORE_DEFAULT_MAX_RENDERED
+        # Stash the full message list AFTER clear_chat (which resets
+        # ``_restore_messages`` to []) so ``_update_load_older_button``
+        # can compute how many messages remain beyond the cap, and so a
+        # later "Load older" click can re-enter restore with the same
+        # list. Keep the exact reference (no ``list(...)`` copy) so the
+        # ``is`` identity check above still recognises a re-restore.
+        self._restore_messages = messages
         self._in_restore = True
 
         # Bump generation so any late signals from the prior worker
@@ -1668,7 +1755,7 @@ class ChatView(QScrollArea):
 
         # Start the worker.  Slots capture ``generation`` so they can
         # bail out if a newer restore has superseded us.
-        worker = RestoreWorker(messages, parent=self)
+        worker = RestoreWorker(messages, parent=self, max_rendered=self._restore_max_rendered)
         worker.chunk_ready.connect(lambda chunk, gen=generation: self._on_chunk_ready(chunk, gen))
         worker.finished_ok.connect(lambda gen=generation: self._on_restore_finished(gen))
         # ``finished`` is emitted by QThread when ``run`` returns; use
@@ -1770,17 +1857,83 @@ class ChatView(QScrollArea):
     def _on_restore_finished(self, generation: int) -> None:
         if generation != self._restore_generation:
             return
-        # All placeholders should be gone; clear any leftovers.
-        leftovers = list(self._placeholders.values())
-        self._placeholders.clear()
-        for ph in leftovers:
-            ph.deleteLater()
+        # Leftover placeholders are messages the worker skipped because
+        # they fell outside the ``max_rendered`` window (older messages
+        # kept as lightweight spacers for scrollbar geometry). Keep them
+        # in the layout and in ``_placeholders`` so a future "load older"
+        # action can still find them by id. Filtered/empty specs are
+        # already cleaned up in ``_on_chunk_ready`` (height 0 + deleteLater),
+        # so any leftover here is a skip, not a leak.
         self._in_restore = False
         # Reapply width and scroll-to-bottom now that the real widgets
         # are in place.
         if self._container is not None:
             self._container.setFixedWidth(self.viewport().width())
         self._scroll_to_bottom()
+        # Show/hide the "Load older" button depending on whether the
+        # session still has unmaterialised messages beyond the cap.
+        self._update_load_older_button()
+
+    @staticmethod
+    def _remaining_older_count(total: int, cap: int) -> int:
+        """Pure logic: how many messages are beyond the current cap.
+
+        Returns 0 (or negative, clamped by callers) when the cap covers
+        every message. Extracted so tests can exercise the cap arithmetic
+        without instantiating a full ChatView.
+        """
+        return total - cap
+
+    @staticmethod
+    def _next_cap(current: int, total: int) -> int:
+        """Pure logic: the cap to apply after a "Load older" click.
+
+        Doubles the current cap, clamped to the full message count. The
+        doubling bounds the number of clicks to log2(N) while never
+        overshooting the session.
+        """
+        return min(current * 2, total)
+
+    def _update_load_older_button(self) -> None:
+        """Show a "Load older" button at the top when the session has
+        more messages than the current render cap.
+
+        Clicking the button grows the cap and re-runs the async restore,
+        so the user can page back into a long history without paying the
+        full restore cost up front. The button is hidden once the cap
+        covers every message.
+        """
+        total = len(self._restore_messages)
+        remaining = ChatView._remaining_older_count(total, self._restore_max_rendered)
+        if remaining <= 0:
+            if self._load_older_btn is not None:
+                self._load_older_btn.deleteLater()
+                self._load_older_btn = None
+            return
+        if self._load_older_btn is None:
+            btn = QPushButton(f"Load older ({remaining} more messages)", parent=self._container)
+            btn.setObjectName("history_nav_btn")
+            btn.clicked.connect(self._load_older_clicked)
+            # Insert at the very top (index 0, before the first placeholder).
+            self._layout.insertWidget(0, btn)
+            self._load_older_btn = btn
+        else:
+            self._load_older_btn.setText(f"Load older ({remaining} more messages)")
+
+    def _load_older_clicked(self) -> None:
+        """Grow the render cap and re-run the async restore.
+
+        Each click doubles the cap (capped at the full message count) so
+        the user can reach the beginning in a few clicks without the
+        plugin guessing how far back they want to go.
+        """
+        total = len(self._restore_messages)
+        new_cap = ChatView._next_cap(self._restore_max_rendered, total)
+        if new_cap == self._restore_max_rendered:
+            # Already at or beyond the full count — no-op defensively.
+            return
+        self._restore_max_rendered = new_cap
+        self.restore_from_messages_async(self._restore_messages)
 
     def _on_worker_finished(self, worker: RestoreWorker) -> None:
         """Cleanup hook for the worker's QThread.finished signal.
@@ -1901,11 +2054,15 @@ class ChatView(QScrollArea):
             # even when the content is empty (the widget acts as a
             # spacer before the following tool widgets).
             w = AssistantMessageWidget(parent=self._container)
-            # ``set_text_deferred`` defers HTML rendering until first
-            # show.  Fall back to the raw content when
-            # ``visible_text`` is empty so we still render
-            # something user-visible (matches the sync path).
-            w.set_text_deferred(visible_text if visible_text else content)
+            # Prefer the worker's pre-rendered HTML so the UI thread skips
+            # md_to_html entirely. Fall back to set_text_deferred (which
+            # renders on first show) when no HTML was pre-rendered
+            # (legacy sync path, or empty content).
+            render_source = visible_text if visible_text else content
+            if spec.content_html and render_source:
+                w.set_html_deferred(render_source, spec.content_html)
+            else:
+                w.set_text_deferred(render_source)
             widgets.append(w)
             widgets.extend(self._build_restored_tool_widgets(spec.tool_specs))
             return widgets
@@ -1979,6 +2136,14 @@ class ChatView(QScrollArea):
         self._restore_pages = []
         self._restore_first_page = 0
         self._restore_last_page = 0
+        # Drop the "Load older" button on clear; ``restore_from_messages_async``
+        # re-creates it from the new cap if needed. The cap itself is reset by
+        # callers that start a fresh session (``new_chat`` / panel_core restore),
+        # not here — ``_load_older_clicked`` re-enters restore with a grown cap
+        # and must survive the ``clear_chat`` this triggers.
+        if self._load_older_btn is not None:
+            self._load_older_btn.deleteLater()
+            self._load_older_btn = None
         self._restore_paged = False
         self._restore_rendered = False
         # Live-tail guard is per-restore, so a fresh restore re-enables

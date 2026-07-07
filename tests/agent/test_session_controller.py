@@ -16,6 +16,7 @@ install_ida_mocks()
 from rikugan.core.config import RikuganConfig  # noqa: E402
 from rikugan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult  # noqa: E402
 from rikugan.ida.ui.session_controller import IdaSessionController  # noqa: E402
+from rikugan.state.history import SessionHistory  # noqa: E402
 
 
 class TestIdaSessionController(unittest.TestCase):
@@ -91,9 +92,11 @@ class TestIdaSessionController(unittest.TestCase):
         self.ctrl.session.add_message(Message(role=Role.USER, content="test"))
         self.ctrl.on_agent_finished()
 
-        # Verify session was saved to disk
-        from rikugan.state.history import SessionHistory
+        # on_agent_finished saves off-main-thread now (end-of-turn freeze
+        # fix); flush before asserting on-disk state.
+        SessionHistory.flush_saves()
 
+        # Verify session was saved to disk
         history = SessionHistory(self.cfg)
         sessions = history.list_sessions(db_instance_id=self.ctrl._db_instance_id)
         self.assertTrue(any(s["id"] == self.ctrl.session.id for s in sessions))
@@ -105,8 +108,13 @@ class TestIdaSessionController(unittest.TestCase):
         self.ctrl.on_agent_finished()
         saved_id = self.ctrl.session.id
 
+        # on_agent_finished + new_chat both save off-main-thread now; flush
+        # before reading the session back from disk.
+        SessionHistory.flush_saves()
+
         # New chat, then restore
         self.ctrl.new_chat()
+        SessionHistory.flush_saves()
         self.assertNotEqual(self.ctrl.session.id, saved_id)
 
         restored = self.ctrl.restore_session()
@@ -125,6 +133,9 @@ class TestIdaSessionController(unittest.TestCase):
         self.cfg.checkpoint_auto_save = True
         self.ctrl.on_agent_finished()
         saved_id = self.ctrl.session.id
+
+        # Flush the off-main-thread save before a fresh controller reads it.
+        SessionHistory.flush_saves()
 
         # Create fresh controller to avoid in-memory state
         ctrl2 = IdaSessionController(self.cfg)
@@ -146,6 +157,7 @@ class TestIdaSessionController(unittest.TestCase):
         self.ctrl.session.add_message(Message(role=Role.TOOL, tool_results=[tr]))
         self.cfg.checkpoint_auto_save = True
         self.ctrl.on_agent_finished()
+        SessionHistory.flush_saves()
 
         ctrl2 = IdaSessionController(self.cfg)
         restored = ctrl2.restore_session()

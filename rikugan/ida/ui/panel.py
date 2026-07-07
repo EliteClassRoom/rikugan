@@ -12,7 +12,7 @@ from typing import Any
 from rikugan.core.early_log import _early_log, _early_log_crash
 from rikugan.core.startup_timing import end, start
 from rikugan.ui.panel_core import RikuganPanelCore
-from rikugan.ui.qt_compat import QT_BINDING, QApplication, QVBoxLayout, QWidget
+from rikugan.ui.qt_compat import QApplication, QVBoxLayout, QWidget
 
 from .actions import RikuganUIHooks
 from .session_controller import IdaSessionController
@@ -20,6 +20,32 @@ from .tools_form import RikuganToolsForm
 
 idaapi = importlib.import_module("idaapi")
 ida_kernwin = importlib.import_module("ida_kernwin")
+
+
+def _form_to_qt_widget(plugin_form_cls: Any, form: Any) -> Any:
+    """Convert an IDA PluginForm handle to a Qt widget, robustly.
+
+    IDA ≥ 9.0 ships PySide6, and on most versions ``FormToPySideWidget``
+    is the correct call. IDA 9.4's ``ida_kernwin.TWidgetToPySideWidget``
+    (the function backing ``FormToPySideWidget``) is buggy: it resolves
+    ``ctx.QtGui.QWidget.FromCapsule(tw)``, but ``QWidget`` lives in
+    ``PySide6.QtWidgets`` and the real class has no ``FromCapsule``
+    method — so the call raises ``AttributeError``. On those versions we
+    fall back to ``FormToPyQtWidget``, which takes a different internal
+    path and still returns a PySide6 widget (IDA's PyQt5 is a thin shim
+    over PySide6). Because ``qt_compat`` is PySide6-only, every Qt symbol
+    Rikugan uses originates in PySide6, so a widget returned via either
+    path type-matches our ``QVBoxLayout``/``QWidget``.
+
+    ``plugin_form_cls`` is the ``idaapi.PluginForm`` subclass (typically
+    ``type(self)``); passing it explicitly keeps this a module function
+    while still letting tests patch the conversion methods on the
+    subclass under test.
+    """
+    try:
+        return plugin_form_cls.FormToPySideWidget(form)
+    except (AttributeError, TypeError):
+        return plugin_form_cls.FormToPyQtWidget(form)
 
 
 def _early_log_crash_safe(exc: BaseException) -> None:
@@ -206,13 +232,7 @@ class RikuganPanel(idaapi.PluginForm):
 
         try:
             t_widget = start("ida_form.to_qt_widget")
-            if QT_BINDING == "PyQt5":
-                self._form_widget = self.FormToPyQtWidget(form)
-            else:
-                try:
-                    self._form_widget = self.FormToPySideWidget(form)
-                except Exception:
-                    self._form_widget = self.FormToPyQtWidget(form)
+            self._form_widget = _form_to_qt_widget(type(self), form)
             end("ida_form.to_qt_widget", t_widget)
             _early_log("ida_panel:on_create:to_qt_widget_done")
         except Exception as _exc:

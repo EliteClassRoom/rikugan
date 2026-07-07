@@ -3,7 +3,7 @@
   "plugin": {
     "name": "Rikugan",
     "entryPoint": "rikugan_plugin.py",
-    "version": "1.7.0",
+    "version": "1.8.0",
     "description": "Agentic LLM reverse-engineering companion embedded directly in IDA Pro. Supports multi-provider LLMs (Anthropic, OpenAI, Google Gemini, Ollama), 60+ native tools, exploration mode with parallel subagents, natural-language binary patching, skills, and MCP server integration.",
     "license": "MIT",
     "categories": [
@@ -16,7 +16,7 @@
       "macos-x86_64",
       "macos-arm64"
     ],
-    "idaVersions": ["9.0", "9.1", "9.2"],
+    "idaVersions": [">=9.0"],
     "pythonDependencies": [
       "anthropic>=0.112.0",
       "openai>=2.0.0",

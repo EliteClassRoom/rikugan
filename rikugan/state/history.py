@@ -12,6 +12,7 @@ import os
 import tempfile
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from ..constants import SESSION_SCHEMA_VERSION
@@ -38,6 +39,13 @@ MANIFEST_SCHEMA_VERSION = 1
 #: but they linger on disk after a user runs the fork, so directory scans
 #: must skip them rather than treat them as sessions.
 _SUMMARY_SUFFIX = ".summary.json"
+
+#: Single-worker pool for off-main-thread session saves. A single worker is
+#: enough (saves are I/O-bound and serialising them avoids manifest
+#: read-modify-write races for back-to-back calls from the same tab). The
+#: process-wide ``_manifest_lock`` still guards cross-tab/cross-process
+#: manifest writes. ``max_workers=1`` keeps ordering deterministic.
+_SAVE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rikugan-save")
 
 
 def _normalize_db_path(path: str) -> str:
@@ -310,6 +318,35 @@ class SessionHistory:
         except Exception as manifest_err:
             log_warning(f"Failed to update session manifest for {session.id}: {manifest_err}")
         return path
+
+    def save_session_async(self, session: SessionState, description: str = "") -> Future[str]:
+        """Save a session on a background thread; return a Future for the path.
+
+        Why this exists: ``save_session`` JSON-encodes the entire transcript
+        and writes it to disk synchronously. When the caller is a Qt
+        main-thread handler (end-of-turn auto-save, tab close, "new chat"),
+        that dump blocks the shared IDA Pro event loop for the duration of
+        the write — a freeze spike that grows with conversation size. This
+        wrapper off-loads the identical work to a worker thread so the
+        caller returns immediately.
+
+        The persisted content is identical to ``save_session`` — this is a
+        threading wrapper, not a separate code path.
+        """
+        return _SAVE_EXECUTOR.submit(self.save_session, session, description)
+
+    @staticmethod
+    def flush_saves(timeout: float = 10.0) -> None:
+        """Block until every pending ``save_session_async`` has completed.
+
+        Used at process shutdown and in tests where a caller must observe
+        the saved file immediately. The single-worker executor means at
+        most one save is in flight; we wait for the queue to drain by
+        submitting a sentinel and waiting for it. Errors inside workers
+        are surfaced via the per-save ``done_callback`` — this method does
+        not re-raise them.
+        """
+        _SAVE_EXECUTOR.submit(lambda: None).result(timeout=timeout)
 
     def load_session(self, session_id: str) -> SessionState | None:
         """Load a session by ID. Returns None if not found or corrupt.

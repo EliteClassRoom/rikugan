@@ -1672,8 +1672,8 @@ class AgentLoop:
         returned as the tool result for the LLM to consume on its
         next turn.
         """
-        from ...agent.a2a import A2ADispatcher
-        from ...core.sanitize import sanitize_tool_result
+        from ..core.sanitize import sanitize_tool_result
+        from .a2a import A2ADispatcher
 
         agent_name = tc.arguments.get("agent", "")
         task = tc.arguments.get("task", "")
@@ -1690,7 +1690,7 @@ class AgentLoop:
         context_prefix = ""
         if include_context:
             try:
-                from ...core.host import is_ida
+                from ..core.host import is_ida
 
                 if is_ida():
                     bin_info = self.tools.execute("get_binary_info", {})

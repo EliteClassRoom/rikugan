@@ -189,6 +189,8 @@ IDA Pro Qt binding (Shiboken) có bug Use-After-Free khi import C-extension tron
 
 **Python 3.10 là lựa chọn an toàn nhất** cho IDA. Version cao hơn có thể vẫn chạy nhưng không ổn định. Xem `rikugan_plugin.py` header và AGENTS.md mục "IDA API Notes".
 
+- **Qt binding: PySide6 only.** Rikugan targets IDA ≥ 9.0, which ships PySide6 (Qt6). The `PyQt5` module in IDA 9.x is a shim over PySide6 and is not used. `rikugan/ui/qt_compat.py` is the single Qt import seam — import Qt symbols from there, not from `PySide6` directly.
+
 ### 2. Thread safety
 
 - **Mọi IDA API call phải chạy trên main thread.** `@idasync` decorator trong `core/thread_safety.py` xử lý chuyện này — được `@tool` decorator tự động áp dụng cho IDA tools

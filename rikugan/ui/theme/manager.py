@@ -236,10 +236,15 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
         self._mode: ThemeMode = ThemeMode.AUTO
         self._tokens_cache: ThemeTokens | None = None
         self._pending_apply: Any = None
+        # Must be initialised BEFORE _compute_tokens(): in AUTO+IDA mode the
+        # first compute reaches _log_auto_derive_once, which reads this flag.
+        # Setting it after the compute call (the previous order) raised
+        # AttributeError inside __init__ — silently caught by _compute_tokens'
+        # broad except, which masked a successful derive with a DARK fallback.
+        self._log_auto_derive_once_flag: bool = False
         # Compute initial tokens immediately so the first themeChanged
         # listener can render correctly.
         self._tokens_cache = self._compute_tokens()
-        self._log_auto_derive_once_flag: bool = False
 
     @classmethod
     def instance(cls) -> ThemeManager:

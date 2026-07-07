@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import ClassVar
 
 from .. import constants
+from .message_widgets import _HeightCachedLabel
 from .qt_compat import (
     QColor,
     QFont,
@@ -387,8 +388,15 @@ def _truncate_preview(text: str, max_lines: int = _TOOL_PREVIEW_LINES) -> str:
 
 
 def _make_preview_label() -> QLabel:
-    """Create a collapsed-state preview QLabel (shared by ToolCallWidget/ToolBatchWidget)."""
-    lbl = QLabel()
+    """Create a collapsed-state preview QLabel (shared by ToolCallWidget/ToolBatchWidget).
+
+    Uses ``_HeightCachedLabel`` so the word-wrapped label opts out of Qt's
+    ``heightForWidth`` protocol — the same layout-cascade fix as the message
+    content labels. Agentic loops emit many tool calls; each preview label
+    would otherwise trigger an O(text_length) walk on its siblings whenever
+    ``setText`` fires.
+    """
+    lbl = _HeightCachedLabel()
     lbl.setObjectName("tool_content")
     lbl.setWordWrap(True)
     tool_colors = get_tool_colors()
@@ -551,11 +559,14 @@ class ToolCallWidget(QFrame):
         self._detail_layout.setContentsMargins(28, 2, 0, 2)
         self._detail_layout.setSpacing(2)
 
-        self._args_label = QLabel()
+        self._args_label = _HeightCachedLabel()
         self._args_label.setObjectName("tool_content")
         self._args_label.setWordWrap(True)
         self._args_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         self._detail_layout.addWidget(self._args_label)
 
@@ -566,11 +577,14 @@ class ToolCallWidget(QFrame):
         self._result_header.setVisible(False)
         self._detail_layout.addWidget(self._result_header)
 
-        self._result_label = QLabel()
+        self._result_label = _HeightCachedLabel()
         self._result_label.setObjectName("tool_content")
         self._result_label.setWordWrap(True)
         self._result_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            Qt.TextInteractionFlag(
+                Qt.TextInteractionFlag.TextSelectableByMouse.value
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
+            )
         )
         self._result_label.setVisible(False)
         self._detail_layout.addWidget(self._result_label)
@@ -602,10 +616,12 @@ class ToolCallWidget(QFrame):
         # Preview (truncated)
         if args_text.strip():
             self._preview_label.setText(_truncate_preview(args_text.strip()))
+            self._preview_label.pin_height()
             self._preview_label.setVisible(not self._expanded)
         # Full args in detail area
         display = args_text[:_MAX_ARGS_DISPLAY] + "..." if len(args_text) > _MAX_ARGS_DISPLAY else args_text
         self._args_label.setText(display)
+        self._args_label.pin_height()
 
     def append_args_delta(self, delta: str) -> None:
         self._args_text += delta
@@ -618,6 +634,7 @@ class ToolCallWidget(QFrame):
         tool_colors = get_tool_colors()
         display = result[:_MAX_RESULT_DISPLAY] + "\n... (truncated)" if len(result) > _MAX_RESULT_DISPLAY else result
         self._result_label.setText(display)
+        self._result_label.pin_height()
         self._result_label.setVisible(True)
         self._result_header.setVisible(True)
         if is_error:
@@ -750,6 +767,7 @@ class ToolBatchWidget(QFrame):
             # For first call, show summary alongside count
             preview = _truncate_preview(args_text.strip())
             self._preview_label.setText(preview)
+            self._preview_label.pin_height()
             self._preview_label.setVisible(not self._expanded)
 
         # Add entry in detail area
@@ -774,6 +792,7 @@ class ToolBatchWidget(QFrame):
             self._first_args = args_text
             preview = _truncate_preview(args_text.strip())
             self._preview_label.setText(preview)
+            self._preview_label.pin_height()
             self._preview_label.setVisible(not self._expanded)
 
         # Update detail entry

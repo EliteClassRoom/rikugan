@@ -60,3 +60,4 @@ profile_*.py
 *_perf.log
 perf.log
 
+MagicMock/

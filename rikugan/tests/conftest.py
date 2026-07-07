@@ -4,17 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-# Detect the Qt binding without requiring the full 'rikugan' package prefix.
-# The panel runs in IDA Pro which already loads a Qt binding;
-# we reuse the same compatibility layer that the panel uses.
-try:
-    from rikugan.ui.qt_compat import QApplication
-except ModuleNotFoundError:
-    # Fallback: assume PySide6 is available in the test environment
-    try:
-        from PySide6.QtWidgets import QApplication
-    except ImportError:
-        from PyQt5.QtWidgets import QApplication
+# Reuse the same Qt compatibility layer that the panel uses.
+# Rikugan is PySide6-only; qt_compat centralizes the binding import.
+from rikugan.ui.qt_compat import QApplication
 
 
 @pytest.fixture(scope="session")

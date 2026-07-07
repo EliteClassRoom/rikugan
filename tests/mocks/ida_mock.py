@@ -45,8 +45,12 @@ def install_ida_mocks() -> None:
     idaapi.PLUGIN_FIX = 0x0002
     idaapi.get_user_idadir.return_value = "/tmp/ida_test"
     idaapi.get_inf_structure.return_value = MagicMock(
-        procname="ARM", start_ea=0x1000, min_ea=0x1000, max_ea=0x10000,
-        is_16bit=lambda: False, is_32bit=lambda: False,
+        procname="ARM",
+        start_ea=0x1000,
+        min_ea=0x1000,
+        max_ea=0x10000,
+        is_16bit=lambda: False,
+        is_32bit=lambda: False,
     )
     idaapi.get_file_type_name.return_value = "ELF"
     idaapi.PATH_TYPE_IDB = 0
@@ -54,12 +58,21 @@ def install_ida_mocks() -> None:
     idaapi.get_input_file_path.return_value = "/tmp/ida_test/test.bin"
     idaapi.BWN_DISASM = 1
     idaapi.BWN_PSEUDOCODE = 2
-    idaapi.PluginForm = type("PluginForm", (), {
-        "WOPN_TAB": 1, "WOPN_PERSIST": 2,
-        "Show": lambda self, *a, **k: None,
-        "Close": lambda self, *a, **k: None,
-        "FormToPyQtWidget": staticmethod(lambda form: MagicMock()),
-    })
+    idaapi.PluginForm = type(
+        "PluginForm",
+        (),
+        {
+            "WOPN_TAB": 1,
+            "WOPN_PERSIST": 2,
+            "Show": lambda self, *a, **k: None,
+            "Close": lambda self, *a, **k: None,
+            # Real IDA ≥ 9.0 ``idaapi.PluginForm`` exposes BOTH conversion
+            # methods; ``FormToPyQtWidget`` exists even though IDA's PyQt5 is
+            # a shim. Mocking both lets tests assert which one OnCreate picks.
+            "FormToPySideWidget": staticmethod(lambda form: MagicMock()),
+            "FormToPyQtWidget": staticmethod(lambda form: MagicMock()),
+        },
+    )
     # Make netnode("$ rikugan", ...) return a persistent-storage node so that
     # db_instance_id survives across multiple SessionController instances in tests.
     _BADNODE_SENTINEL = object()
@@ -106,9 +119,21 @@ def install_ida_mocks() -> None:
 
     # ida_* modules
     for mod_name in (
-        "ida_funcs", "ida_name", "ida_bytes", "ida_segment", "ida_struct",
-        "ida_enum", "ida_typeinf", "ida_nalt", "ida_xref", "ida_kernwin",
-        "ida_gdl", "ida_hexrays", "ida_lines", "ida_auto", "ida_ida",
+        "ida_funcs",
+        "ida_name",
+        "ida_bytes",
+        "ida_segment",
+        "ida_struct",
+        "ida_enum",
+        "ida_typeinf",
+        "ida_nalt",
+        "ida_xref",
+        "ida_kernwin",
+        "ida_gdl",
+        "ida_hexrays",
+        "ida_lines",
+        "ida_auto",
+        "ida_ida",
         "ida_range",
     ):
         sys.modules[mod_name] = MagicMock()
@@ -116,13 +141,22 @@ def install_ida_mocks() -> None:
     # Provide real base classes for Hex-Rays optimizer types so subclasses
     # defined in rikugan.ida.tools.microcode_optim can override func() properly.
     class _OptInsnStub:
-        def remove(self): pass
-        def install(self): pass
+        def remove(self):
+            pass
+
+        def install(self):
+            pass
+
     class _OptBlockStub:
-        def remove(self): pass
-        def install(self): pass
+        def remove(self):
+            pass
+
+        def install(self):
+            pass
+
     class _HexraysHooksStub:
         pass
+
     sys.modules["ida_hexrays"].optinsn_t = _OptInsnStub
     sys.modules["ida_hexrays"].optblock_t = _OptBlockStub
     sys.modules["ida_hexrays"].Hexrays_Hooks = _HexraysHooksStub
@@ -134,7 +168,9 @@ def install_ida_mocks() -> None:
     sys.modules["ida_name"].SN_NOWARN = 0
     sys.modules["ida_name"].SN_NOCHECK = 0
     sys.modules["ida_funcs"].get_func.return_value = MagicMock(
-        start_ea=0x1000, end_ea=0x1100, flags=0,
+        start_ea=0x1000,
+        end_ea=0x1100,
+        flags=0,
     )
     sys.modules["ida_kernwin"].MFF_WRITE = 0
     sys.modules["ida_kernwin"].execute_sync = lambda fn, _: fn()

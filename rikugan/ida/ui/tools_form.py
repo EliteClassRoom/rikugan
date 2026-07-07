@@ -11,6 +11,20 @@ from rikugan.ui.tools_panel import ToolsPanel
 idaapi = importlib.import_module("idaapi")
 
 
+def _form_to_qt_widget(plugin_form_cls: Any, form: Any) -> Any:
+    """Convert an IDA PluginForm handle to a Qt widget, robustly.
+
+    Mirrors ``rikugan.ida.ui.panel._form_to_qt_widget``: try
+    ``FormToPySideWidget`` first, fall back to ``FormToPyQtWidget`` on
+    IDA 9.4 (whose ``TWidgetToPySideWidget`` is buggy). See panel.py
+    for the full rationale.
+    """
+    try:
+        return plugin_form_cls.FormToPySideWidget(form)
+    except (AttributeError, TypeError):
+        return plugin_form_cls.FormToPyQtWidget(form)
+
+
 def _widget_alive(w: QWidget) -> bool:
     """Return True if the underlying C++ QWidget has not been deleted."""
     try:
@@ -36,10 +50,8 @@ class RikuganToolsForm(idaapi.PluginForm):
         self._shown = False
 
     def OnCreate(self, form: Any) -> None:
-        try:
-            self._form_widget = self.FormToPyQtWidget(form)
-        except Exception:
-            self._form_widget = self.FormToPySideWidget(form)
+        # IDA ≥ 9.0 ships PySide6 — see panel.py for the binding rationale.
+        self._form_widget = _form_to_qt_widget(type(self), form)
 
         layout = QVBoxLayout(self._form_widget)
         layout.setContentsMargins(0, 0, 0, 0)
