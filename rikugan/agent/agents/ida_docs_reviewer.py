@@ -50,8 +50,27 @@ A. The bundled ``ida-scripting`` skill.  The skill auto-activates
    Check there FIRST; most APIs are covered including the ``DO NOT
    USE`` anti-hallucination table.
 
-B. Official Hex-Rays Python reference — RAW RST SOURCE (preferred
-   online format): the Sphinx site behind
+B. The bundled offline docs (preferred — works offline, zero network):
+
+   The offline docs bundle ships inside the plugin at
+   ``data/idapython-docs/<module>.rst.txt``. Use the
+   ``lookup_idapython_doc`` tool to read it:
+
+   ```
+   lookup_idapython_doc(module="<module>")
+   ```
+
+   Concrete example — to verify ``ida_typeinf.apply_cdecl``:
+   ``lookup_idapython_doc(module="ida_typeinf")`` returns the entire
+   ``ida_typeinf`` RST reference in one call (5-15 KB raw source).
+
+   Common modules: ``ida_typeinf``, ``ida_name``, ``idautils``,
+   ``ida_hexrays``, ``ida_frame``, ``ida_funcs``, ``ida_bytes``,
+   ``ida_xref``, ``ida_segment``, ``ida_kernwin``, ``ida_ua``,
+   ``idc``, ``idaapi``. These files return the raw RST source.
+
+C. Hex-Rays Python reference (online FALLBACK only — when the module is
+   not in the bundle, fall back to ``web_fetch``): the Sphinx site behind
    ``python.docs.hex-rays.com`` serves raw RST source files.  Each
    file contains the FULL reference for one module — every function,
    every parameter, every note — in a single fetch:
@@ -80,14 +99,15 @@ B. Official Hex-Rays Python reference — RAW RST SOURCE (preferred
    raw RST source above contains the same information without the
    fetch failures.
 
-C. Hex-Rays GitBook developer guide:
+D. Hex-Rays GitBook developer guide:
    https://docs.hex-rays.com/developer/idapython.md
    You can also use the GitBook ask interface:
    https://docs.hex-rays.com/developer/idapython.md?ask=<question>&goal=<goal>
 
-D. Last resort, the full Hex-Rays LLM corpus:
+E. Last resort, the full Hex-Rays LLM corpus:
    https://docs.hex-rays.com/llms-full.txt
-   (Large — only fetch when local + RST sources do not cover the API.)
+   (Large — only fetch when local + offline + RST sources do not
+   cover the API.)
 
 Hard rules — never approve scripts that:
 
