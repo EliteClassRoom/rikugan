@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-07-08
+
+### Added
+- **Offline IDAPython docs bundle** — the docs-reviewer subagent now ships its own copy of the Hex-Rays Python reference (`rikugan/data/idapython-docs/`, 54 modules, ~1.94 MiB raw RST). Replaces network fetches to `python.docs.hex-rays.com` (which returns `403 Forbidden` on deep-link HTML pages due to bot protection) with deterministic, offline reads.
+- `lookup_idapython_doc(module, offset, limit)` tool (`rikugan/tools/idapython_docs.py`) — reads from the bundled RST source. Strict path-traversal prevention (regex `[a-z0-9_]+`); missing modules return a clear error listing the 54 available modules.
+- `scripts/build_idapython_docs.py` — stdlib-only CLI for fetching and rebuilding the bundle: `python scripts/build_idapython_docs.py` for full build, `--verify` for drift detection against upstream. Atomic writes (tempfile + fsync + `os.replace`), 3x exponential-backoff retry on transient network errors.
+- IDAPython docs-review gate prompt refined: web_fetch is now strictly the LAST resort, only triggered after `lookup_idapython_doc` either reports the module is not in the bundle OR was consulted but didn't resolve the verification.
+
+### Changed
+- Reviewer prompt section B and `ida-scripting` SKILL.md "When to fetch more" both lead with `lookup_idapython_doc`; `web_fetch` against Hex-Rays is documented as fallback only after offline lookup fails.
+
+### Security
+- `lookup_idapython_doc` accepts only module names matching `^[a-z0-9_]+$` — rejects path-traversal attempts (`../`, `foo/bar`, uppercase, empty, null bytes, URL-encoded). Verified by 6 explicit tests including a real-FS "does not read outside DOCS_DIR" check.
+
 ## [1.8.0] — 2026-07-06
 
 ### Breaking
