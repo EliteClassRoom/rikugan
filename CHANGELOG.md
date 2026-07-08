@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] — 2026-07-08
+
+### Added
+- `lookup_idapython_doc` gains an optional `name` parameter for cheap point-lookups. `lookup_idapython_doc(module="ida_typeinf", name="apply_cdecl")` returns ~20 lines of context around each match, no user approval required. Makes verifying whether a specific function exists much cheaper than `hasattr()` or `inspect.signature()` probes.
+- README at `rikugan/data/idapython-docs/README.md` — documents the bundle, the right/wrong way to access it, and the update command.
+
+### Changed
+- Main agent system prompt (`rikugan/agent/prompts/base.py`) now includes a "Verifying APIs with the offline docs tool" section that explicitly names `lookup_idapython_doc`, mentions the `name=` parameter for point-lookups, and forbids `os.path.open()` / `pathlib.Path.read_text()` direct file access to the bundle.
+- Main agent prompt and `ida-scripting` SKILL.md now call `hasattr()` / `inspect.signature()` in `execute_python` scripts as an anti-pattern: prefer the docs tool for API verification.
+- `ida-scripting` SKILL.md frontmatter `triggers` list extended with `ida_frame`, `idaapi`, `ida_ua`, `ida_nalt`, `ida_ida`, `ida_lines`, `idc` so the skill auto-activates on more module mentions.
+
+### Fixed
+- Docs-reviewer gate fallback semantics: `web_fetch` against Hex-Rays is now strictly a last resort, only triggered after `lookup_idapython_doc` either reports the module is not in the bundle OR was consulted but did not resolve the verification. (Previously LLM could skip offline and reach for `web_fetch` directly.)
+
 ## [1.9.0] — 2026-07-08
 
 ### Added
