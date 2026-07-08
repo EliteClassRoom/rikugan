@@ -134,6 +134,38 @@ class TestBasePromptContent(unittest.TestCase):
         self.assertIn("os.path.open", _BASE_PROMPT)
         self.assertIn("path-traversal protection", _BASE_PROMPT)
 
+    def test_base_prompt_prefers_docs_over_hasattr(self):
+        """Main agent prompt must tell agent to use lookup_idapython_doc with `name`
+        parameter for point-lookups, NOT hasattr() / inspect.signature(). Regression guard
+        for the agent-bypass-via-hasattr issue observed in the wild (agent asked user
+        to approve an execute_python script that did hasattr(idc, 'get_bytes') instead
+        of calling the docs tool).
+        """
+        # Should mention hasattr as something to avoid
+        self.assertIn(
+            "hasattr",
+            _BASE_PROMPT,
+            "Prompt must call out hasattr() as an anti-pattern",
+        )
+        # Should mention inspect.signature as something to avoid
+        self.assertIn(
+            "inspect.signature",
+            _BASE_PROMPT,
+            "Prompt must call out inspect.signature() as an anti-pattern",
+        )
+        # Should mention the `name` parameter for point-lookups
+        self.assertIn(
+            'name="',
+            _BASE_PROMPT,
+            'Prompt must show the `name="..."` syntax for point-lookups',
+        )
+        # Should explicitly say hasattr/inspect are inferior alternatives
+        self.assertIn(
+            "instead of",
+            _BASE_PROMPT,
+            "Prompt must contrast the docs tool against hasattr/inspect",
+        )
+
     def test_renaming_section_does_not_reference_ghost_tool(self):
         """Regression: rename_multi_variables is a ghost tool — must NOT be
         referenced as if it exists. See spec self-review round 2."""

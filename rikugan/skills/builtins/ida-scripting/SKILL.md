@@ -330,6 +330,18 @@ Reads from the plugin's bundled docs at `data/idapython-docs/<module>.rst.txt`.
 The bundle covers 54 modules (~95% of common usage); the tool returns a clear
 "Module not in offline bundle" error with available modules if it misses.
 
+For **point lookups** (e.g. "does `ida_typeinf.apply_cdecl` exist?"), use the
+`name` parameter to filter to just that entry:
+
+```
+lookup_idapython_doc(module="ida_typeinf", name="apply_cdecl")
+```
+
+Returns ~20 lines of context around each match — much cheaper than reading
+200 KB of RST just to verify one function. Use this **instead of**
+`hasattr(idc, 'X')` or `inspect.signature()`: those require `execute_python`
+user-approval, while the docs tool does not.
+
 Common modules: `ida_typeinf`, `ida_name`, `idautils`, `ida_hexrays`,
 `ida_frame`, `ida_funcs`, `ida_bytes`, `ida_xref`, `ida_segment`,
 `ida_kernwin`, `ida_ua`, `idc`, `idaapi`.

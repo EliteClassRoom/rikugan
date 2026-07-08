@@ -36,6 +36,48 @@ class TestLookupIdapythonDoc(unittest.TestCase):
         self.assertIn("apply_cdecl", result)
         self.assertIn("[Offline IDAPython docs: ida_typeinf", result)
 
+    def test_name_filter_returns_section_around_match(self):
+        """Point-lookup with `name` should return ~20 lines of context around each match
+        — much cheaper than reading the full 200 KB module just to confirm one function exists."""
+        from rikugan.tools.idapython_docs import lookup_idapython_doc
+
+        with self._patch_docs_dir():
+            result = lookup_idapython_doc("ida_typeinf", name="apply_cdecl")
+        # Header should mention the name filter
+        self.assertIn("name='apply_cdecl'", result)
+        # Should contain the matched function name
+        self.assertIn("apply_cdecl", result)
+        # Total chars should be much smaller than the full file (10000)
+        # Extract total chars from header: "[...; total chars: N; ...]"
+        import re
+
+        m = re.search(r"total chars: ([\d,]+)", result)
+        self.assertIsNotNone(m, f"Header missing total chars: {result[:200]}")
+        total = int(m.group(1).replace(",", ""))
+        # Context window is ~20 lines * ~80 chars = ~1600 chars max per match
+        self.assertLess(total, 5000, f"Point-lookup returned too many chars: {total}")
+
+    def test_name_filter_not_found_returns_message(self):
+        """When the name doesn't appear anywhere, return a helpful 'not found' message
+        instead of an empty string or a confusing empty bundle."""
+        from rikugan.tools.idapython_docs import lookup_idapython_doc
+
+        with self._patch_docs_dir():
+            result = lookup_idapython_doc("ida_typeinf", name="nonexistent_function_xyz")
+        self.assertIn("no entry matches", result)
+        self.assertIn("'nonexistent_function_xyz'", result)
+
+    def test_name_filter_empty_string_treated_as_full_module(self):
+        """Passing name='' (default) should return the full module, not filtered content."""
+        from rikugan.tools.idapython_docs import lookup_idapython_doc
+
+        with self._patch_docs_dir():
+            # Default is no name, should match the full module behavior
+            result = lookup_idapython_doc("ida_typeinf")
+        self.assertIn("[Offline IDAPython docs: ida_typeinf; total chars: ", result)
+        # Default header has no `name=` qualifier
+        self.assertNotIn("name=", result)
+
     def test_path_traversal_rejected_dotdot(self):
         from rikugan.tools.idapython_docs import lookup_idapython_doc
 

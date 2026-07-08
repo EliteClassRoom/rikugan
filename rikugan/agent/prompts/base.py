@@ -340,8 +340,22 @@ failures, deterministic. The bundle covers 54 common modules
 (``ida_typeinf``, ``ida_name``, ``idautils``, ``ida_hexrays``,
 ``ida_frame``, ``ida_funcs``, ``ida_bytes``, ``ida_xref``,
 ``ida_segment``, ``ida_kernwin``, ``ida_ua``, ``idc``, ``idaapi``,
-and ~40 others). **Do NOT read those ``.rst.txt`` files directly** via
-``os.path.open()`` / ``pathlib.Path.read_text()`` / guessing the
-install path — that bypasses path-traversal protection and the tool
-logging, and the guessed path is often wrong.
+and ~40 others).
+
+For **point lookups** (e.g. "does ``ida_typeinf.apply_cdecl`` exist?"),
+use the ``name`` parameter to filter the module to just that entry:
+
+```
+lookup_idapython_doc(module="ida_typeinf", name="apply_cdecl")
+```
+
+Returns ~20 lines of context around each match — much cheaper than
+reading 200 KB of RST just to verify one function. Use this instead of
+``hasattr(idc, 'X')`` or ``inspect.signature()``: those require
+``execute_python`` user-approval, while the docs tool does not.
+
+**Do NOT read those ``.rst.txt`` files directly** via ``os.path.open()``
+/ ``pathlib.Path.read_text()`` / guessing the install path — that
+bypasses path-traversal protection and the tool logging, and the
+guessed path is often wrong.
 """

@@ -172,6 +172,14 @@ class TestSkillPrefersTool(unittest.TestCase):
             f"triggering the lookup_idapython_doc recommendation.",
         )
 
+    def test_skill_prefers_point_lookup_over_hasattr(self):
+        """SKILL.md must recommend the `name` parameter for point-lookups,
+        and explicitly contrast it against hasattr()/inspect.signature()."""
+        self.assertIn("name", self.body)  # the parameter name
+        self.assertIn("hasattr", self.body)
+        self.assertIn("inspect.signature", self.body)
+        self.assertIn("instead of", self.body.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
