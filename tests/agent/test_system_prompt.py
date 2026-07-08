@@ -120,7 +120,19 @@ class TestBasePromptContent(unittest.TestCase):
         from rikugan.agent.prompts.base import RENAMING_SECTION
 
         self.assertIn("naming-convention", RENAMING_SECTION)
-        self.assertIn("Unknown_<Hint>", RENAMING_SECTION)
+
+    def test_base_prompt_recommends_lookup_idapython_doc(self):
+        """Main agent prompt must tell agent to use lookup_idapython_doc for API verification,
+        and explicitly forbid raw os.path access to the data dir (which bypasses path-traversal protection).
+        Regression guard for the agent-bypass-via-os.path issue observed in the wild.
+        """
+        self.assertIn("lookup_idapython_doc", _BASE_PROMPT)
+        # Must mention both how to do it (call the tool) and what NOT to do
+        self.assertIn("lookup_idapython_doc(module=", _BASE_PROMPT)
+        self.assertIn("Do NOT read those", _BASE_PROMPT)
+        # And must call out the specific failure mode
+        self.assertIn("os.path.open", _BASE_PROMPT)
+        self.assertIn("path-traversal protection", _BASE_PROMPT)
 
     def test_renaming_section_does_not_reference_ghost_tool(self):
         """Regression: rename_multi_variables is a ghost tool — must NOT be

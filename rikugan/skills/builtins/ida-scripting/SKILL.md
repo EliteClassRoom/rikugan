@@ -19,7 +19,14 @@ triggers:
   - ida_xref
   - ida_kernwin
   - idautils
+  - ida_frame
+  - idaapi
+  - ida_ua
+  - ida_nalt
+  - ida_ida
+  - ida_lines
   - idc module
+  - idc
   - ida documentation
   - idapython documentation
   - ida docs

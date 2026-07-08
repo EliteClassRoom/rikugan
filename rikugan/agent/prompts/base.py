@@ -330,4 +330,18 @@ before user approval. Write the script so it survives the review:
   the script. The reviewer will block on invented convenience helpers.
 - Scripts that fail the review are returned with the reviewer's
   ``REWRITE_GUIDANCE`` so you can fix them and retry.
+
+**Verifying APIs with the offline docs tool.** When you need to confirm
+what a specific module exports (signatures, parameter types, return
+values), call ``lookup_idapython_doc(module="<module>")``. It reads
+from the bundled offline docs at ``rikugan/data/idapython-docs/`` and
+returns the raw RST reference (5-15 KB per module) — no network, no
+failures, deterministic. The bundle covers 54 common modules
+(``ida_typeinf``, ``ida_name``, ``idautils``, ``ida_hexrays``,
+``ida_frame``, ``ida_funcs``, ``ida_bytes``, ``ida_xref``,
+``ida_segment``, ``ida_kernwin``, ``ida_ua``, ``idc``, ``idaapi``,
+and ~40 others). **Do NOT read those ``.rst.txt`` files directly** via
+``os.path.open()`` / ``pathlib.Path.read_text()`` / guessing the
+install path — that bypasses path-traversal protection and the tool
+logging, and the guessed path is often wrong.
 """

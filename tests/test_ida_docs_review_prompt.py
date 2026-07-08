@@ -133,6 +133,45 @@ class TestSkillPrefersTool(unittest.TestCase):
         self.assertIn("module not in offline bundle", lowered)
         self.assertIn("still has gaps", lowered)
 
+    def test_skill_triggers_include_common_ida_modules(self):
+        """Skill frontmatter `triggers` list must include the 13 common IDA modules
+        so the skill auto-activates when an agent mentions any of them. Regression
+        guard: skills without these triggers will fail to load when the agent's
+        message contains e.g. 'ida_typeinf' but no broader trigger word.
+        """
+        import yaml
+
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        parts = text.split("---", 2)
+        assert len(parts) >= 3, "frontmatter not found"
+        fm = yaml.safe_load(parts[1])
+        triggers = fm.get("triggers", [])
+        missing = []
+        for module in [
+            "ida_bytes",
+            "ida_funcs",
+            "ida_hexrays",
+            "ida_typeinf",
+            "ida_name",
+            "ida_segment",
+            "ida_xref",
+            "ida_kernwin",
+            "ida_frame",
+            "idautils",
+            "idaapi",
+            "ida_ua",
+            "idc",
+        ]:
+            if module not in triggers:
+                missing.append(module)
+        self.assertEqual(
+            missing,
+            [],
+            f"Skill triggers missing common IDA modules: {missing}. "
+            f"Add these so the skill activates when agent mentions them, "
+            f"triggering the lookup_idapython_doc recommendation.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
