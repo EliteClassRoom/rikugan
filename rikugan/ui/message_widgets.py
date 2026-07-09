@@ -224,13 +224,52 @@ class _HeightCachedLabel(QLabel):
         return False
 
     def pin_height(self) -> None:
-        """Fix widget height to the value heightForWidth returns for the current width."""
+        """Fix widget height to the value heightForWidth returns for the current width.
+
+        A previous ``setFixedHeight`` *poisons* Qt's ``heightForWidth``:
+        once a fixed height is set, subsequent ``heightForWidth(w)``
+        calls return the cached fixed value for *any* width instead of
+        recomputing the wrapped-text height for *w*. On the restore
+        path (and after resize) ``pin_height`` is called again with a
+        different width, but the poisoned call returned the stale
+        height — so the wrong height was locked and a large empty gap
+        appeared inside the bubble.
+
+        Clearing the size constraints before measuring forces Qt to
+        recompute the true height for *w*. We restore a clean fixed
+        height at the end so the widget still opts out of the layout
+        ``heightForWidth`` protocol between renders.
+        """
         w = self.width()
         if w <= 0:
             return
+        # Clear any previously pinned fixed height so the next
+        # ``heightForWidth`` measures the document fresh for *w*
+        # rather than echoing back the stale fixed value.
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
         h = QLabel.heightForWidth(self, w)
         if h > 0:
             self.setFixedHeight(h)
+
+    def resizeEvent(self, event) -> None:
+        """Re-pin the cached height whenever the widget width changes.
+
+        ``pin_height`` is normally called once after each ``setText``,
+        locking the height to the layout width at that moment. When the
+        parent panel is later widened (e.g. the user resizes the IDA
+        dock from narrow to wide), the word-wrapped text needs *fewer*
+        lines and therefore a *smaller* height — but the stale fixed
+        height computed at the narrow width was kept, leaving a large
+        empty gap at the bottom of the bubble.
+
+        Re-pinning here keeps the height in sync with the current width.
+        ``hasHeightForWidth`` stays ``False``, so this only updates the
+        fixed height of *this* widget and never re-enters the O(N x
+        msg_length) layout cascade the cache exists to avoid.
+        """
+        super().resizeEvent(event)
+        self.pin_height()
 
 
 # ---------------------------------------------------------------------------

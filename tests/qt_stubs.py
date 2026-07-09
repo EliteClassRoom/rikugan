@@ -339,6 +339,7 @@ def _qt_class(name: str) -> type:
         "setParent": _noop,
         "setLayout": _layout_setter,
         "resize": _noop,
+        "resizeEvent": _noop,
         "sizeHint": lambda self: None,
         # QWidget window-related (used by QDialog subclasses)
         "setWindowTitle": _noop,
