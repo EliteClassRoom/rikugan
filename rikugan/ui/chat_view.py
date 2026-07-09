@@ -976,6 +976,12 @@ class ChatView(QScrollArea):
             # code preview and confuse the user.
             existing = self._tool_widgets.get(event.tool_call_id)
             if isinstance(existing, ExecutePythonWidget):
+                # If this widget was nested inside a collapsed ToolGroupWidget
+                # (because it was part of a multi-tool run), surface it now —
+                # the Allow button must stay visible regardless of the group's
+                # collapsed state, or the user sees a "hanging" group with no
+                # clue that action is pending.
+                self._promote_widget_out_of_group(event.tool_call_id)
                 existing.show_approval_buttons()
                 existing.approved.connect(self._on_tool_approval)
             else:
@@ -988,6 +994,33 @@ class ChatView(QScrollArea):
                 widget.approved.connect(self._on_tool_approval)
                 self._insert_widget(widget)
             self._scroll_to_bottom()
+
+    def _promote_widget_out_of_group(self, tool_call_id: str) -> None:
+        """Re-parent a tool widget out of its ToolGroupWidget into the main layout.
+
+        Called when a widget nested inside a *collapsed* group needs the user's
+        attention (e.g. an ``execute_python`` approval request).  Leaving the
+        widget inside the collapsed group hides its Allow/Deny buttons, which
+        looks like a hang — the agent loop is blocked on approval while the
+        user sees nothing actionable.
+
+        After promotion: the widget is re-parented to the container, inserted
+        into the main layout before the stretch, and dropped from
+        ``_group_map`` so a later ``TOOL_RESULT`` for this id routes to the
+        widget directly (not the now-detached group).
+        """
+        group = self._group_map.pop(tool_call_id, None)
+        widget = self._tool_widgets.get(tool_call_id)
+        if group is None or widget is None:
+            return
+        # Remove from the group's body, re-parent to the container, and
+        # insert into the main layout. ``setParent(container)`` detaches it
+        # from the group's layout; ``_insert_widget`` re-adds it before the
+        # trailing stretch. Guard ``_container`` for test paths that bypass
+        # ``__init__``.
+        container = getattr(self, "_container", None)
+        widget.setParent(container)
+        self._insert_widget(widget)
 
     def _handle_docs_gate_status(self, event: TurnEvent) -> None:
         """Route a docs-review gate status update to the matching widget.

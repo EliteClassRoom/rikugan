@@ -309,6 +309,47 @@ class TestExecutePythonRouting(unittest.TestCase):
         self.assertTrue(any(isinstance(w, self.ToolApprovalWidget) for w in inserted))
 
     # ------------------------------------------------------------------
+    # Approval promoted out of a collapsed ToolGroupWidget
+    # ------------------------------------------------------------------
+
+    def test_approval_widget_promoted_out_of_collapsed_group(self):
+        """When an execute_python call is grouped (collapsed) alongside
+        other tool calls, the approval request must surface the widget so
+        the Allow button is visible — otherwise the user sees a "hanging"
+        collapsed group with no indication action is needed."""
+        view = self._make_view()
+        # Simulate a 2-tool run: both get grouped into _tool_group, hidden.
+        view._handle_tool_event(self.TurnEvent.tool_call_start("ta", "decompile_function"))
+        view._handle_tool_event(self.TurnEvent.tool_call_start("tb", self.EXEC_PY))
+        # Widget tb is now nested inside _tool_group's _body (collapsed).
+        tb_widget = view._tool_widgets["tb"]
+        group = view._group_map.get("tb")
+        self.assertIsNotNone(group, "execute_python widget should be grouped")
+
+        # Approval arrives for the grouped execute_python widget.
+        ev = self.TurnEvent.tool_approval_request("tb", self.EXEC_PY, '{"code":"x"}', "")
+        view._handle_tool_event(ev)
+
+        # After promotion: buttons visible (so the user can act), the widget
+        # is no longer mapped to the group, and it was re-inserted into the
+        # main layout (the last _insert_widget call is this widget).
+        self.assertTrue(tb_widget._buttons_visible)
+        self.assertNotIn("tb", view._group_map)
+        inserted = [c.args[0] for c in view._insert_widget.call_args_list]
+        self.assertIs(inserted[-1], tb_widget)
+
+    def test_approval_widget_promoted_updates_group_map(self):
+        """After promotion, _group_map must drop the entry so a later
+        TOOL_RESULT for the same id does not route notify_result to a
+        group the widget left."""
+        view = self._make_view()
+        view._handle_tool_event(self.TurnEvent.tool_call_start("ta", "decompile_function"))
+        view._handle_tool_event(self.TurnEvent.tool_call_start("tb", self.EXEC_PY))
+        ev = self.TurnEvent.tool_approval_request("tb", self.EXEC_PY, '{"code":"x"}', "")
+        view._handle_tool_event(ev)
+        self.assertNotIn("tb", view._group_map)
+
+    # ------------------------------------------------------------------
     # DOCS_GATE_STATUS dispatch (UI-level handle_event path)
     # ------------------------------------------------------------------
 
