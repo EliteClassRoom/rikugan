@@ -42,6 +42,7 @@ class TurnEventType(str, Enum):
     SUBAGENT_FAILED = "subagent_failed"
     COMMAND_ORCHESTRA = "command_orchestra"
     KNOWLEDGE_RETRIEVED = "knowledge_retrieved"
+    DOCS_GATE_STATUS = "docs_gate_status"
 
 
 @dataclass
@@ -175,6 +176,30 @@ class TurnEvent:
             tool_name=tool_name,
             tool_args=args,
             text=description,
+        )
+
+    @staticmethod
+    def docs_gate_status(
+        tool_call_id: str,
+        state: str,
+        reasons: tuple[str, ...] = (),
+        summary: str = "",
+    ) -> TurnEvent:
+        """Emit a docs-review gate status update for an execute_python call.
+
+        ``state`` is one of ``running`` | ``approved`` | ``blocked`` | ``failed``.
+        This is a UI-only signal — it is NOT serialized into assistant text
+        or history.  ``reasons`` are the complexity reasons (for ``running``);
+        ``summary`` is the reviewer summary (for ``blocked`` / ``failed``).
+        """
+        return TurnEvent(
+            type=TurnEventType.DOCS_GATE_STATUS,
+            tool_call_id=tool_call_id,
+            metadata={
+                "docs_gate_state": state,
+                "docs_gate_reasons": list(reasons),
+                "docs_gate_summary": summary,
+            },
         )
 
     @staticmethod
