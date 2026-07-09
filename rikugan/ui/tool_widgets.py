@@ -1202,6 +1202,7 @@ class ExecutePythonWidget(QFrame):
         self._status_visible = False
         self._status_text = ""
         self._result_block_visible = False
+        self._result_content_visible = False
         self._is_error = False
         self._blocked = False
 
@@ -1373,11 +1374,23 @@ class ExecutePythonWidget(QFrame):
         layout.setContentsMargins(6, 3, 6, 3)
         layout.setSpacing(2)
 
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(4)
+
+        self._result_toggle = QToolButton()
+        self._result_toggle.setObjectName("collapse_button")
+        self._result_toggle.setText("▶")
+        self._result_toggle.setFixedSize(12, 12)
+        self._result_toggle.clicked.connect(self.toggle_result)
+        header_row.addWidget(self._result_toggle)
+
         self._result_header_label = QLabel("Result:")
         self._result_header_label.setStyleSheet(
             f"color: {tool_colors['result_header']}; font-weight: bold; font-size: inherit;"
         )
-        layout.addWidget(self._result_header_label)
+        header_row.addWidget(self._result_header_label)
+        layout.addLayout(header_row)
 
         self._result_label = _HeightCachedLabel()
         self._result_label.setObjectName("tool_content")
@@ -1388,6 +1401,9 @@ class ExecutePythonWidget(QFrame):
                 | Qt.TextInteractionFlag.TextSelectableByKeyboard.value
             )
         )
+        # Content is collapsed by default — only the header shows so a long
+        # script output doesn't dominate the card.
+        self._result_label.setVisible(False)
         layout.addWidget(self._result_label)
 
         self._result_block.setVisible(False)
@@ -1531,6 +1547,10 @@ class ExecutePythonWidget(QFrame):
         self._result_label.setText(display)
         self._result_label.pin_height()
         self._result_block.setVisible(True)
+        # Content stays collapsed by default — user expands to read it.
+        self._result_content_visible = False
+        self._result_label.setVisible(False)
+        self._result_toggle.setText("▶")
         # Hide approval buttons after result arrives.
         self._buttons_visible = False
         self._buttons_container.setVisible(False)
@@ -1561,6 +1581,12 @@ class ExecutePythonWidget(QFrame):
 
     def _toggle_code(self) -> None:
         self._set_code_expanded(not self._code_expanded)
+
+    def toggle_result(self) -> None:
+        """Expand/collapse the result content (header always visible)."""
+        self._result_content_visible = not self._result_content_visible
+        self._result_label.setVisible(self._result_content_visible)
+        self._result_toggle.setText("▼" if self._result_content_visible else "▶")
 
     def _disable_buttons(self) -> None:
         self._allow_btn.setEnabled(False)

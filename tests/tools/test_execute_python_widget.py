@@ -159,6 +159,32 @@ class TestSetResult(unittest.TestCase):
         self.assertTrue(w._result_block_visible)
         self.assertTrue(w._is_error)
 
+    def test_result_collapsed_by_default(self):
+        """Result content is hidden by default; only the header shows so a
+        long script output doesn't dominate the card."""
+        w = ExecutePythonWidget("tc1")
+        w.set_code("print(1)")
+        w.set_result("long output " * 50, is_error=False)
+        self.assertTrue(w._result_block_visible)
+        self.assertFalse(w._result_content_visible)
+
+    def test_result_expandable(self):
+        """User can expand the result to read the full output."""
+        w = ExecutePythonWidget("tc1")
+        w.set_code("print(1)")
+        w.set_result("the answer is 42", is_error=False)
+        self.assertFalse(w._result_content_visible)
+        w.toggle_result()
+        self.assertTrue(w._result_content_visible)
+
+    def test_result_error_collapsed_by_default(self):
+        """Error results are also collapsed by default."""
+        w = ExecutePythonWidget("tc1")
+        w.set_code("print(1)")
+        w.set_result("NameError: x", is_error=True)
+        self.assertTrue(w._is_error)
+        self.assertFalse(w._result_content_visible)
+
 
 class TestMarkDone(unittest.TestCase):
     def test_mark_done_is_safe_to_call(self):
