@@ -36,19 +36,27 @@ Hậu quả quan sát được (qua screenshot 2026-07-09):
    Các tool khác vẫn dùng `ToolCallWidget` cũ (không ảnh hưởng).
 2. **Loại bỏ redundancy**: bỏ description "Run Python code (N lines): import..."
    (`_describe_tool_call`); code chỉ hiển thị 1 lần trong code editor vàng.
-3. **Always-allow behavior**: khi `_always_allow_scripts=True`, widget tạo ở
-   state `AUTO_APPROVED`, **collapse code editor mặc định** (chỉ header +
-   result khi xong). Toggle ▶ để expand.
+3. **Always-allow behavior**: widget **tự suy ra state** từ events, không nhận
+   `auto_approved` flag. Khi `_always_allow_scripts=True`, loop **không** emit
+   `TOOL_APPROVAL_REQUEST` (`loop.py:1099-1100`) → widget stay `IDLE` với code
+   collapsed → nhận `TOOL_RESULT` chuyển thẳng `DONE`. ChatView không cần biết
+   auto-allow state (xem §3, §4).
 4. **Docs-review display**: thu gọn thành **1 dòng status** đặt **giữa code
    block và result**. APPROVED luôn hiện 1 dòng mờ (không tự ẩn).
 5. **Docs-gate BLOCKED**: giữ **hard block** (như hiện tại) — không cho user
    override. Script không chạy, agent phải viết lại. Lý do: gate tồn tại để
    ngăn API hallucinated có thể corrupt IDB; override dễ dàng sẽ triệt tiêu
    lớp bảo vệ.
-6. **Event mới**: `DOCS_GATE_STATUS` gắn với `tool_call_id` — thay thế
+6. **Docs-gate FAILED (reviewer exception) — behavior change**: hiện tại
+   `loop.py:1191-1199` hard-block (script NOT executed) khi reviewer crash.
+   Spec đề xuất **thay đổi**: emit `DOCS_GATE_STATUS(failed)` + **fall through
+   tới user approval** (vẫn hiện buttons). Lý do: crash của subagent là lỗi
+   hạ tầng, không phải fault của script → user nên được quyết định. Agent
+   rewrite script đúng khi reviewer không chạy được sẽ không giúp gì.
+7. **Event mới**: `DOCS_GATE_STATUS` gắn với `tool_call_id` — thay thế
    `TEXT_DELTA` cho docs-review. Không chảy vào assistant text, không lưu
    vào history. Chỉ là UI signal.
-7. **Cơ chế approval signal**: giữ nguyên `approved(tool_call_id, decision)`
+8. **Cơ chế approval signal**: giữ nguyên `approved(tool_call_id, decision)`
    → `_on_tool_approval` → `tool_approval_submitted`. Không đổi controller
    wiring.
 
@@ -89,7 +97,7 @@ Hậu quả quan sát được (qua screenshot 2026-07-09):
 ┌─────────────────────────────────────────────────────────────────────┐
 │  ExecutePythonWidget (rikugan/ui/tool_widgets.py) — NEW            │
 │                                                                     │
-│  States: PENDING_APPROVAL | AUTO_APPROVED | RUNNING | DONE         │
+│  States: IDLE | PENDING_APPROVAL | RUNNING | DONE                 │
 │                                                                     │
 │  Layout (top→bottom):                                               │
 │    ├── header: ▶ ● execute_python              ⟳/✓/✗               │
@@ -101,7 +109,10 @@ Hậu quả quan sát được (qua screenshot 2026-07-09):
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
----
+> **Note**: diagram trên rút gọn — handler thực tế unwrap các field từ
+> `event.metadata` (`docs_gate_state`, `docs_gate_reasons`,
+> `docs_gate_summary`) và check `isinstance(tw, ExecutePythonWidget)` trước
+> khi gọi `set_docs_gate_status()`. Chi tiết ở §4 ChatView routing.
 
 ## Components
 
@@ -127,7 +138,9 @@ Factory method `TurnEvent.docs_gate_status(tool_call_id, state, reasons=(), summ
   và 1220/1230) bằng `yield TurnEvent.docs_gate_status(tc.id, state=...)`.
 - Trước khi spawn reviewer: `state="running", reasons=complexity.reasons`.
 - Sau khi parse verdict: `state="approved"` hoặc `state="blocked", summary=...`.
-- Exception path: `state="failed", error=str(e)`.
+- Exception path: `state="failed", error=str(e)` + **return `(True, "")`**
+  (thay vì `(False, msg)` hiện tại) để **fall through tới user approval**.
+  Đây là behavior change — xem Decision #6. Widget hiện buttons + warning.
 
 Giữ nguyên logic return `(approved, summary)` — caller (`_execute_single_tool`)
 không đổi.
@@ -185,8 +198,9 @@ expandable để user hiểu lý do.
 `_on_allow` / `_on_always_allow` / `_on_deny` emit cùng signal cũ.
 
 **Result block**: `QFrame` riêng với label "Result:" + content label. Giới hạn
-height + scroll nếu dài (fix QLabel full-height issue). Màu xanh/xanh lá/xanh
-đỏ theo `is_error`.
+height + scroll nếu dài (fix QLabel full-height issue). Dùng palette tool
+colors hiện có: success (✓ xanh lá) khi `is_error=False`, error (✗ đỏ) khi
+`is_error=True` — match `ToolCallWidget.set_result()` hiện tại.
 
 ### 4. ChatView routing (`rikugan/ui/chat_view.py`)
 
@@ -215,17 +229,67 @@ tạo từ `TOOL_CALL_START`. Route vào widget đó.
   khác (mutating tools cần approval nhưng không phải execute_python).
 - `_describe_tool_call` vẫn dùng cho `ToolApprovalWidget` của mutating tools.
 
+### 6. Interface contract & persistence
+
+`ExecutePythonWidget` phải tương thích với các code path chung của ChatView —
+nếu không, restore từ history và tool grouping sẽ fail. Cụ thể:
+
+**Method compatibility** (ChatView gọi chung cho mọi tool widget):
+- `set_arguments(args_text: str)` — gắn args (history restore + TOOL_CALL_DONE
+  fallback). Trong ExecutePythonWidget, method này parse code từ args JSON rồi
+  gọi `set_code()`. Giữ để `_build_restored_tool_widgets` (dòng 2091) và
+  `TOOL_CALL_DONE` handler (dòng 945) hoạt động.
+- `mark_done()` — set status ✓ (dòng 2092, restore path). No-op nếu đã DONE.
+- `hide_preview()` — dùng bởi `_register_tool_widget` khi group (dòng 737, 746,
+  2101). Trong ExecutePythonWidget: collapse code editor.
+- `set_result(result, is_error)` — đã có (dòng 950, 2094).
+- `notify_result(is_error)` — chỉ ToolGroupWidget cần; ExecutePythonWidget
+  không implement (không bị gọi trực tiếp trên nó).
+
+**Type hint update** (`chat_view.py:505`):
+```python
+# Trước:
+self._tool_widgets: dict[str, ToolCallWidget] = {}
+# Sau:
+self._tool_widgets: dict[str, ToolCallWidget | ExecutePythonWidget] = {}
+```
+Hoặc (sạch hơn): tạo protocol `ToolWidgetProtocol` liệt kê các method chung,
+cả 2 widget implement. **Khuyến nghị union type** (đơn giản hơn, KISS).
+
+**Persistence/restore** (`_build_restored_tool_widgets`, dòng 2088-2096):
+- Hiện tạo `ToolCallWidget` cho mọi tool. Cần branch:
+  ```python
+  if ts.name == constants.EXECUTE_PYTHON_TOOL_NAME:
+      tw = ExecutePythonWidget(ts.id, parent=self._container)
+  else:
+      tw = ToolCallWidget(ts.name, ts.id, parent=self._container)
+  tw.set_arguments(ts.arguments_json)
+  tw.mark_done()
+  if ts.result_content or ts.result_is_error:
+      tw.set_result(ts.result_content, ts.result_is_error)
+  ```
+- Restore không có docs-gate state (đó là runtime-only, không persist — xém
+  Non-goal). ExecutePythonWidget restore ở state `DONE`, status line ẩn.
+- **Lưu ý**: restore dùng `set_arguments()` (JSON string), không phải
+  `set_code()` (code string). `set_arguments` phải unwrap code từ JSON.
+
+**TOOL_CALL_DONE handler** (`chat_view.py:943-945`):
+- Hiện gọi `existing_tw.set_arguments(event.tool_args)`. Với
+  ExecutePythonWidget, method này parse code → `set_code`. Không cần branch
+  thêm nếu `set_arguments` làm đúng việc.
+
 ---
 
 ## Data flow example (complex script, user approves)
 
 ```
 1. TOOL_CALL_START(execute_python, id=abc)
-   → ExecutePythonWidget(id=abc), state=waiting, code trống
+   → ExecutePythonWidget(id=abc), state=IDLE, code trống
 
 2. TOOL_CALL_ARGS_DELTA → accumulate
-3. TOOL_CALL_DONE(id=abc, code="import idautils...")
-   → widget.set_code(code) → code editor hiện
+3. TOOL_CALL_DONE(id=abc, raw_args="{\"code\": \"import idautils...\"}")
+   → ChatView gọi widget.set_arguments(raw_args) → widget parse JSON
+   → extract code → set_code(code) → code editor hiện
 
 4. DOCS_GATE_STATUS(id=abc, state=running, reasons=["2 IDA modules", ...])
    → status line: "🔍 Reviewing script... (complex: 2 IDA modules)"
@@ -269,8 +333,8 @@ quan trọng: crash của subagent không được biến thành block cứng.
 ## Testing
 
 **Unit tests** (`tests/ui/test_execute_python_widget.py` — NEW):
-- `test_widget_states_transition` — PENDING → RUNNING → DONE
-- `test_auto_approved_collapses_code` — auto_approved=True → code collapsed
+- `test_widget_states_transition` — IDLE → PENDING_APPROVAL → RUNNING → DONE
+- `test_idle_state_collapses_code` — widget init → code collapsed, no buttons (mô phỏng auto-allow: không nhận show_approval_buttons, nhận TOOL_RESULT trực tiếp)
 - `test_docs_gate_status_running` — status line text + color
 - `test_docs_gate_status_blocked_hides_buttons` — blocked → buttons invisible
 - `test_docs_gate_status_failed_shows_buttons` — failed → buttons visible
@@ -318,7 +382,7 @@ quan trọng: crash của subagent không được biến thành block cứng.
 | Risk | Mitigation |
 |------|------------|
 | ChatView routing phức tạp (widget đã tồn tại khi TOOL_APPROVAL_REQUEST đến) | Check `_tool_widgets[tool_call_id]` isinstance ExecutePythonWidget → call method, không tạo mới |
-| DOCS_GATE_STATUS đến trước TOOL_CALL_START (race) | Handler check widget tồn tại, nếu không → buffer hoặc drop (UI-only signal, an toàn) |
+| DOCS_GATE_STATUS cho widget không phải ExecutePythonWidget (edge case) | `set_docs_gate_status` chỉ xử lý nếu widget là ExecutePythonWidget; handler check isinstance trước khi gọi (docs gate chỉ chạy cho execute_python nên lý thuyết không xảy ra, nhưng guard phòng vệ) |
 | Code chưa có ở TOOL_CALL_START | Widget init với code="", `set_code()` update khi TOOL_CALL_DONE |
 | Widget lớn ảnh hưởng layout cascade (chat lag memory) | Code editor có max height (15 lines + scroll), result block có max height. Match pattern đã có trong ToolApprovalWidget |
 
@@ -331,6 +395,6 @@ quan trọng: crash của subagent không được biến thành block cứng.
 | `rikugan/agent/turn.py` | + `DOCS_GATE_STATUS` enum + `docs_gate_status()` factory |
 | `rikugan/agent/loop.py` | `_review_complex_idapython_script`: TEXT_DELTA → DOCS_GATE_STATUS. `_describe_tool_call`: empty cho execute_python |
 | `rikugan/ui/tool_widgets.py` | + `ExecutePythonWidget` class |
-| `rikugan/ui/chat_view.py` | routing: ExecutePythonWidget cho execute_python, DOCS_GATE_STATUS handler, route TOOL_APPROVAL_REQUEST vào widget hiện có |
+| `rikugan/ui/chat_view.py` | routing: ExecutePythonWidget cho execute_python (live + restore), DOCS_GATE_STATUS handler, route TOOL_APPROVAL_REQUEST vào widget hiện có, type hint `_tool_widgets` |
 | `tests/ui/test_execute_python_widget.py` | NEW — unit tests |
 | `tests/agent/test_idapython_docs_gate.py` | UPDATE — assert DOCS_GATE_STATUS events |
