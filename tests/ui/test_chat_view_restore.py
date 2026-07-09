@@ -82,9 +82,11 @@ except ImportError:
     pass
 
 
+from rikugan import constants  # noqa: E402
 from rikugan.core.types import Message, Role, ToolCall, ToolResult  # noqa: E402
 from rikugan.ui.chat_view import (  # noqa: E402
     _RESTORE_CHUNK_SIZE,
+    ChatView,
     MessageSpec,
     RestoreWorker,
     ToolSpec,
@@ -93,6 +95,10 @@ from rikugan.ui.chat_view import (  # noqa: E402
     _estimate_user_height,
     _is_hidden_system_user_message,
     _RenderedChunk,
+)
+from rikugan.ui.tool_widgets import (  # noqa: E402
+    ExecutePythonWidget,
+    ToolCallWidget,
 )
 
 
@@ -431,6 +437,77 @@ class PlaceholderTests(unittest.TestCase):
                 f"placeholder with estimate {tiny} should clamp to >=16 px",
             )
             self.assertEqual(ph.minimumHeight(), ph.maximumHeight())
+
+
+class TestRestoreExecutePython(unittest.TestCase):
+    """Restored ``execute_python`` tool calls should render as
+    :class:`ExecutePythonWidget` (unified code + result layout), not
+    the generic :class:`ToolCallWidget`.  See ``_build_restored_tool_widgets``.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        # ``ExecutePythonWidget`` is a ``QFrame`` subclass and needs a
+        # live ``QApplication`` to construct.
+        from PySide6.QtWidgets import QApplication
+
+        cls._qapp = QApplication.instance() or QApplication([])
+
+    def _make_view(self) -> ChatView:
+        # ``ChatView.__new__`` skips ``__init__`` (which wires up the
+        # full Qt UI); we only need the three attributes the restore
+        # path touches.
+        view = ChatView.__new__(ChatView)
+        view._tool_widgets = {}
+        view._group_map = {}
+        view._container = None
+        return view
+
+    def test_execute_python_restores_as_execute_python_widget(self) -> None:
+        ts = ToolSpec(
+            id="rc1",
+            name=constants.EXECUTE_PYTHON_TOOL_NAME,
+            arguments_json='{"code": "print(1)"}',
+            result_content="42",
+            result_is_error=False,
+        )
+        view = self._make_view()
+        widgets = view._build_restored_tool_widgets((ts,))
+        # Single tool — returned directly (not in a group).
+        self.assertEqual(len(widgets), 1)
+        self.assertIsInstance(widgets[0], ExecutePythonWidget)
+        self.assertEqual(widgets[0]._code, "print(1)")
+        self.assertTrue(widgets[0]._result_block_visible)
+        self.assertFalse(widgets[0]._is_error)
+
+    def test_other_tool_still_restores_as_tool_call_widget(self) -> None:
+        # Regression guard: non-execute_python tools must keep using
+        # the generic ToolCallWidget.
+        ts = ToolSpec(
+            id="rc2",
+            name="decompile_function",
+            arguments_json='{"addr": "0x401000"}',
+            result_content="ret 0;",
+            result_is_error=False,
+        )
+        view = self._make_view()
+        widgets = view._build_restored_tool_widgets((ts,))
+        self.assertEqual(len(widgets), 1)
+        self.assertIsInstance(widgets[0], ToolCallWidget)
+
+    def test_execute_python_error_result_restored(self) -> None:
+        ts = ToolSpec(
+            id="rc3",
+            name=constants.EXECUTE_PYTHON_TOOL_NAME,
+            arguments_json='{"code": "x = 1/0"}',
+            result_content="ZeroDivisionError",
+            result_is_error=True,
+        )
+        view = self._make_view()
+        widgets = view._build_restored_tool_widgets((ts,))
+        self.assertIsInstance(widgets[0], ExecutePythonWidget)
+        self.assertTrue(widgets[0]._result_block_visible)
+        self.assertTrue(widgets[0]._is_error)
 
 
 if __name__ == "__main__":

@@ -2133,9 +2133,12 @@ class ChatView(QScrollArea):
         """
         if not tool_specs:
             return []
-        tool_widgets: list[ToolCallWidget] = []
+        tool_widgets: list[ToolCallWidget | ExecutePythonWidget] = []
         for ts in tool_specs:
-            tw = ToolCallWidget(ts.name, ts.id, parent=self._container)
+            if ts.name == constants.EXECUTE_PYTHON_TOOL_NAME:
+                tw = ExecutePythonWidget(ts.id, parent=self._container)
+            else:
+                tw = ToolCallWidget(ts.name, ts.id, parent=self._container)
             tw.set_arguments(ts.arguments_json)
             tw.mark_done()
             if ts.result_content or ts.result_is_error:
