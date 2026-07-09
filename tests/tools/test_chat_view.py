@@ -265,7 +265,6 @@ class TestExecutePythonRouting(unittest.TestCase):
             )
         )
         self.assertEqual(view._tool_widgets["tc1"]._code, "print(1)")
-        self.assertEqual(view._tool_widgets["tc1"]._code, "print(1)")
 
     # ------------------------------------------------------------------
     # TOOL_APPROVAL_REQUEST → reuse existing ExecutePythonWidget
