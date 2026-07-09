@@ -1,6 +1,6 @@
 # Luc Nhan
 
-![Version](https://img.shields.io/badge/version-1.9.1-blue)
+![Version](https://img.shields.io/badge/version-1.10.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 A reverse-engineering agent for **IDA Pro** that integrates a multi-provider LLM directly into your analysis UI. Luc Nhan has its own agentic loop, in-process tool orchestration, streaming chat, multi-tab sessions, subagents, MCP, headless automation, and undoable mutation workflows — all built around the binary you are reversing.
@@ -30,7 +30,7 @@ irm https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.ps1 | iex
 Pre-built release ZIPs (HCLI flat layout) are published on the GitHub Releases page and can be installed with:
 
 ```bash
-hcli plugin install rikugan-v1.9.1.zip
+hcli plugin install rikugan-v1.10.0.zip
 ```
 
 For host-specific install, manual setup, and configuration, see the [docs](https://rikugan.reversing.codes/docs.html).
