@@ -64,9 +64,6 @@ def _qt_class(name: str) -> type:
             def lineSpacing(self):
                 return 14
 
-            def horizontalAdvance(self, text):
-                return len(str(text)) * 7
-
         return _FontMetrics()
 
     def _layout_getter(self):
