@@ -1364,6 +1364,15 @@ class ExecutePythonWidget(QFrame):
         # Default: collapsed (show only when IDLE/auto-allow path).
         self._set_code_expanded(self._code_expanded)
 
+    def append_args_delta(self, delta: str) -> None:
+        """Accumulate streaming args (TOOL_CALL_ARGS_DELTA).
+
+        ExecutePythonWidget renders code only after ``set_arguments()`` parses
+        the complete JSON on TOOL_CALL_DONE, so deltas are a no-op here — but
+        ChatView calls this unconditionally for every tool widget.
+        """
+        # No-op: code is extracted and rendered in set_arguments() on TOOL_CALL_DONE.
+
     def set_arguments(self, args_text: str) -> None:
         """Parse JSON args and extract the code (compat with ToolCallWidget API)."""
         try:

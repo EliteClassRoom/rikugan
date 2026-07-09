@@ -251,6 +251,20 @@ class TestExecutePythonRouting(unittest.TestCase):
         self.assertEqual(view._tool_run_names, [self.EXEC_PY])
 
     # ------------------------------------------------------------------
+    # TOOL_CALL_ARGS_DELTA → append_args_delta must not crash
+    # ------------------------------------------------------------------
+
+    def test_tool_call_args_delta_does_not_crash(self):
+        """execute_python streams args via deltas; the widget must handle
+        append_args_delta without crashing (was a missing-method AttributeError)."""
+        view = self._make_view()
+        view._handle_tool_event(self.TurnEvent.tool_call_start("tc3", self.EXEC_PY))
+        # Streaming a delta must not raise.
+        view._handle_tool_event(self.TurnEvent.tool_call_args_delta("tc3", '{"code": "prin'))
+        view._handle_tool_event(self.TurnEvent.tool_call_args_delta("tc3", 't(1)"}'))
+        self.assertIsInstance(view._tool_widgets["tc3"], self.ExecutePythonWidget)
+
+    # ------------------------------------------------------------------
     # TOOL_CALL_DONE → set_arguments(code extraction)
     # ------------------------------------------------------------------
 
