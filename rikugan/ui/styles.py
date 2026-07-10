@@ -146,6 +146,7 @@ from .theme.widgets_mutation import (  # noqa: E402,F401 — re-export
     get_tool_approval_disabled_btn_style,
     get_tool_approval_frame_style,
     get_tool_approval_header_style,
+    get_tool_result_editor_style,
 )
 
 # Orchestra/delegation/profiles style getters moved to ui/theme/widgets_orchestra.py;

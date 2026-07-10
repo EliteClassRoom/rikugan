@@ -99,6 +99,30 @@ def _tool_approval_code_editor_style() -> str:
     )
 
 
+def _tool_result_editor_style(text_color: str | None = None) -> str:
+    """QSS for the read-only result editor used by ExecutePythonWidget.
+
+    Mirrors :func:`_tool_approval_code_editor_style` but lets the caller
+    override the foreground colour — used to paint error output red.
+    QSS keeps the first matching rule, so the override must replace the
+    ``color`` value in the ``QPlainTextEdit`` rule rather than append a
+    new rule after it.
+    """
+    t = _tokens()
+    fg = text_color if text_color is not None else t.code_text
+    return (
+        f"QPlainTextEdit {{ "
+        f"  color: {fg}; background: {t.code_bg}; "
+        f"  font-size: inherit; border: 1px solid {t.mid}; border-radius: 4px; "
+        f"  padding: 4px; "
+        f"}}"
+        f"QScrollBar:vertical {{ width: 8px; background: {t.code_bg}; }}"
+        f"QScrollBar::handle:vertical {{ background: {t.mid}; border-radius: 4px; }}"
+        f"QScrollBar:horizontal {{ height: 8px; background: {t.code_bg}; }}"
+        f"QScrollBar::handle:horizontal {{ background: {t.mid}; border-radius: 4px; }}"
+    )
+
+
 def _tool_approval_allow_btn_style() -> str:
     t = _tokens()
     return (
@@ -200,6 +224,10 @@ def get_tool_approval_header_style() -> str:
 
 def get_tool_approval_code_editor_style() -> str:
     return _tool_approval_code_editor_style()
+
+
+def get_tool_result_editor_style(text_color: str | None = None) -> str:
+    return _tool_result_editor_style(text_color)
 
 
 def get_tool_approval_allow_btn_style() -> str:
