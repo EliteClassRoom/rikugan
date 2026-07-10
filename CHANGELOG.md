@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.2] — 2026-07-10
+
+### Fixed
+- **`execute_python` output was invisible after a run** — the collapse-on-result redesign (1.10.0) made `ExecutePythonWidget.set_result()` hide the result label and block frame after receiving the output, so the user saw only `▶ ● execute_python ✓` with no output until manually expanding. The collapse/expand toggle and all associated state flags have been removed entirely. Output now renders in an always-visible, scrollable read-only editor (`QPlainTextEdit`) whose height tracks the content up to 15 lines, then scrolls. Error output is shown in the same block in red with a `✗` icon; the docs-review blocked summary is shown in full (no "click for details" indirection).
+
+### Changed
+- Added `get_tool_result_editor_style(text_color=None)` to `rikugan/ui/theme/widgets_mutation.py` — a token-driven QSS builder for the result editor that lets the caller override the foreground color for error output. (QSS keeps the first matching rule, so the color override replaces the `color:` value inside the `QPlainTextEdit` rule rather than appending a second rule.)
+
 ## [1.10.1] — 2026-07-10
 
 ### Fixed
