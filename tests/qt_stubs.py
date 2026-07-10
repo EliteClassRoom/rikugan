@@ -33,11 +33,20 @@ def _qt_class(name: str) -> type:
     def _visible_setter(self, val):
         self._visible = val
 
+    def _hidden_getter(self):
+        return not getattr(self, "_visible", True)
+
     def _text_getter(self):
         return getattr(self, "_text", "")
 
     def _text_setter(self, val):
         self._text = val
+
+    def _plain_text_getter(self):
+        return getattr(self, "_plain_text", "")
+
+    def _plain_text_setter(self, val):
+        self._plain_text = val
 
     def _min_h_setter(self, val):
         self._min_h = int(val)
@@ -50,6 +59,12 @@ def _qt_class(name: str) -> type:
 
     def _max_h_getter(self):
         return getattr(self, "_max_h", 0)
+
+    def _fixed_h_setter(self, val):
+        self._fixed_h = int(val)
+
+    def _fixed_h_getter(self):
+        return getattr(self, "_fixed_h", 0)
 
     def _font_metrics(self, *a, **k):
         """Return a stub QFontMetrics whose ``lineSpacing()`` is a fixed value.
@@ -146,7 +161,8 @@ def _qt_class(name: str) -> type:
         "setOpenExternalLinks": _noop,
         "setContentsMargins": _noop,
         "setSpacing": _noop,
-        "setFixedHeight": _noop,
+        "setFixedHeight": _fixed_h_setter,
+        "height": _fixed_h_getter,
         "setMaximumHeight": _max_h_setter,
         "maximumHeight": _max_h_getter,
         "setCheckable": _noop,
@@ -307,7 +323,8 @@ def _qt_class(name: str) -> type:
         "verticalHeader": lambda self: _HeaderStub(),
         "horizontalHeader": lambda self: _HeaderStub(),
         "setHtml": _noop,
-        "setPlainText": _noop,
+        "setPlainText": _plain_text_setter,
+        "toPlainText": _plain_text_getter,
         "setMarkdown": _noop,
         "setProperty": _noop,
         "setData": _noop,
@@ -335,7 +352,8 @@ def _qt_class(name: str) -> type:
         "textEdited": _Signal(),
         "editingFinished": _Signal(),
         "returnPressed": _Signal(),
-        "setVisible": _noop,
+        "setVisible": _visible_setter,
+        "isHidden": _hidden_getter,
         "setParent": _noop,
         "setLayout": _layout_setter,
         "resize": _noop,

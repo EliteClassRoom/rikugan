@@ -477,7 +477,7 @@ class TestRestoreExecutePython(unittest.TestCase):
         self.assertEqual(len(widgets), 1)
         self.assertIsInstance(widgets[0], ExecutePythonWidget)
         self.assertEqual(widgets[0]._code, "print(1)")
-        self.assertTrue(widgets[0]._result_block_visible)
+        self.assertFalse(widgets[0]._result_block.isHidden())
         self.assertFalse(widgets[0]._is_error)
 
     def test_other_tool_still_restores_as_tool_call_widget(self) -> None:
@@ -506,7 +506,7 @@ class TestRestoreExecutePython(unittest.TestCase):
         view = self._make_view()
         widgets = view._build_restored_tool_widgets((ts,))
         self.assertIsInstance(widgets[0], ExecutePythonWidget)
-        self.assertTrue(widgets[0]._result_block_visible)
+        self.assertFalse(widgets[0]._result_block.isHidden())
         self.assertTrue(widgets[0]._is_error)
 
 
