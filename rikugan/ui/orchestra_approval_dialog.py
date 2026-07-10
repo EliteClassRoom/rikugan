@@ -72,9 +72,7 @@ class DelegationApprovalWidget(QFrame):
         self._info.setStyleSheet(get_delegation_info_style())
         layout.addWidget(self._info)
 
-        self._instruction_preview = QLabel(
-            f"Task: {instruction[:200]}{'...' if len(instruction) > 200 else ''}"
-        )
+        self._instruction_preview = QLabel(f"Task: {instruction[:200]}{'...' if len(instruction) > 200 else ''}")
         self._instruction_preview.setStyleSheet(get_delegation_preview_style())
         self._instruction_preview.setWordWrap(True)
         layout.addWidget(self._instruction_preview)

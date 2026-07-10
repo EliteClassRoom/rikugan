@@ -368,8 +368,10 @@ class ThemeManager(QObject):  # type: ignore[misc, valid-type]
             try:
                 from ...core.host import is_ida
             except Exception:
+
                 def is_ida() -> bool:  # type: ignore[no-redef]
                     return False
+
             if not is_ida() and self._mode in (ThemeMode.IDA_NATIVE, ThemeMode.AUTO):
                 effective = "dark"
             set_current_theme(legacy_value, effective_theme=effective)

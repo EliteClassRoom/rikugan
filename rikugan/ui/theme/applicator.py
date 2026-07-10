@@ -77,15 +77,14 @@ def _accepts_tokens_arg(fn: Callable[..., Any]) -> bool:
         # Builtins / C-impls — assume the user knew what they were
         # doing and accept one arg.
         return True
-    has_var_positional = any(
-        p.kind is inspect.Parameter.VAR_POSITIONAL
-        for p in sig.parameters.values()
-    )
+    has_var_positional = any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values())
     if has_var_positional:
         return True
     positional = [
-        p for p in sig.parameters.values()
-        if p.kind in (
+        p
+        for p in sig.parameters.values()
+        if p.kind
+        in (
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
         )

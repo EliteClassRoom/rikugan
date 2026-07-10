@@ -361,9 +361,7 @@ class SettingsDialog(QDialog):
         # programmatic ``setCurrentIndex`` calls inside
         # ``_on_models_ready`` are safe — they trigger a re-application
         # that is a no-op when the model matches the saved config.
-        self._model_combo.currentIndexChanged.connect(
-            lambda _idx: self._update_generation_defaults()
-        )
+        self._model_combo.currentIndexChanged.connect(lambda _idx: self._update_generation_defaults())
 
     def _on_tab_changed_lazy(self, index: int) -> None:
         """Lazy-construct Skills / MCP / Profiles tabs on first selection."""

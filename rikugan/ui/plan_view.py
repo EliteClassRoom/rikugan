@@ -237,9 +237,7 @@ class PlanView(QFrame):
         except Exception:
             return
         # Header: ``#569cd6`` -> ``t.accent``.
-        self._header.setStyleSheet(
-            f"color: {t.accent}; font-weight: bold; font-size: inherit;"
-        )
+        self._header.setStyleSheet(f"color: {t.accent}; font-weight: bold; font-size: inherit;")
         # Approve button: success fill with high-contrast text.
         # ``_pick_contrasting_text`` (mirrored inline here) keeps the
         # label readable in light mode where ``highlight_text`` is

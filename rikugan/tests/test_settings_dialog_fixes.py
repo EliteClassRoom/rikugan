@@ -2140,6 +2140,7 @@ class TestMiniMaxAutomaticThinking(unittest.TestCase):
     def test_strips_cache_control_from_request(self) -> None:
         """The MiniMax adapter continues to strip unsupported ``cache_control``."""
         kwargs = self._kwargs("MiniMax-M3")
+
         # system: empty string passes through; tools: None → not in kwargs.
         # The strip is defensive — assert no ``cache_control`` keys leaked.
         def _walk(obj):
@@ -2218,9 +2219,7 @@ class TestAnthropicRawPartsPreservation(unittest.TestCase):
         events = [
             SimpleNamespace(
                 type="content_block_start",
-                content_block=SimpleNamespace(
-                    type="tool_use", id="t1", name="do_thing", input=None
-                ),
+                content_block=SimpleNamespace(type="tool_use", id="t1", name="do_thing", input=None),
             ),
             SimpleNamespace(
                 type="content_block_delta",
@@ -2248,15 +2247,11 @@ class TestAnthropicRawPartsPreservation(unittest.TestCase):
         events = [
             SimpleNamespace(
                 type="content_block_start",
-                content_block=SimpleNamespace(
-                    type="tool_use", id="t1", name="broken", input=None
-                ),
+                content_block=SimpleNamespace(type="tool_use", id="t1", name="broken", input=None),
             ),
             SimpleNamespace(
                 type="content_block_delta",
-                delta=SimpleNamespace(
-                    type="input_json_delta", partial_json='{"a": '
-                ),
+                delta=SimpleNamespace(type="input_json_delta", partial_json='{"a": '),
             ),
             SimpleNamespace(type="content_block_stop"),
         ]
