@@ -691,12 +691,11 @@ class TestExecutePythonWidgetThemeRefresh(unittest.TestCase):
         tm._apply_now()
         widget = ExecutePythonWidget.__new__(ExecutePythonWidget)
         widget.setStyleSheet = MagicMock()  # type: ignore[attr-defined]
-        for attr in ("_bullet", "_name_label", "_status_icon", "_result_label"):
+        for attr in ("_bullet", "_name_label", "_status_icon", "_result_edit"):
             mock = MagicMock()
             mock.text.return_value = "" if attr != "_status_icon" else "✓"
             widget.__setattr__(attr, mock)
         widget._is_error = False
-        widget._result_content_visible = False
         widget._apply_styles()
         dark_status = widget._status_icon.setStyleSheet.call_args.args[0]
         self.assertTrue(dark_status, "status icon must have a stylesheet")

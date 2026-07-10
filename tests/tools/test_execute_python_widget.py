@@ -1,4 +1,4 @@
-"""Tests for ExecutePythonWidget (unified execute_python lifecycle widget)."""
+"""Tests for ExecutePythonWidget (always-visible, no collapse/expand)."""
 
 from __future__ import annotations
 
@@ -17,14 +17,12 @@ from rikugan.ui.tool_widgets import ExecutePythonWidget  # noqa: E402
 
 
 class TestExecutePythonWidgetInit(unittest.TestCase):
-    def test_init_idle_no_buttons_code_collapsed(self):
+    def test_init_idle_no_buttons(self):
         w = ExecutePythonWidget("tc1")
         # No code set yet.
         self.assertEqual(w._code, "")
         # Buttons should not be shown until show_approval_buttons().
         self.assertFalse(w._buttons_visible)
-        # Result block should be hidden until set_result().
-        self.assertFalse(w._result_block_visible)
 
 
 class TestSetArguments(unittest.TestCase):
@@ -64,39 +62,24 @@ class TestDocsGateStatus(unittest.TestCase):
         self.assertTrue(w._buttons_visible)
         w.set_docs_gate_status("blocked", summary="bad API")
         self.assertFalse(w._buttons_visible)
-        # Summary now lives in the collapsible detail, not the header.
-        self.assertIn("bad API", w._status_detail_text)
         self.assertIn("Docs review blocked", w._status_text)
 
-    def test_blocked_status_collapsed_by_default(self):
-        """A blocked review shows a short header by default; the long
-        reviewer summary must not clutter the card until the user expands."""
+    def test_blocked_status_detail_visible_by_default(self):
+        """A blocked review shows the full reviewer summary immediately —
+        there is no collapse toggle to click open."""
         w = ExecutePythonWidget("tc1")
         w.set_docs_gate_status("blocked", summary="ida_bytes.patch_qword is not a real API" * 5)
         self.assertTrue(w._status_visible)
-        # Detail (full summary) hidden by default.
-        self.assertFalse(w._status_detail_visible)
-
-    def test_blocked_status_expandable(self):
-        """User can expand the blocked status to read the full summary.
-        (Expansion is driven by the single header toggle, not a separate
-        status toggle.)"""
-        w = ExecutePythonWidget("tc1")
-        w.set_docs_gate_status("blocked", summary="detailed rewrite guidance here")
-        self.assertFalse(w._status_detail_visible)
-        w.toggle_all()
-        self.assertTrue(w._status_detail_visible)
-        self.assertIn("detailed rewrite guidance here", w._status_detail_text)
+        self.assertTrue(w._status_detail.isVisible())
 
     def test_blocked_result_does_not_dup(self):
         """When the docs gate blocks, the loop emits TOOL_RESULT with the
         reviewer summary as an error. The widget already shows that summary
-        in the status line, so set_result must NOT render a duplicate
-        result block."""
+        in the status detail, so set_result must NOT render a result block."""
         w = ExecutePythonWidget("tc1")
         w.set_docs_gate_status("blocked", summary="rewrite guidance")
         w.set_result("rewrite guidance", is_error=True)
-        self.assertFalse(w._result_block_visible)
+        self.assertFalse(w._result_block.isVisible())
 
     def test_failed_shows_buttons(self):
         """FAILED (reviewer crash) still lets the user approve."""
@@ -151,89 +134,48 @@ class TestSetResult(unittest.TestCase):
         w = ExecutePythonWidget("tc1")
         w.set_code("print(1)")
         w.set_result("42", is_error=False)
-        self.assertTrue(w._result_block_visible)
+        self.assertTrue(w._result_block.isVisible())
         self.assertFalse(w._is_error)
 
-    def test_set_result_error_marks_error(self):
-        w = ExecutePythonWidget("tc1")
-        w.set_code("print(1)")
-        w.set_result("NameError: x", is_error=True)
-        self.assertTrue(w._result_block_visible)
-        self.assertTrue(w._is_error)
-
-    def test_result_collapsed_by_default(self):
-        """Result content is hidden by default; only the header shows so a
-        long script output doesn't dominate the card."""
-        w = ExecutePythonWidget("tc1")
-        w.set_code("print(1)")
-        w.set_result("long output " * 50, is_error=False)
-        self.assertTrue(w._result_block_visible)
-        self.assertFalse(w._result_content_visible)
-
-    def test_result_label_hidden_when_collapsed(self):
-        """When collapsed, the 'Result:' label must not linger either — the
-        tool header already carries the ✓/✗ status, so a stray label with
-        no content underneath is noise. The label appears only on expand."""
-        w = ExecutePythonWidget("tc1")
-        w.set_code("print(1)")
-        w.set_result("output", is_error=False)
-        # Collapsed: neither label nor content visible.
-        self.assertFalse(w._result_content_visible)
-        self.assertFalse(w._result_header_visible)
-        # Expand: both label and content visible together.
-        w.toggle_all()
-        self.assertTrue(w._result_content_visible)
-        self.assertTrue(w._result_header_visible)
-
-    def test_result_block_hidden_when_collapsed(self):
-        """A collapsed result must not leave an empty frame reserving a gap
-        below the widget — the whole result block hides until expand."""
-        w = ExecutePythonWidget("tc1")
-        w.set_code("print(1)")
-        w.set_result("output", is_error=False)
-        # Collapsed: result block frame hidden (no content → no gap).
-        self.assertFalse(w._result_block_visible_current)
-        w.toggle_all()
-        # Expanded: block frame visible alongside content.
-        self.assertTrue(w._result_block_visible_current)
-
-    def test_result_expandable(self):
-        """User can expand the result to read the full output.
-        (Expansion is driven by the single header toggle, not a separate
-        result toggle.)"""
+    def test_set_result_shows_output_in_editor(self):
+        """Output must be visible immediately — no toggle required."""
         w = ExecutePythonWidget("tc1")
         w.set_code("print(1)")
         w.set_result("the answer is 42", is_error=False)
-        self.assertFalse(w._result_content_visible)
-        w.toggle_all()
-        self.assertTrue(w._result_content_visible)
+        self.assertEqual(w._result_edit.toPlainText(), "the answer is 42")
+        self.assertTrue(w._result_block.isVisible())
 
-    def test_single_header_toggle_controls_all_content(self):
-        """One toggle in the tool header expands/collapses code, result, and
-        status detail together — not three separate toggles."""
-        w = ExecutePythonWidget("tc1")
-        w.set_code("print(1)")
-        w.set_result("output", is_error=False)
-        w.set_docs_gate_status("blocked", summary="detail text")
-        # Collapsed by default.
-        self.assertFalse(w._code_expanded)
-        self.assertFalse(w._result_content_visible)
-        # Expand via the single header toggle.
-        w.toggle_all()
-        self.assertTrue(w._code_expanded)
-        self.assertTrue(w._result_content_visible)
-        # Collapse again.
-        w.toggle_all()
-        self.assertFalse(w._code_expanded)
-        self.assertFalse(w._result_content_visible)
-
-    def test_result_error_collapsed_by_default(self):
-        """Error results are also collapsed by default."""
+    def test_set_result_error_marks_error_and_colors(self):
         w = ExecutePythonWidget("tc1")
         w.set_code("print(1)")
         w.set_result("NameError: x", is_error=True)
+        self.assertTrue(w._result_block.isVisible())
         self.assertTrue(w._is_error)
-        self.assertFalse(w._result_content_visible)
+        self.assertEqual(w._status_icon.text(), "✗")
+
+    def test_result_short_output_compact(self):
+        """A short output renders at its natural line count (no cap, no
+        scroll)."""
+        w = ExecutePythonWidget("tc1")
+        w.set_code("print(1)")
+        w.set_result("line one\nline two", is_error=False)
+        lines = 2
+        line_height = w._result_edit.fontMetrics().lineSpacing()
+        self.assertEqual(w._result_edit.height(), line_height * lines + 16)
+
+    def test_result_long_output_capped_and_scrollable(self):
+        """A long output caps the editor height at _RESULT_MAX_LINES; the
+        full text is still present in the document (scrollable)."""
+        from rikugan.ui.tool_widgets import _RESULT_MAX_LINES
+
+        long_output = "\n".join(f"line {i}" for i in range(50))
+        w = ExecutePythonWidget("tc1")
+        w.set_code("print(1)")
+        w.set_result(long_output, is_error=False)
+        line_height = w._result_edit.fontMetrics().lineSpacing()
+        self.assertEqual(w._result_edit.height(), line_height * _RESULT_MAX_LINES + 16)
+        # Full content preserved for scrolling.
+        self.assertIn("line 49", w._result_edit.toPlainText())
 
 
 class TestMarkDone(unittest.TestCase):
@@ -247,12 +189,14 @@ class TestMarkDone(unittest.TestCase):
 
 
 class TestHidePreview(unittest.TestCase):
-    def test_hide_preview_collapses_code(self):
+    def test_hide_preview_is_noop(self):
+        """hide_preview is retained for ChatView grouping compat but is a
+        no-op — the widget has no collapse state."""
         w = ExecutePythonWidget("tc1")
         w.set_code("print(1)\nprint(2)\n")
+        # Should not raise and should not hide code.
         w.hide_preview()
-        # After hide_preview the code editor should be collapsed.
-        self.assertFalse(w._code_expanded)
+        self.assertTrue(w._code_section().isVisible())
 
 
 class TestCodeDisplayedOnce(unittest.TestCase):
@@ -264,6 +208,20 @@ class TestCodeDisplayedOnce(unittest.TestCase):
         # There should be no _description_label attribute holding a
         # duplicate of the first code line.
         self.assertFalse(getattr(w, "_description_label", None))
+
+
+class TestAlwaysVisible(unittest.TestCase):
+    def test_no_toggle_button_in_header(self):
+        """The collapse toggle (QToolButton) is gone from the header."""
+        w = ExecutePythonWidget("tc1")
+        self.assertFalse(getattr(w, "_toggle_btn", None))
+
+    def test_set_code_always_visible(self):
+        """After set_code, the code section is visible without toggling."""
+        w = ExecutePythonWidget("tc1")
+        w.set_code("print(1)")
+        self.assertTrue(w._code_section().isVisible())
+        self.assertTrue(w._code_edit.isVisible())
 
 
 if __name__ == "__main__":
