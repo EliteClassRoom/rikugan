@@ -45,9 +45,7 @@ class TestCliAskParser:
         from rikugan.cli.headless import build_parser
 
         parser = build_parser()
-        args = parser.parse_args(
-            ["ask", "binary.exe", "hello", "--api-base", "http://localhost:11434/v1"]
-        )
+        args = parser.parse_args(["ask", "binary.exe", "hello", "--api-base", "http://localhost:11434/v1"])
         assert args.provider is None
         assert args.model is None
         assert args.api_base == "http://localhost:11434/v1"
@@ -267,7 +265,7 @@ class TestDefaultModelFallback:
     def test_minimax_default(self):
         from rikugan.core.config import RikuganConfig
 
-        assert RikuganConfig.get_provider_default_model("minimax") == "MiniMax-M2.5"
+        assert RikuganConfig.get_provider_default_model("minimax") == "MiniMax-M3"
 
     def test_openai_compat_no_default(self):
         from rikugan.core.config import RikuganConfig
@@ -393,4 +391,4 @@ class TestApplyProviderOverrides:
         _apply_provider_overrides(cfg, {"provider": "minimax"})
         assert cfg.provider.name == "minimax"
         # switch_provider uses saved model or falls back to provider default
-        assert cfg.provider.model == "MiniMax-M2.5"
+        assert cfg.provider.model == "MiniMax-M3"
