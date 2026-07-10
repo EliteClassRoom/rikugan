@@ -59,6 +59,18 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         # Make sure we are using the *real* PySide6, not the lightweight
         # ``tests.qt_stubs`` substitutes.  Sibling test files sometimes
         # install stubs in ``sys.modules``; force a re-import.
+        # Snapshot the pre-existing PySide6 / theme-module entries so
+        # tearDownClass can restore them — otherwise this class leaves
+        # the real C-extension modules in sys.modules and pollutes every
+        # downstream test that expects the qt_stubs substitutes.
+        cls._saved_modules = {
+            name: sys.modules.get(name)
+            for name in list(sys.modules)
+            if name == "PySide6"
+            or name.startswith("PySide6.")
+            or name == "rikugan.ui.theme"
+            or name.startswith("rikugan.ui.theme.")
+        }
         sys.modules.pop("PySide6", None)
         sys.modules.pop("PySide6.QtCore", None)
         import PySide6  # type: ignore[import-not-found]
@@ -69,6 +81,30 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         from rikugan.ui.theme.manager import ThemeManager  # type: ignore[import-not-found]
 
         cls.ThemeManager = ThemeManager
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        # Restore the PySide6 / theme-module state this class inherited,
+        # so sibling tests that rely on the qt_stubs substitutes see the
+        # same modules they would have if this class never ran. If a
+        # saved entry was None (module was absent), drop the real module
+        # we imported so a downstream ``ensure_pyside6_stubs`` can
+        # re-install the stub (it short-circuits on its ``_installed``
+        # flag, so the stub modules must be back in sys.modules).
+        for name in list(sys.modules):
+            if (
+                name == "PySide6"
+                or name.startswith("PySide6.")
+                or name == "rikugan.ui.theme"
+                or name.startswith("rikugan.ui.theme.")
+            ):
+                if name not in cls._saved_modules:
+                    sys.modules.pop(name, None)
+        for name, mod in cls._saved_modules.items():
+            if mod is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = mod
 
     def setUp(self) -> None:
         # Always start from a clean singleton so listeners from a
@@ -84,8 +120,7 @@ class _RealQtSignalWiringTests(unittest.TestCase):
         tm = self.ThemeManager.instance()
         self.assertTrue(
             hasattr(tm.themeChanged, "connect"),
-            f"ThemeManager.themeChanged is missing .connect: "
-            f"type={type(tm.themeChanged).__name__!r}",
+            f"ThemeManager.themeChanged is missing .connect: type={type(tm.themeChanged).__name__!r}",
         )
         # It must be callable, not a stub bool.
         self.assertTrue(callable(getattr(tm.themeChanged, "connect", None)))
@@ -161,9 +196,7 @@ class _DummySignalFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
         # Snapshot real PySide6 modules so we can restore them.
         self._real_pyside6_modules = {
-            name: mod
-            for name, mod in list(sys.modules.items())
-            if name == "PySide6" or name.startswith("PySide6.")
+            name: mod for name, mod in list(sys.modules.items()) if name == "PySide6" or name.startswith("PySide6.")
         }
         # Drop the real PySide6 modules and install a stand-in that
         # raises ImportError on attribute access.
