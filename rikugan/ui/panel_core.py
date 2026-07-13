@@ -231,6 +231,13 @@ class RikuganPanelCore(QWidget):
         self._context_bar: ContextBar | None = None
         self._mutation_panel: MutationLogPanel | None = None
         self._skills_refresh_timer: QTimer | None = None
+        # Debounced token display: streaming can fire 30+ usage events per
+        # second; each one used to call set_tokens directly. We coalesce to
+        # a single update at most every 100ms and skip updates that would
+        # display the same value already shown.
+        self._pending_token_display: int | None = None
+        self._token_display_timer: QTimer | None = None
+        self._last_token_display_value: int = -1
         _early_log("panel_core:post_controller_fields:done")
 
         _early_log("panel_core:oauth_consent:entry")
@@ -1016,10 +1023,18 @@ class RikuganPanelCore(QWidget):
             chat_view.restore_from_messages_async(messages)
 
     def _update_token_display(self, token_count: int | None = None) -> None:
-        """Update the context bar token display with context window percentage."""
+        """Update the context bar token display with context window percentage.
+
+        Direct updates are coalesced via :meth:`_schedule_token_display` so
+        streaming usage events do not pound the context bar at 30+ Hz. A
+        ``token_count`` of ``None`` (the no-arg refresh path used after tab
+        switches and restore) flushes any pending value first.
+        """
         if self._context_bar is None:
             return
         if token_count is None:
+            # Flush any pending value before recomputing from session state.
+            self._flush_pending_token_display()
             session = self._ctrl.session
             # Show current context size (last prompt), not cumulative total
             token_count = (
@@ -1027,8 +1042,46 @@ class RikuganPanelCore(QWidget):
                 if session.last_prompt_tokens is not None
                 else session.total_usage.total_tokens
             )
+        self._schedule_token_display(token_count)
+
+    def _schedule_token_display(self, token_count: int) -> None:
+        """Schedule a token-display update at most every 100ms.
+
+        Skips redundant updates where the value did not change. The
+        coalescing matters most during streaming: a single LLM turn can
+        emit dozens of ``USAGE_UPDATE`` events, and each ``set_tokens``
+        triggers a layout pass in :class:`ContextBar` that becomes a
+        perceptible UI hitches on slower machines.
+        """
+        if token_count <= 0 or token_count == self._last_token_display_value:
+            return
+        self._pending_token_display = token_count
+        if self._token_display_timer is not None and self._token_display_timer.isActive():
+            return
+        timer = self._token_display_timer
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(100)
+            timer.timeout.connect(self._flush_pending_token_display)
+            self._token_display_timer = timer
+        timer.start()
+
+    def _flush_pending_token_display(self) -> None:
+        """Apply the most recent pending token display value, if any."""
+        timer = self._token_display_timer
+        if timer is not None:
+            timer.stop()
+        value = self._pending_token_display
+        if value is None or value == self._last_token_display_value:
+            self._pending_token_display = None
+            return
+        self._pending_token_display = None
+        self._last_token_display_value = value
+        if self._context_bar is None:
+            return
         ctx_window = self._config.provider.context_window or 0
-        self._context_bar.set_tokens(token_count, ctx_window)
+        self._context_bar.set_tokens(value, ctx_window)
 
     def _update_tab_label(self, tab_id: str) -> None:
         """Update tab label from the first user message."""
@@ -1124,6 +1177,15 @@ class RikuganPanelCore(QWidget):
                 self._renamer_engine = None
             self._stop_poll_timer()
             self._stop_skills_refresh_timer()
+            # Stop the token-display debounce timer so a late flush
+            # cannot touch the context bar after teardown.
+            token_timer = getattr(self, "_token_display_timer", None)
+            if token_timer is not None:
+                try:
+                    token_timer.stop()
+                except Exception:
+                    pass
+                self._token_display_timer = None
             # Stop the knowledge-panel debounce timer so it can't fire
             # a refresh after the panel is destroyed.
             timer = getattr(self, "_knowledge_refresh_timer", None)

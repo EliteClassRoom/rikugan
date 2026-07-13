@@ -252,6 +252,33 @@ class TestMdToHtmlFencedCodeBlockEmojiStrip(unittest.TestCase):
         self.assertIn("fenced in list", text)
 
 
+class TestPlainTextFastPath(unittest.TestCase):
+    """Phase 6.1 — plain-text fast path skips markdown-it entirely."""
+
+    def test_plain_text_skips_markdown(self):
+        """Pure prose without markdown syntax is rendered as escaped HTML."""
+        result = md_to_html("This is just plain text.")
+        self.assertIn("This is just plain text.", result)
+        # No <pre> blocks from a code-fence regex.
+        self.assertNotIn("<pre>", result)
+
+    def test_plain_text_escapes_html_chars(self):
+        result = md_to_html("if (a < b && c > d)")
+        # The "<" and ">" must be escaped to safe entities.
+        self.assertIn("&lt;", result)
+        self.assertIn("&gt;", result)
+        self.assertNotIn("a < b", result)  # raw angle-bracket pair
+
+    def test_markdown_still_uses_full_parser(self):
+        """A heading must still be rendered as a heading, not plain text."""
+        result = md_to_html("# Real heading")
+        # Legacy / markdown-it render headings with a styled div.
+        self.assertIn("Real heading", result)
+        # The plain-text fast path wraps in a single <div>; the real
+        # renderer emits a heading div with explicit font-size style.
+        self.assertIn("font-size:", result)
+
+
 class TestMdToHtmlParagraph(unittest.TestCase):
     def test_multiple_empty_lines_collapsed(self):
         result = md_to_html("a\n\n\n\nb")
@@ -279,10 +306,18 @@ class TestMdToHtmlParagraph(unittest.TestCase):
     def test_two_paragraphs_render_as_two_separate_divs(self):
         # Sanity: after removing the trailing <br>, the two paragraphs
         # must still render as distinct block-level elements (not merged).
+        #
+        # Phase 6.1 plain-text fast path: input has no markdown syntax,
+        # so the fast path wraps each paragraph in its own ``<div>``.
+        # The fast path emits a body-color style instead of the legacy
+        # ``margin:2px 0`` style, but the *separation* contract — two
+        # distinct block-level elements — is preserved.
         result = md_to_html("para one\n\npara two")
-        self.assertEqual(result.count('<div style="margin:2px 0;">'), 2)
+        self.assertEqual(result.count("<div"), 2)
         self.assertIn("para one", result)
         self.assertIn("para two", result)
+        # The two paragraphs must not be concatenated into a single block.
+        self.assertNotIn("one<br>para two", result)
 
 
 class TestInlineFormatting(unittest.TestCase):

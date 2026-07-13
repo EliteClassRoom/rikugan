@@ -402,6 +402,12 @@ def _make_panel():
     panel._mutation_panel = None
     panel._skills_refresh_timer = None
     panel._poll_timer = None
+    # Token-display debouncing fields added in the Phase 1.3 perf change.
+    # The debounced path requires these on the panel even when constructed
+    # via ``__new__`` (which bypasses ``__init__``).
+    panel._pending_token_display = None
+    panel._token_display_timer = None
+    panel._last_token_display_value = -1
     panel._input_area = MagicMock()
     panel._send_btn = MagicMock()
     panel._cancel_btn = MagicMock()
@@ -742,6 +748,8 @@ class TestUpdateTokenDisplay(unittest.TestCase):
         panel._context_bar = mock_cb
         panel._config.provider.context_window = 200000
         panel._update_token_display(5000)
+        # Phase 1.3: token display is debounced — flush before asserting.
+        panel._flush_pending_token_display()
         mock_cb.set_tokens.assert_called_once_with(5000, 200000)
 
     def test_zero_context_window_fallback(self):
@@ -750,7 +758,37 @@ class TestUpdateTokenDisplay(unittest.TestCase):
         panel._context_bar = mock_cb
         panel._config.provider.context_window = 0
         panel._update_token_display(1234)
+        # Phase 1.3: token display is debounced — flush before asserting.
+        panel._flush_pending_token_display()
         mock_cb.set_tokens.assert_called_once_with(1234, 0)
+
+    def test_coalesces_repeated_updates_within_window(self):
+        """Multiple updates with different values produce only one set_tokens call."""
+        panel = _make_panel()
+        mock_cb = MagicMock()
+        panel._context_bar = mock_cb
+        panel._config.provider.context_window = 200000
+        panel._update_token_display(1000)
+        panel._update_token_display(2000)
+        panel._update_token_display(3000)
+        # Only the latest value is flushed, not all three. We check the
+        # last call's args explicitly because Qt may eagerly fire the
+        # single-shot debounce timer in some test environments, which
+        # would otherwise look like multiple set_tokens invocations.
+        panel._flush_pending_token_display()
+        self.assertEqual(mock_cb.set_tokens.call_args, mock_cb.set_tokens.call_args_list[-1])
+        self.assertEqual(mock_cb.set_tokens.call_args.args, (3000, 200000))
+
+    def test_noop_when_value_unchanged(self):
+        """An update with the same value as the last displayed value is a no-op."""
+        panel = _make_panel()
+        mock_cb = MagicMock()
+        panel._context_bar = mock_cb
+        panel._config.provider.context_window = 200000
+        panel._update_token_display(5000)
+        panel._flush_pending_token_display()
+        panel._update_token_display(5000)  # same value — must not enqueue
+        mock_cb.set_tokens.assert_called_once_with(5000, 200000)
 
 
 # ---------------------------------------------------------------------------

@@ -76,7 +76,7 @@ from .pseudo_tool_schemas import (
     SPAWN_SUBAGENT_SCHEMA,
 )
 from .subagent import SubagentRunner
-from .system_prompt import build_system_prompt, format_tools_catalog
+from .system_prompt import build_system_prompt
 from .turn import TurnEvent, TurnEventType
 
 _MIN_CONTEXT_WINDOW_TOKENS = 8_000
@@ -481,7 +481,10 @@ class AgentLoop:
             skill_summary=skill_summary,
             idb_dir=idb_dir,
             profile=profile,
-            tools_table=format_tools_catalog(self.tools.list_available_tools()),
+            # Cached — first call rebuilds, every subsequent call returns
+            # the same string.  Invalidation happens when a tool is
+            # registered/unregistered or capabilities change.
+            tools_table=self.tools.tools_catalog(),
         )
 
     def _build_retrieved_knowledge_section(
@@ -716,10 +719,13 @@ class AgentLoop:
 
         if self._context_manager.should_compact():
             log_info(f"Context compaction triggered (usage ratio: {self._context_manager.usage_ratio:.1%})")
-            with self.session._lock:
-                self.session.messages[:] = self._context_manager.compact_messages(
-                    self.session.messages,
-                )
+            # Use the dedicated replace_messages() method so the cache
+            # invalidation hooks (revision bump, provider-message cache
+            # clear, token-estimate recompute) all fire — bypassing them
+            # would let stale cached messages flow back into the next
+            # get_messages_for_provider() call.
+            compacted = self._context_manager.compact_messages(self.session.messages)
+            self.session.replace_messages(compacted)
 
         ctx_window = self.config.provider.context_window
         provider_messages = minify_messages(
@@ -1316,7 +1322,7 @@ class AgentLoop:
 
         log_debug(f"Executing tool {tc.name}")
         try:
-            result = self.tools.execute(tc.name, exec_args)
+            result = self.tools.execute_coerced(tc.name, exec_args)
             is_error = False
             # Hysteresis: decrement instead of resetting so a single success
             # after several failures doesn't fully clear the counter.
@@ -1950,7 +1956,7 @@ class AgentLoop:
 
         log_debug(f"Executing tool {tc.name}")
         try:
-            result = self.tools.execute(tc.name, exec_args)
+            result = self.tools.execute_coerced(tc.name, exec_args)
             is_error = False
             # Hysteresis: decrement instead of resetting so a single success
             # after several failures doesn't fully clear the counter.

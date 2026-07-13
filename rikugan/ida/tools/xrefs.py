@@ -7,6 +7,7 @@ from typing import Annotated
 
 from ...tools.base import parse_addr, tool
 from ...tools.formatting import format_callers_callees
+from . import function_index
 
 ida_funcs = ida_name = ida_xref = idautils = None  # populated below when IDA is available
 try:
@@ -52,6 +53,12 @@ def xrefs_to(
     target_name = ida_name.get_name(ea)
     lines = [f"Cross-references to 0x{ea:x}" + (f" ({target_name})" if target_name else "") + ":"]
 
+    # Phase 5: resolve xref source functions through the function index
+    # to avoid a fresh ``ida_funcs.get_func`` per xref.  Falls back to
+    # the direct IDA call when the index is empty (non-IDA test env).
+    index = function_index.get_function_index()
+    use_index = bool(index.entries)
+
     count = 0
     for xref in idautils.XrefsTo(ea, 0):
         if count >= limit:
@@ -59,8 +66,19 @@ def xrefs_to(
             break
 
         xtype = _xref_type_name(xref.type)
-        func = ida_funcs.get_func(xref.frm)
-        fname = ida_name.get_name(func.start_ea) if func else "?"
+        fname = "?"
+        if use_index:
+            entry = function_index.find_containing_function(xref.frm)
+            if entry is not None:
+                fname = entry.name
+            else:
+                func = ida_funcs.get_func(xref.frm)
+                if func is not None:
+                    fname = ida_name.get_name(func.start_ea) or "?"
+        else:
+            func = ida_funcs.get_func(xref.frm)
+            if func is not None:
+                fname = ida_name.get_name(func.start_ea) or "?"
         lines.append(f"  0x{xref.frm:x}  [{xtype:12s}]  in {fname}")
         count += 1
 
@@ -107,19 +125,35 @@ def function_xrefs(
 
     fname = ida_name.get_name(func.start_ea)
 
+    # Phase 5: resolve caller/callee function names through the function
+    # index when populated, to skip the per-xref ``ida_funcs.get_func``
+    # roundtrip.
+    index = function_index.get_function_index()
+    use_index = bool(index.entries)
+
+    def _resolve_name(ref: int) -> str | None:
+        if use_index:
+            entry = function_index.find_containing_function(ref)
+            if entry is not None:
+                return entry.name if entry.start_ea != func.start_ea else None
+        cf = ida_funcs.get_func(ref)
+        if cf and cf.start_ea != func.start_ea:
+            return ida_name.get_name(cf.start_ea)
+        return None
+
     # Callers
     callers = set()
     for ref in idautils.CodeRefsTo(func.start_ea, 0):
-        cf = ida_funcs.get_func(ref)
-        if cf and cf.start_ea != func.start_ea:
-            callers.add(ida_name.get_name(cf.start_ea))
+        name = _resolve_name(ref)
+        if name:
+            callers.add(name)
 
     # Callees
     callees = set()
     for item in idautils.FuncItems(func.start_ea):
         for ref in idautils.CodeRefsFrom(item, 0):
-            cf = ida_funcs.get_func(ref)
-            if cf and cf.start_ea != func.start_ea:
-                callees.add(ida_name.get_name(cf.start_ea))
+            name = _resolve_name(ref)
+            if name:
+                callees.add(name)
 
     return format_callers_callees(fname, func.start_ea, callers, callees)

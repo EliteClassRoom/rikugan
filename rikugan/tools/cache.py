@@ -19,12 +19,25 @@ from ..core.logging import log_debug
 # return stale pages after the on-disk cache is rebuilt.
 #
 # ``search_strings`` is excluded for the same reason.
+#
+# Phase 2.2 expansion: ``get_function_info``, ``xrefs_to``, ``xrefs_from``,
+# ``get_function_name`` were added — they are read-only and deterministic
+# for the binary state at hand, and IDA's name/xref lookups are O(n) over
+# the function/name table. Caching them cuts a noticeable slice off the
+# per-turn work for any task that calls a few xref lookups back-to-back.
+# The full cache is still invalidated on any mutating tool (see
+# :meth:`ToolRegistry.execute`), so a ``rename_function`` between two
+# calls correctly returns fresh results.
 CACHEABLE_TOOLS: frozenset[str] = frozenset(
     {
         "list_functions",
         "get_binary_info",
         "decompile_function",
         "function_xrefs",
+        "get_function_info",
+        "xrefs_to",
+        "xrefs_from",
+        "get_function_name",
     }
 )
 

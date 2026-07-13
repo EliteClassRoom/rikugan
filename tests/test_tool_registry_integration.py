@@ -169,6 +169,20 @@ class TestRegistryResultFormatting(unittest.TestCase):
         self.assertIn('"key"', result)
         self.assertIn('"val"', result)
 
+    def test_dict_uses_compact_separators(self):
+        """Phase 1.1 — tool results use compact JSON (no whitespace)."""
+        result = ToolRegistry._format_result({"key": "val"})
+        # Compact form: no leading/trailing whitespace, no spaces after
+        # separators. Pretty-printed would contain ``: `` and ``\n``.
+        self.assertNotIn(": ", result)
+        self.assertNotIn("\n", result)
+        self.assertIn('"key":"val"', result)
+
+    def test_list_uses_compact_separators(self):
+        result = ToolRegistry._format_result([1, 2, 3])
+        self.assertNotIn("\n", result)
+        self.assertEqual(result, "[1,2,3]")
+
     def test_list_becomes_json(self):
         result = ToolRegistry._format_result([1, 2, 3])
         self.assertIn("1", result)
@@ -176,6 +190,133 @@ class TestRegistryResultFormatting(unittest.TestCase):
     def test_other_types_become_str(self):
         result = ToolRegistry._format_result(42)
         self.assertEqual(result, "42")
+
+
+class TestToolsCatalogCache(unittest.TestCase):
+    """Phase 2.1 — the tools catalog is cached and invalidated correctly."""
+
+    def setUp(self):
+        from rikugan.tools.base import tool, ToolDefinition
+
+        @tool(category="test")
+        def example_tool(name: str = "x") -> str:
+            """An example tool for testing the catalog cache."""
+            return name
+
+        self.registry = ToolRegistry()
+        self.registry.register(example_tool._tool_definition)
+
+    def test_first_call_builds(self):
+        catalog = self.registry.tools_catalog()
+        self.assertIn("example_tool", catalog)
+
+    def test_second_call_returns_cached_string(self):
+        first = self.registry.tools_catalog()
+        second = self.registry.tools_catalog()
+        # Same Python object (no rebuild)
+        self.assertIs(first, second)
+
+    def test_register_invalidates_cache(self):
+        first = self.registry.tools_catalog()
+        from rikugan.tools.base import tool
+
+        @tool(category="test")
+        def another_tool(value: int = 1) -> str:
+            """Another tool to force catalog rebuild."""
+            return str(value)
+
+        self.registry.register(another_tool._tool_definition)
+        rebuilt = self.registry.tools_catalog()
+        self.assertIsNot(first, rebuilt)
+        self.assertIn("another_tool", rebuilt)
+
+    def test_set_capabilities_invalidates_cache(self):
+        first = self.registry.tools_catalog()
+        # Re-setting capabilities (even with no changes) should
+        # invalidate the catalog cache since available tools may change.
+        self.registry.set_capabilities({})
+        rebuilt = self.registry.tools_catalog()
+        self.assertIsNot(first, rebuilt)
+
+
+class TestExecuteCoerced(unittest.TestCase):
+    """Phase 2.3 — execute_coerced skips redundant argument coercion."""
+
+    def setUp(self):
+        from rikugan.tools.base import tool
+
+        call_count = {"n": 0}
+
+        @tool(category="test")
+        def my_tool(count: int = 0) -> str:
+            """Tool that records invocation count."""
+            call_count["n"] += 1
+            return f"called-{count}"
+
+        self.registry = ToolRegistry()
+        self.registry.register(my_tool._tool_definition)
+        self.call_count = call_count
+
+    def test_execute_coerced_runs_handler(self):
+        result = self.registry.execute_coerced("my_tool", {"count": 5})
+        self.assertEqual(result, "called-5")
+        self.assertEqual(self.call_count["n"], 1)
+
+    def test_execute_coerced_does_not_re_coerce(self):
+        """The handler receives the args as-is; no second coercion pass."""
+        # Pass already-coerced int — execute_coerced must NOT touch it
+        # (no second coercion walk over parameter schema).
+        self.registry.execute_coerced("my_tool", {"count": 7})
+        self.assertEqual(self.call_count["n"], 1)
+
+    def test_execute_coerced_unknown_tool_raises(self):
+        from rikugan.core.errors import ToolNotFoundError
+        with self.assertRaises(ToolNotFoundError):
+            self.registry.execute_coerced("does_not_exist", {})
+
+    def test_execute_coerced_caches_result(self):
+        # ``my_tool`` is not in CACHEABLE_TOOLS, so cache.put is a no-op
+        # by design. Verify the handler is still invoked once per call,
+        # i.e. the cache miss path is not silently swallowing results.
+        first = self.registry.execute_coerced("my_tool", {"count": 3})
+        second = self.registry.execute_coerced("my_tool", {"count": 3})
+        self.assertEqual(first, second)
+        # Non-cacheable tool: handler runs every time.
+        self.assertEqual(self.call_count["n"], 2)
+
+    def test_execute_coerced_cacheable_tool_hits_cache(self):
+        """When the tool is in CACHEABLE_TOOLS, repeated calls hit cache."""
+        from rikugan.tools import cache as cache_mod
+
+        # Force ``my_tool`` into the cacheable set for this test only.
+        original = cache_mod.CACHEABLE_TOOLS
+        cache_mod.CACHEABLE_TOOLS = original | {"my_tool"}
+        try:
+            first = self.registry.execute_coerced("my_tool", {"count": 9})
+            second = self.registry.execute_coerced("my_tool", {"count": 9})
+            self.assertEqual(first, second)
+            self.assertEqual(self.call_count["n"], 1)
+        finally:
+            cache_mod.CACHEABLE_TOOLS = original
+
+
+class TestCacheableToolsExpansion(unittest.TestCase):
+    """Phase 2.2 — read-only tool result cache expanded safely."""
+
+    def test_xrefs_and_function_info_are_cacheable(self):
+        from rikugan.tools.cache import CACHEABLE_TOOLS
+
+        self.assertIn("xrefs_to", CACHEABLE_TOOLS)
+        self.assertIn("xrefs_from", CACHEABLE_TOOLS)
+        self.assertIn("get_function_info", CACHEABLE_TOOLS)
+        self.assertIn("get_function_name", CACHEABLE_TOOLS)
+
+    def test_strings_tools_still_excluded(self):
+        """Phase 2.2 must NOT add list_strings/search_strings (see cache.py)."""
+        from rikugan.tools.cache import CACHEABLE_TOOLS
+
+        self.assertNotIn("list_strings", CACHEABLE_TOOLS)
+        self.assertNotIn("search_strings", CACHEABLE_TOOLS)
 
 
 if __name__ == "__main__":

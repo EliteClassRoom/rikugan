@@ -37,6 +37,12 @@ class ToolRegistry:
     def __init__(self, dispatch_wrapper: Callable | None = None) -> None:
         self._tools: dict[str, ToolDefinition] = {}
         self._schema_cache: list[dict[str, Any]] | None = None
+        # Cached markdown-formatted tools catalog (the same string that
+        # ``format_tools_catalog`` returns).  Invalidated together with
+        # ``_schema_cache`` — any registration / capability change must
+        # rebuild both, since the catalog depends on the same available
+        # tool set.  See Phase 2.1 of the performance plan.
+        self._catalog_cache: str | None = None
         self._result_cache = ToolResultCache()
         self._capabilities: dict[str, bool] = {}
         self._dispatch_wrapper = dispatch_wrapper
@@ -98,6 +104,7 @@ class ToolRegistry:
         with self._lock:
             self._tools[defn.name] = defn
             self._schema_cache = None  # invalidate
+            self._catalog_cache = None
         log_debug(f"Registered tool: {defn.name}")
 
     def register_function(self, func: Callable[..., Any]) -> None:
@@ -122,6 +129,7 @@ class ToolRegistry:
                 for d in defs:
                     self._tools[d.name] = d
                 self._schema_cache = None
+                self._catalog_cache = None
             for d in defs:
                 log_debug(f"Registered tool: {d.name}")
 
@@ -133,6 +141,7 @@ class ToolRegistry:
                 del self._tools[name]
             if to_remove:
                 self._schema_cache = None
+                self._catalog_cache = None
         if to_remove:
             log_debug(f"Unregistered {len(to_remove)} tools with prefix {prefix!r}")
         return len(to_remove)
@@ -142,6 +151,7 @@ class ToolRegistry:
         with self._lock:
             self._capabilities.update(capabilities)
             self._schema_cache = None  # invalidate — available tools may have changed
+            self._catalog_cache = None
 
     def _available(self, defn: ToolDefinition) -> bool:
         """Check if all requirements of a tool definition are met.
@@ -189,6 +199,35 @@ class ToolRegistry:
             if self._schema_cache is None:
                 self._schema_cache = [t.to_provider_format() for t in self._tools.values() if self._available(t)]
             return list(self._schema_cache)
+
+    def tools_catalog(self) -> str:
+        """Return the rendered markdown tools catalog for the system prompt.
+
+        The catalog is built once per registration / capability change and
+        cached.  Each system-prompt build can now skip the rebuild cost
+        (sorting the same 100+ tools into categories, truncating each
+        description, joining into a markdown table) — the only rebuilds
+        happen when a tool is registered, unregistered, or its capability
+        gate toggles.  ``format_tools_catalog`` is imported lazily so this
+        module does not depend on ``rikugan.tools`` from the top of
+        ``rikugan.tools.registry`` (avoids any future re-export cycle).
+        """
+        with self._lock:
+            cached = self._catalog_cache
+        if cached is not None:
+            return cached
+        with self._lock:
+            # Re-check after re-acquiring: another thread may have built
+            # the catalog while we were unlocked.
+            if self._catalog_cache is not None:
+                return self._catalog_cache
+            available = [t for t in self._tools.values() if self._available(t)]
+            # Lazy import — keeps this method's module dependency graph
+            # shallow and avoids any chance of an import cycle.
+            from .catalog import format_tools_catalog
+
+            self._catalog_cache = format_tools_catalog(available)
+            return self._catalog_cache
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
         with self._lock:
@@ -242,6 +281,82 @@ class ToolRegistry:
         self._result_cache.put(name, arguments, result_str)
         if is_mutating:
             self._result_cache.invalidate()
+            # Phase 5: notify host-specific caches (e.g. the IDA function
+            # index) that a mutating tool changed the underlying state.
+            # Imported lazily to keep this module host-agnostic.
+            self._notify_ida_cache_invalidation()
+
+        return result_str
+
+    def execute_coerced(self, name: str, arguments: dict[str, Any]) -> str:
+        """Like :meth:`execute` but assumes *arguments* are already coerced.
+
+        The agent loop calls :meth:`coerce_arguments_for` once for
+        mutating tools (so the same coerced dict is used for
+        pre-state capture, the actual handler call, and the reverse
+        record).  Re-running :meth:`_coerce_arguments` on the already-
+        coerced dict is wasted work — coercing ``"30" -> 30`` is a no-op
+        on the second pass but still walks every parameter and casts.
+
+        Validation, caching, timeout, mutating invalidation, exception
+        wrapping, and truncation behavior are preserved exactly.  The
+        cache key is the *coerced* arguments dict, which matches what
+        :meth:`execute` would have stored — so a follow-up
+        :meth:`execute` call with the same coerced args is still a hit.
+
+        Non-mutating tools should keep using :meth:`execute` so coercion
+        is applied exactly once before the cache key is computed.
+        """
+        with self._lock:
+            defn = self._tools.get(name)
+            if defn is None:
+                raise ToolNotFoundError(f"Unknown tool: {name}", tool_name=name)
+            if defn.handler is None:
+                raise ToolError(f"Tool {name} has no handler", tool_name=name)
+            if not self._available(defn):
+                missing = [r for r in defn.requires if not self._capabilities.get(r, False)]
+                raise ToolError(
+                    f"Tool {name} unavailable — requires: {', '.join(missing)}",
+                    tool_name=name,
+                )
+            handler = defn.handler
+            timeout = defn.timeout if defn.timeout is not None else _DEFAULT_TOOL_TIMEOUT
+            is_mutating = defn.mutating
+            dispatch_wrapper = self._dispatch_wrapper
+
+        # Cache check uses coerced args as key — matches :meth:`execute`
+        # behavior for repeat calls.
+        cached = self._result_cache.get(name, arguments)
+        if cached is not None:
+            return cached
+
+        if dispatch_wrapper is not None:
+            handler = dispatch_wrapper(handler)
+
+        try:
+            future = _executor.submit(handler, **arguments)
+            result = future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            future.cancel()
+            raise ToolError(
+                f"Tool {name} timed out after {timeout}s",
+                tool_name=name,
+            ) from None
+        except (ToolError, ToolValidationError):
+            raise
+        except TypeError as e:
+            raise ToolValidationError(f"Invalid arguments for {name}: {e}", tool_name=name) from e
+        except Exception as e:
+            raise ToolError(f"Tool {name} failed: {e}", tool_name=name) from e
+
+        result_str = self._format_result(result)
+        if len(result_str) > TOOL_RESULT_TRUNCATE_LEN:
+            result_str = result_str[:TOOL_RESULT_TRUNCATE_LEN] + "\n... (truncated)"
+
+        self._result_cache.put(name, arguments, result_str)
+        if is_mutating:
+            self._result_cache.invalidate()
+            self._notify_ida_cache_invalidation()
 
         return result_str
 
@@ -298,6 +413,7 @@ class ToolRegistry:
         self._result_cache.put(name, arguments, result_str)
         if is_mutating:
             self._result_cache.invalidate()
+            self._notify_ida_cache_invalidation()
 
         return result_str
 
@@ -308,5 +424,32 @@ class ToolRegistry:
         if isinstance(result, str):
             return result
         if isinstance(result, (dict, list)):
-            return json.dumps(result, indent=2, default=str)
+            # Compact separators cut roughly 25-30% off the serialized size
+            # for typical tool results (lists of function dicts, struct
+            # members, etc.). Tools that need human-readable output already
+            # return a formatted string explicitly, so this only affects
+            # the implicit dict/list path.
+            return json.dumps(result, separators=(",", ":"), default=str)
         return str(result)
+
+    @staticmethod
+    def _notify_ida_cache_invalidation() -> None:
+        """Best-effort hook for IDA host caches after a mutating tool.
+
+        Phase 5 of the performance plan: the IDA function index is a
+        per-binary cache keyed on the underlying IDB state.  When a
+        mutating tool (``rename_function``, ``set_type``, ...) changes
+        that state, the index must be invalidated or subsequent
+        ``list_functions`` / ``search_functions`` / xref tool calls
+        return stale results.
+
+        Imported lazily because ``rikugan.tools.registry`` is
+        host-agnostic.  In non-IDA environments the import fails and
+        this is a no-op.
+        """
+        try:
+            from rikugan.ida.tools import function_index
+
+            function_index.invalidate_function_index()
+        except ImportError:
+            pass

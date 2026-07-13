@@ -371,6 +371,50 @@ _inline_formatting = _legacy_inline_formatting
 # ---------------------------------------------------------------------------
 
 
+def _plain_text_fast_path(text: str, source=None) -> str | None:
+    """Return escaped plain-text HTML when *text* lacks markdown syntax.
+
+    During streaming, most text deltas are short prose with no
+    markdown — no fences, headings, links, lists, or emphasis.  Sending
+    such text through the full markdown-it parse + token-walk costs
+    ~0.5-2ms per render on top of the markdown-it import.  Skipping
+    the parse for plain text (and just HTML-escaping + replacing
+    newlines) is roughly 50-100x cheaper per call.
+
+    Returns ``None`` when *text* contains markdown syntax that
+    requires real rendering.  The fast path keeps the same theme-aware
+    body styling as the markdown path so visually the two are
+    indistinguishable for plain prose.
+
+    Paragraph handling: a blank line (``\\n\\n``) starts a new
+    paragraph.  Each paragraph is wrapped in its own ``<div>`` so
+    the legacy converter's block structure is preserved.  Single
+    newlines become ``<br>`` within a paragraph (matches the legacy
+    fallback behavior).
+    """
+    if not text:
+        return ""
+    if _has_markdown_syntax(text):
+        return None
+    body_color = ""
+    if not is_host_theme():
+        body_color = f' style="color:{ThemeManager.instance().tokens().text};"'
+    # Split into paragraphs on blank lines.  ``splitlines`` keeps the
+    # rest of the paragraph structure intact for each chunk.
+    paragraphs = _re.split(r"\n\s*\n", text)
+    rendered: list[str] = []
+    for para in paragraphs:
+        # Collapse intra-paragraph newlines to <br>, then dedupe runs of <br>.
+        escaped = _html.escape(para)
+        with_br = escaped.replace("\n", "<br>")
+        collapsed = _re.sub(r"(<br>\s*){3,}", "<br><br>", with_br)
+        if collapsed.strip():
+            rendered.append(f'<div{body_color}>{collapsed}</div>')
+    if not rendered:
+        return ""
+    return "".join(rendered)
+
+
 def md_to_html(text: str, source=None) -> str:
     """Convert a Markdown string to Qt-compatible HTML.
 
@@ -385,6 +429,12 @@ def md_to_html(text: str, source=None) -> str:
     item, a heading, or a plain paragraph.  Stripping at the input
     layer covers every output path (markdown-it + legacy fallback)
     without threading the strip through every per-token handler.
+
+    Phase 6.1 fast path: when the input has no markdown syntax, skip
+    the parser entirely and emit escaped HTML directly.  This makes
+    streaming text deltas (which are usually plain prose) far cheaper
+    to render — every saved millisecond shows up as smoother
+    incremental updates during a long assistant response.
 
     Results are memoized in :data:`_HTML_CACHE` keyed by a hash of the
     input text and the current ``ThemeManager.tokens()`` identity.
@@ -406,18 +456,31 @@ def md_to_html(text: str, source=None) -> str:
     if cached is not None:
         return cached
 
+    # Plain-text fast path — bypasses markdown-it-py entirely.
+    # Both the cache key and the theme-aware style make this safe
+    # to cache alongside the markdown path.
+    fast = _plain_text_fast_path(text, source)
+    if fast is not None:
+        with ui_probe("ui.md_to_html", text_len=len(text), cache="miss", fast=True):
+            pass
+        _cache_put(key, fast)
+        return fast
+
     with ui_probe("ui.md_to_html", text_len=len(text), cache="miss"):
         result = _render_with_markdown_it(text, source)
         if result is None:
             result = _legacy_md_to_html(text, source)
 
-    # Bounded cache: cap at 256 entries to keep memory in check.
+    _cache_put(key, result)
+    return result
+
+
+def _cache_put(key: tuple[str, int], value: str) -> None:
+    """Bounded insert into :data:`_HTML_CACHE` (drop oldest half when full)."""
     if len(_HTML_CACHE) >= 256:
-        # Drop the oldest half (insertion order dict).
         for k in list(_HTML_CACHE.keys())[:128]:
             _HTML_CACHE.pop(k, None)
-    _HTML_CACHE[key] = result
-    return result
+    _HTML_CACHE[key] = value
 
 
 # ---------------------------------------------------------------------------

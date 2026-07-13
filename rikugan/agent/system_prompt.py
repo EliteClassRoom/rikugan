@@ -8,40 +8,73 @@ from typing import TYPE_CHECKING
 from ..core.logging import log_debug
 from ..core.profile import IOC_FILTER_CATEGORIES
 from ..core.sanitize import quote_untrusted, sanitize_binary_context, sanitize_memory
+from ..tools.catalog import format_tools_catalog as _format_tools_catalog  # re-export
 from .prompts.ida import IDA_BASE_PROMPT
 
 _BASE_PROMPT = IDA_BASE_PROMPT  # backward compat alias
 
 if TYPE_CHECKING:
     from ..core.profile import AnalysisProfile
-    from ..tools.base import ToolDefinition
 
 
 # Maximum number of lines to load from RIKUGAN.md
 _MAX_MEMORY_LINES = 200
 
-# Cap the per-tool description so the catalog table does not bloat the
-# system prompt. The full description is still available via the
-# provider tool schema; the catalog is for at-a-glance recall.
-_CATALOG_DESC_MAX = 120
-# Sentinel for tools whose description did not survive parsing (no
-# docstring, decorator edge cases). Tells the LLM "this exists" without
-# inventing a hint that may be wrong.
-_UNKNOWN_DESC = "(no description)"
+# Phase 4.1: persistent-memory cache.
+#
+# The agent loop re-builds the system prompt on every turn, so
+# ``_load_persistent_memory`` runs once per LLM call. For a long session
+# with no memory edits that's pure I/O waste — ``os.path.isfile``,
+# ``os.stat``, and ``open(...)`` on every prompt build.
+#
+# Cache key: absolute path. Value: ``(mtime_ns, content_or_marker)``
+# where *content_or_marker* is either the loaded text or a sentinel
+# ``"<missing>"`` so we can cache the "file does not exist" answer
+# without re-running ``isfile`` every turn.
+#
+# Invalidation is purely mtime-based: any save_memory tool write (which
+# appends to ``RIKUGAN.md`` via ``loop.append_to_memory_file``) bumps
+# the file's mtime, so the next prompt build sees a new mtime and
+# rebuilds.  Manual edits by the user also bump mtime, so they are
+# picked up automatically.
+_MEMORY_CACHE: dict[str, tuple[int, str]] = {}
+_MEMORY_MISSING_SENTINEL = "<missing>"
 
 
 def _load_persistent_memory(idb_dir: str = "") -> str | None:
     """Load RIKUGAN.md from the IDB directory (first 200 lines).
 
     The file acts as persistent cross-session memory for the agent.
+
+    Phase 4.1: results are cached by ``(path, mtime_ns)`` so back-to-back
+    calls within the same session (one per LLM turn) do not re-stat /
+    re-open the file when nothing has changed.
     """
     if not idb_dir:
         return None
 
     md_path = os.path.join(idb_dir, "RIKUGAN.md")
-    if not os.path.isfile(md_path):
+
+    try:
+        st = os.stat(md_path)
+        mtime_ns = getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))
+    except OSError:
+        # File missing (or unreadable) — cache the miss so we do not
+        # re-stat on every prompt build.
+        cached = _MEMORY_CACHE.get(md_path)
+        if cached is not None and cached[0] == -1:
+            return None
+        _MEMORY_CACHE[md_path] = (-1, _MEMORY_MISSING_SENTINEL)
         return None
 
+    cached = _MEMORY_CACHE.get(md_path)
+    if cached is not None and cached[0] == mtime_ns:
+        cached_content = cached[1]
+        if cached_content == _MEMORY_MISSING_SENTINEL:
+            return None
+        return cached_content
+
+    # mtime differs (or no cache) — reload from disk.
     try:
         with open(md_path, encoding="utf-8", errors="replace") as f:
             lines = []
@@ -52,55 +85,22 @@ def _load_persistent_memory(idb_dir: str = "") -> str | None:
                 lines.append(line)
         content = "".join(lines).strip()
         if content:
+            _MEMORY_CACHE[md_path] = (mtime_ns, content)
             log_debug(f"Loaded persistent memory from {md_path} ({len(lines)} lines)")
             return content
     except OSError as e:
         log_debug(f"Failed to load RIKUGAN.md: {e}")
 
+    # Empty file — still cache so we don't re-read a zero-byte file.
+    _MEMORY_CACHE[md_path] = (mtime_ns, "")
     return None
 
 
-def format_tools_catalog(tools: list[ToolDefinition]) -> str:
-    """Render a categorized, markdown-formatted catalog of available tools.
-
-    The output groups tools by ``ToolDefinition.category`` (sorted
-    alphabetically for stability) and lists each tool with a truncated
-    one-line description. This is what we want in the system prompt's
-    ``## Available Tools`` section — a comma-separated list of bare names
-    gives the model no signal about which tool to reach for.
-
-    Returns an empty string when *tools* is empty so callers can
-    unconditionally include the result without a length check.
-    """
-    if not tools:
-        return ""
-
-    # Group by category. Sort categories and tool names within each
-    # category for stable output (avoids spurious diffs in golden-file
-    # tests and keeps the LLM's mental model consistent across runs).
-    by_category: dict[str, list[ToolDefinition]] = {}
-    for t in tools:
-        by_category.setdefault(t.category, []).append(t)
-
-    lines = ["## Available Tools", ""]
-    for category in sorted(by_category):
-        lines.append(f"### {category}")
-        lines.append("")
-        lines.append("| Tool | Description |")
-        lines.append("| --- | --- |")
-        for t in sorted(by_category[category], key=lambda x: x.name):
-            desc = t.description.strip() if t.description else ""
-            # Collapse internal newlines so each row stays a single Markdown line.
-            desc = " ".join(desc.split())
-            if len(desc) > _CATALOG_DESC_MAX:
-                desc = desc[: _CATALOG_DESC_MAX - 1].rstrip() + "…"
-            if not desc:
-                desc = _UNKNOWN_DESC
-            # Escape pipe characters so they do not break the table.
-            safe_desc = desc.replace("|", "\\|")
-            lines.append(f"| `{t.name}` | {safe_desc} |")
-        lines.append("")
-    return "\n".join(lines).rstrip()
+# Re-export so callers that still import ``format_tools_catalog`` from
+# ``agent.system_prompt`` keep working. ``ToolRegistry`` now reads it
+# directly from ``rikugan.tools.catalog`` to avoid the
+# agent <-> tools round-trip during tool registration.
+format_tools_catalog = _format_tools_catalog
 
 
 def build_system_prompt(
