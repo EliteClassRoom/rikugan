@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from .profile import AnalysisProfile
@@ -83,7 +83,9 @@ class RikuganConfig:
     exploration_turn_limit: int = 100  # max turns in exploration phase before forcing transition
     max_retries: int = 3  # max retries on rate-limit / transient API errors
     silent_retry_mode: bool = False  # show loading indicator instead of error messages on retry
-    require_ida_docs_for_complex_scripts: bool = True  # docs-gate complex execute_python scripts
+    docs_review_mode: Literal["on_error", "off"] = (
+        "on_error"  # docs-reviewer trigger: on runtime API-shaped error, or off
+    )
     theme: str = "auto"  # "auto" follows host theme; "dark" / "light" force Rikugan palettes; "ida" forces IDA-native
     font_family: str = ""  # empty = inherit from host; set to override (e.g. "Consolas")
     font_size_override: int = 0  # 0 = inherit from host; set to override point size
@@ -281,6 +283,23 @@ class RikuganConfig:
             self.encrypt_api_keys = True
             self._encryption_block = enc
 
+        self._apply_loaded_config(data)
+
+    def _apply_loaded_config(self, data: dict[str, Any]) -> None:
+        """Apply loaded config dict to this instance, with legacy migration.
+
+        Extracted from ``load()`` so migration logic is unit-testable
+        without touching disk. Handles the legacy
+        ``require_ida_docs_for_complex_scripts`` boolean → ``docs_review_mode``
+        enum migration.
+        """
+        # Legacy migration: require_ida_docs_for_complex_scripts → docs_review_mode
+        legacy_field = "require_ida_docs_for_complex_scripts"
+        if legacy_field in data and "docs_review_mode" not in data:
+            legacy_val = data[legacy_field]
+            # False (user disabled reviewer) → "off"; True or anything → "on_error"
+            data["docs_review_mode"] = "off" if legacy_val is False else "on_error"
+
         if "provider" in data:
             for k, v in data["provider"].items():
                 if hasattr(self.provider, k):
@@ -295,7 +314,7 @@ class RikuganConfig:
             "exploration_turn_limit",
             "max_retries",
             "silent_retry_mode",
-            "require_ida_docs_for_complex_scripts",
+            "docs_review_mode",
             "theme",
             "font_family",
             "font_size_override",
@@ -339,6 +358,9 @@ class RikuganConfig:
                     "off",
                 ):
                     val = "warning"
+                # Normalize invalid docs_review_mode to "on_error"
+                if k == "docs_review_mode" and val not in ("on_error", "off"):
+                    val = "on_error"
                 setattr(self, k, val)
 
     def has_encrypted_keys(self) -> bool:

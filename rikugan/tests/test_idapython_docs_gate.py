@@ -122,23 +122,52 @@ class TestClassifier(unittest.TestCase):
 
 
 class TestConfigField(unittest.TestCase):
-    def test_default_is_true(self):
+    def test_default_is_on_error(self):
         cfg = RikuganConfig()
-        self.assertTrue(cfg.require_ida_docs_for_complex_scripts)
+        self.assertEqual(cfg.docs_review_mode, "on_error")
 
     def test_round_trip_through_dict(self):
         cfg = RikuganConfig()
-        cfg.require_ida_docs_for_complex_scripts = False
+        cfg.docs_review_mode = "off"
         cfg.save = MagicMock()  # avoid disk side effects
-        # Round-trip via the load() path
         cfg.load = MagicMock()
-        # Instead, simulate the dict the loader would write/read.
         from dataclasses import asdict
 
         d = asdict(cfg)
         cfg2 = RikuganConfig()
-        cfg2.require_ida_docs_for_complex_scripts = d["require_ida_docs_for_complex_scripts"]
-        self.assertFalse(cfg2.require_ida_docs_for_complex_scripts)
+        cfg2.docs_review_mode = d["docs_review_mode"]
+        self.assertEqual(cfg2.docs_review_mode, "off")
+
+    def test_legacy_false_migrates_to_off(self):
+        """Legacy config require_ida_docs_for_complex_scripts=False → off."""
+        cfg = RikuganConfig()
+        # Simulate load() with legacy field present
+        legacy_data = {"require_ida_docs_for_complex_scripts": False}
+        cfg._apply_loaded_config(legacy_data)
+        self.assertEqual(cfg.docs_review_mode, "off")
+
+    def test_legacy_true_migrates_to_on_error(self):
+        """Legacy config require_ida_docs_for_complex_scripts=True → on_error."""
+        cfg = RikuganConfig()
+        legacy_data = {"require_ida_docs_for_complex_scripts": True}
+        cfg._apply_loaded_config(legacy_data)
+        self.assertEqual(cfg.docs_review_mode, "on_error")
+
+    def test_legacy_missing_defaults_to_on_error(self):
+        """No legacy field → on_error default."""
+        cfg = RikuganConfig()
+        cfg._apply_loaded_config({})
+        self.assertEqual(cfg.docs_review_mode, "on_error")
+
+    def test_explicit_off_round_trips(self):
+        cfg = RikuganConfig()
+        cfg._apply_loaded_config({"docs_review_mode": "off"})
+        self.assertEqual(cfg.docs_review_mode, "off")
+
+    def test_invalid_value_defaults_to_on_error(self):
+        cfg = RikuganConfig()
+        cfg._apply_loaded_config({"docs_review_mode": "bogus"})
+        self.assertEqual(cfg.docs_review_mode, "on_error")
 
 
 # ---------------------------------------------------------------------------
