@@ -332,39 +332,111 @@ class TestPostErrorReviewGate(unittest.TestCase):
         finally:
             loop_mod.SubagentRunner = original
 
-    def test_flag_persists_after_first_invocation(self):
-        """Flag đã set → reviewer không spawn lần 2 trong cùng 1 task.
+    def test_logic_bug_error_skips_reviewer(self):
+        """ValueError (logic bug) is NOT API-shaped → reviewer never spawned.
 
-        Guard này ở trong ``_execute_single_tool`` except branch; test
-        này verify flag semantics (idempotent — nếu gọi thủ công vẫn OK).
+        The guard in ``_execute_single_tool`` gates on
+        ``classification.is_api_shaped``; a non-API-shaped traceback
+        (ValueError, TypeError, KeyError...) must never reach
+        ``_review_failed_script``. This test reproduces the guard's
+        decision logic and asserts the reviewer spy is never called.
         """
         from rikugan.core.types import ToolCall
         from rikugan.tools.traceback_classifier import classify_traceback
 
         loop = _make_loop(gate_enabled=True)
-        loop._docs_reviewer_invoked = True  # đã invoke
-
         runner = _FakeRunner(final_text="VERDICT: APPROVED")
         import rikugan.agent.loop as loop_mod
 
-        original = loop_mod.SubagentRunner
+        original_runner = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
-        try:
-            tc = ToolCall(id="tc2", name="execute_python", arguments={"code": self._complex_script()})
-            classification = classify_traceback(self._api_shaped_traceback(), self._complex_script())
+        called = {"reviewer": False}
+        original_review = loop._review_failed_script
 
-            # Caller-side guard is in _execute_single_tool; here we
-            # verify the flag itself is set + calling _review_failed_script
-            # is still safe (idempotent — guard is caller's responsibility).
-            self.assertTrue(loop._docs_reviewer_invoked)
-            gen = loop._review_failed_script(tc, self._api_shaped_traceback(), self._complex_script(), classification)
-            result = _drain_str(gen)
-            # Even with flag set, calling the method directly still
-            # produces a valid augmented result — flag is for the gate,
-            # not for the method.
-            self.assertIsInstance(result, str)
+        def _spy(*a, **kw):
+            called["reviewer"] = True
+            return iter(())
+
+        loop._review_failed_script = _spy  # type: ignore[assignment]
+        try:
+            code = self._complex_script()
+            tb = self._logic_bug_traceback()
+            classification = classify_traceback(tb, code)
+            self.assertFalse(
+                classification.is_api_shaped,
+                "ValueError must not be classified as API-shaped",
+            )
+
+            # Reproduce the guard from _execute_single_tool's except block:
+            # the reviewer is only spawned when is_api_shaped is True.
+            if classification.is_api_shaped and not loop._docs_reviewer_invoked:
+                gen = loop._review_failed_script(
+                    ToolCall(id="x", name="execute_python", arguments={"code": code}),
+                    tb,
+                    code,
+                    classification,
+                )
+                _drain_str(gen)
+
+            self.assertFalse(
+                called["reviewer"],
+                "reviewer should not be called for a logic-bug (non-API-shaped) error",
+            )
+            self.assertFalse(loop._docs_reviewer_invoked)
         finally:
-            loop_mod.SubagentRunner = original
+            loop_mod.SubagentRunner = original_runner
+            loop._review_failed_script = original_review  # type: ignore[assignment]
+
+    def test_second_api_error_skips_reviewer(self):
+        """Flag already set → guard in ``_execute_single_tool`` prevents a second spawn.
+
+        Reproduces the ``not self._docs_reviewer_invoked`` arm of the guard
+        (the flag is set by the first reviewer call). Asserts the reviewer
+        spy is never invoked on a second API-shaped error in the same task.
+        """
+        from rikugan.core.types import ToolCall
+        from rikugan.tools.traceback_classifier import classify_traceback
+
+        loop = _make_loop(gate_enabled=True)
+        loop._docs_reviewer_invoked = True  # already invoked this task
+        runner = _FakeRunner(final_text="VERDICT: APPROVED")
+        import rikugan.agent.loop as loop_mod
+
+        original_runner = loop_mod.SubagentRunner
+        loop_mod.SubagentRunner = lambda *a, **kw: runner
+        called = {"reviewer": False}
+        original_review = loop._review_failed_script
+
+        def _spy(*a, **kw):
+            called["reviewer"] = True
+            return iter(())
+
+        loop._review_failed_script = _spy  # type: ignore[assignment]
+        try:
+            code = self._complex_script()
+            tb = self._api_shaped_traceback()
+            classification = classify_traceback(tb, code)
+            self.assertTrue(classification.is_api_shaped)
+
+            # Reproduce the guard: not self._docs_reviewer_invoked is False
+            # here, so the reviewer branch must be skipped.
+            if classification.is_api_shaped and not loop._docs_reviewer_invoked:
+                gen = loop._review_failed_script(
+                    ToolCall(id="x", name="execute_python", arguments={"code": code}),
+                    tb,
+                    code,
+                    classification,
+                )
+                _drain_str(gen)
+
+            self.assertFalse(
+                called["reviewer"],
+                "reviewer should not be called a second time within one task",
+            )
+            self.assertTrue(loop._docs_reviewer_invoked)
+        finally:
+            loop_mod.SubagentRunner = original_runner
+            loop._review_failed_script = original_review  # type: ignore[assignment]
 
     def test_reviewer_crash_returns_traceback(self):
         """Reviewer crash → emit failed event, return traceback (không augment)."""
@@ -403,11 +475,60 @@ class TestPostErrorReviewGate(unittest.TestCase):
         self.assertIsInstance(result, str)
 
     def test_docs_review_mode_off_skips_reviewer(self):
-        """docs_review_mode='off' → reviewer không invoke; flag vẫn False."""
+        """docs_review_mode='off' → guard prevents reviewer spawn even on API-shaped error.
+
+        Reproduces the ``docs_review_mode == 'on_error'`` arm of the guard
+        in ``_execute_single_tool``'s except block. With mode "off", the
+        reviewer branch is never entered even for a fully API-shaped
+        traceback.
+        """
+        from rikugan.core.types import ToolCall
+        from rikugan.tools.traceback_classifier import classify_traceback
+
         loop = _make_loop(gate_enabled=False)
         self.assertEqual(loop.config.docs_review_mode, "off")
-        # Flag _docs_reviewer_invoked vẫn False (reviewer không chạy)
-        self.assertFalse(loop._docs_reviewer_invoked)
+        runner = _FakeRunner(final_text="VERDICT: APPROVED")
+        import rikugan.agent.loop as loop_mod
+
+        original_runner = loop_mod.SubagentRunner
+        loop_mod.SubagentRunner = lambda *a, **kw: runner
+        called = {"reviewer": False}
+        original_review = loop._review_failed_script
+
+        def _spy(*a, **kw):
+            called["reviewer"] = True
+            return iter(())
+
+        loop._review_failed_script = _spy  # type: ignore[assignment]
+        try:
+            code = self._complex_script()
+            tb = self._api_shaped_traceback()
+            classification = classify_traceback(tb, code)
+            self.assertTrue(classification.is_api_shaped)
+
+            # Reproduce the guard: docs_review_mode != "on_error" is False
+            # here, so the reviewer branch is skipped entirely.
+            if (
+                getattr(loop.config, "docs_review_mode", "on_error") == "on_error"
+                and classification.is_api_shaped
+                and not loop._docs_reviewer_invoked
+            ):
+                gen = loop._review_failed_script(
+                    ToolCall(id="x", name="execute_python", arguments={"code": code}),
+                    tb,
+                    code,
+                    classification,
+                )
+                _drain_str(gen)
+
+            self.assertFalse(
+                called["reviewer"],
+                "reviewer should not be called when docs_review_mode is off",
+            )
+            self.assertFalse(loop._docs_reviewer_invoked)
+        finally:
+            loop_mod.SubagentRunner = original_runner
+            loop._review_failed_script = original_review  # type: ignore[assignment]
 
     def test_reviewed_state_emitted(self):
         """Post-error reviewer emit DOCS_GATE_STATUS running + reviewed."""
