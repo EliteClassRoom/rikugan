@@ -186,13 +186,13 @@ def test_ida_base_prompt_contains_module_reference():
 
 
 def test_ida_base_prompt_docs_review_section_updated():
-    """Docs-review gate section phải mô tả post-error behavior, không phải pre-execute."""
+    """Docs-review gate section must describe post-error behavior, not pre-execute."""
     from rikugan.agent.prompts.ida import IDA_BASE_PROMPT
 
-    # Phải nhắc đến post-error / runtime error
-    assert "runtime error" in IDA_BASE_PROMPT.lower() or "post-error" in IDA_BASE_PROMPT.lower()
-    # Không còn mô tả "before you are asked to approve" (behavior cũ)
-    assert "before you are asked to approve" not in IDA_BASE_PROMPT.lower()
+    # New post-error heading — absent from old code.
+    assert "Docs-review gate (post-error)" in IDA_BASE_PROMPT
+    # Old pre-execute language must be gone.
+    assert "before user approval" not in IDA_BASE_PROMPT.lower()
 
 
 if __name__ == "__main__":
