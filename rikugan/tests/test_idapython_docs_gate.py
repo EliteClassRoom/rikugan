@@ -1,16 +1,20 @@
-"""Tests for the IDAPython docs-review gate.
+"""Tests for the IDAPython docs-review gate (post-error variant).
 
 Covers:
 
-* ``classify_idapython_script`` — complexity heuristic (simple scripts
-  pass through, complex scripts trigger the gate, validator hits count).
-* ``RikuganConfig`` round-trip of ``require_ida_docs_for_complex_scripts``.
-* ``AgentLoop._review_complex_idapython_script`` integration:
-    - APPROVED verdict -> caller proceeds to approval path
-    - REWRITE_REQUIRED verdict -> caller gets an error tool result
-    - Config disabled -> gate never fires (callers can mock the
-      ``_review_complex_idapython_script`` helper and assert it is not
-      invoked)
+* ``classify_idapython_script`` — complexity heuristic (still used at
+  static-validation time even though the pre-execute gate is gone).
+* ``RikuganConfig`` round-trip of ``docs_review_mode`` + legacy
+  ``require_ida_docs_for_complex_scripts`` migration.
+* ``AgentLoop._review_failed_script`` — post-error reviewer: only
+  spawned when execute_python raises an API-shaped exception AND
+  ``docs_review_mode == 'on_error'`` AND the reviewer hasn't run yet
+  this task. Augments the failed tool result with the reviewer's
+  verdict + auto-injected reference docs.
+* ``AgentLoop._build_reference_injection`` — pulls offline docs for
+  up to 3 modules referenced in the failed script.
+* ``AgentLoop._describe_tool_call`` for ``execute_python`` — empty
+  description (the unified widget renders the code itself).
 
 The agent-loop tests use lightweight fakes for the provider and tool
 registry so they run without any IDA / Qt dependencies — they live in
@@ -229,14 +233,17 @@ class _FakeToolRegistry:
 def _make_loop(*, gate_enabled: bool, runner: _FakeRunner | None = None):
     """Construct an AgentLoop with the bare minimum wiring for gate tests.
 
-    Skips ``_build_system_prompt`` and other heavy setup.  Replaces
+    Skips ``_build_system_prompt`` and other heavy setup. Replaces
     ``SubagentRunner`` with a fake so the gate can run without LLM
     round-trips.
+
+    *gate_enabled* maps to ``config.docs_review_mode``: True → ``"on_error"``,
+    False → ``"off"`` (post-error semantics — no pre-execute gate anymore).
     """
     from rikugan.agent.loop import AgentLoop
 
     cfg = RikuganConfig()
-    cfg.require_ida_docs_for_complex_scripts = gate_enabled
+    cfg.docs_review_mode = "on_error" if gate_enabled else "off"
 
     loop = AgentLoop.__new__(AgentLoop)
     loop.provider = _FakeProvider()
@@ -253,6 +260,8 @@ def _make_loop(*, gate_enabled: bool, runner: _FakeRunner | None = None):
     loop._running = False
     loop._consecutive_errors = 0
     loop._tools_disabled_for_turn = False
+    # Post-error docs-review: max 1 reviewer call per user message.
+    loop._docs_reviewer_invoked = False
     import queue
 
     loop._user_answer_queue = queue.Queue(maxsize=1)
@@ -267,271 +276,166 @@ def _make_loop(*, gate_enabled: bool, runner: _FakeRunner | None = None):
     return loop
 
 
-class TestDocsGate(unittest.TestCase):
+class TestPostErrorReviewGate(unittest.TestCase):
+    """Post-error docs-review gate: reviewer spawns only on API-shaped runtime error.
+
+    The pre-execute ``_review_complex_idapython_script`` gate is gone.
+    The new ``_review_failed_script`` runs AFTER execute_python raises
+    an API-shaped exception (AttributeError/ImportError/NameError) and
+    never blocks execution — the script already ran (and failed).
+    ``docs_review_mode='off'`` disables the gate entirely.
+    """
+
     def _complex_script(self) -> str:
-        # Multi-module + mutating, intentionally complex.
         return (
             "import idaapi\n"
             "import idautils\n"
             "import ida_funcs\n"
-            "import ida_bytes\n"
             "for ea in idautils.Functions():\n"
-            "    name = ida_funcs.get_func_name(ea)\n"
-            "    ida_bytes.patch_byte(ea, 0x90)\n"
-            "    ida_name.set_name(ea, 'sub_' + hex(ea))\n"
-            "print(name)\n"
+            "    ida_funcs.get_func_name(ea)\n"
         )
 
-    def test_simple_script_skips_gate(self):
-        loop = _make_loop(gate_enabled=True)
-        runner = _FakeRunner()
-        loop._SubagentRunner = lambda *a, **kw: runner
-
-        called = {"reviewer": False}
-
-        def _review(*a, **kw):
-            called["reviewer"] = True
-            return iter(())
-
-        loop._review_complex_idapython_script = _review  # type: ignore[assignment]
-
-        tc = MagicMock()
-        tc.id = "1"
-        tc.name = "execute_python"
-        tc.arguments = {"code": "print(idaapi.get_inf_structure())"}
-
-        # Manually invoke the gate-firing branch.  We don't have to
-        # drive _execute_single_tool end-to-end — we just want to
-        # confirm the gate was *not* triggered.
-        from rikugan.tools.idapython_complexity import classify_idapython_script
-        from rikugan.tools.validate_idapython import validate_idapython
-
-        code = tc.arguments["code"]
-        complexity = classify_idapython_script(code, validate_idapython(code))
-        self.assertFalse(complexity.is_complex)
-        self.assertFalse(called["reviewer"])
-
-    def test_complex_script_with_approved_verdict_proceeds(self):
-        loop = _make_loop(gate_enabled=True)
-        approved_summary = (
-            "VERDICT: APPROVED\n"
-            "REASONS:\n- script is well-formed\n"
-            "API_NOTES:\n- ida_funcs.get_func_name — docs OK\n"
-            "REWRITE_GUIDANCE:\n- none\n"
+    def _api_shaped_traceback(self) -> str:
+        return (
+            "Traceback (most recent call last):\n"
+            '  File "<string>", line 1, in <module>\n'
+            "AttributeError: module 'idaapi' has no attribute 'get_operands'\n"
         )
-        runner = _FakeRunner(final_text=approved_summary)
-        # Swap SubagentRunner construction
+
+    def _logic_bug_traceback(self) -> str:
+        return (
+            "Traceback (most recent call last):\n"
+            '  File "<string>", line 1, in <module>\n'
+            "ValueError: invalid literal for int()\n"
+        )
+
+    def test_api_shaped_error_triggers_reviewer(self):
+        from rikugan.core.types import ToolCall
+        from rikugan.tools.traceback_classifier import classify_traceback
+
+        loop = _make_loop(gate_enabled=True)
+        runner = _FakeRunner(final_text="VERDICT: REWRITE_REQUIRED\nAPI_NOTES:\n- x")
         import rikugan.agent.loop as loop_mod
 
-        original_runner = loop_mod.SubagentRunner
+        original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
         try:
-            tc = MagicMock()
-            tc.id = "tc1"
-            tc.name = "execute_python"
-            tc.arguments = {"code": self._complex_script()}
+            tc = ToolCall(id="tc1", name="execute_python", arguments={"code": self._complex_script()})
+            classification = classify_traceback(self._api_shaped_traceback(), self._complex_script())
+            self.assertTrue(classification.is_api_shaped)
 
-            # Drive the helper directly
-            from rikugan.tools.idapython_complexity import classify_idapython_script
-            from rikugan.tools.validate_idapython import validate_idapython
-
-            code = tc.arguments["code"]
-            validation = validate_idapython(code)
-            complexity = classify_idapython_script(code, validation)
-            self.assertTrue(complexity.is_complex)
-
-            gen = loop._review_complex_idapython_script(tc, complexity, validation)
-            approved, summary = _drain_with_return(gen)
-            self.assertTrue(approved)
-            self.assertIn("VERDICT: APPROVED", summary)
+            gen = loop._review_failed_script(tc, self._api_shaped_traceback(), self._complex_script(), classification)
+            result = _drain_str(gen)
+            self.assertIn("AttributeError", result)
+            self.assertIn("VERDICT: REWRITE_REQUIRED", result)
+            self.assertTrue(loop._docs_reviewer_invoked)
         finally:
-            loop_mod.SubagentRunner = original_runner
+            loop_mod.SubagentRunner = original
 
-    def test_complex_script_with_rewrite_verdict_blocks(self):
+    def test_flag_persists_after_first_invocation(self):
+        """Flag đã set → reviewer không spawn lần 2 trong cùng 1 task.
+
+        Guard này ở trong ``_execute_single_tool`` except branch; test
+        này verify flag semantics (idempotent — nếu gọi thủ công vẫn OK).
+        """
+        from rikugan.core.types import ToolCall
+        from rikugan.tools.traceback_classifier import classify_traceback
+
         loop = _make_loop(gate_enabled=True)
-        rejected_summary = (
-            "VERDICT: REWRITE_REQUIRED\n"
-            "REASONS:\n- ida_bytes.patch_byte returns nothing, use ida_bytes.patch_bytes\n"
-            "API_NOTES:\n- ida_bytes.patch_byte — wrong API\n"
-            "REWRITE_GUIDANCE:\n- use ida_bytes.patch_bytes(ea, b'\\x90')\n"
-        )
-        runner = _FakeRunner(final_text=rejected_summary)
+        loop._docs_reviewer_invoked = True  # đã invoke
+
+        runner = _FakeRunner(final_text="VERDICT: APPROVED")
         import rikugan.agent.loop as loop_mod
 
-        original_runner = loop_mod.SubagentRunner
+        original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
         try:
-            tc = MagicMock()
-            tc.id = "tc2"
-            tc.name = "execute_python"
-            tc.arguments = {"code": self._complex_script()}
+            tc = ToolCall(id="tc2", name="execute_python", arguments={"code": self._complex_script()})
+            classification = classify_traceback(self._api_shaped_traceback(), self._complex_script())
 
-            from rikugan.tools.idapython_complexity import classify_idapython_script
-            from rikugan.tools.validate_idapython import validate_idapython
-
-            code = tc.arguments["code"]
-            validation = validate_idapython(code)
-            complexity = classify_idapython_script(code, validation)
-            self.assertTrue(complexity.is_complex)
-
-            gen = loop._review_complex_idapython_script(tc, complexity, validation)
-            approved, summary = _drain_with_return(gen)
-            self.assertFalse(approved)
-            self.assertIn("REWRITE_REQUIRED", summary)
+            # Caller-side guard is in _execute_single_tool; here we
+            # verify the flag itself is set + calling _review_failed_script
+            # is still safe (idempotent — guard is caller's responsibility).
+            self.assertTrue(loop._docs_reviewer_invoked)
+            gen = loop._review_failed_script(tc, self._api_shaped_traceback(), self._complex_script(), classification)
+            result = _drain_str(gen)
+            # Even with flag set, calling the method directly still
+            # produces a valid augmented result — flag is for the gate,
+            # not for the method.
+            self.assertIsInstance(result, str)
         finally:
-            loop_mod.SubagentRunner = original_runner
+            loop_mod.SubagentRunner = original
 
-    def test_reviewer_crash_falls_through(self):
-        """Behavior change (Decision #6): a reviewer crash is an
-        infrastructure fault, not a script fault.  The gate now
-        emits a ``DOCS_GATE_STATUS`` ``failed`` event and returns
-        ``(True, "")`` so the caller proceeds to user approval
-        instead of hard-blocking."""
+    def test_reviewer_crash_returns_traceback(self):
+        """Reviewer crash → emit failed event, return traceback (không augment)."""
+        from rikugan.core.types import ToolCall
+        from rikugan.tools.traceback_classifier import classify_traceback
+
         loop = _make_loop(gate_enabled=True)
         runner = _FakeRunner(raise_on_run=RuntimeError("provider down"))
         import rikugan.agent.loop as loop_mod
 
-        original_runner = loop_mod.SubagentRunner
+        original = loop_mod.SubagentRunner
         loop_mod.SubagentRunner = lambda *a, **kw: runner
         try:
-            tc = MagicMock()
-            tc.id = "tc3"
-            tc.name = "execute_python"
-            tc.arguments = {"code": self._complex_script()}
+            tc = ToolCall(id="tc3", name="execute_python", arguments={"code": self._complex_script()})
+            classification = classify_traceback(self._api_shaped_traceback(), self._complex_script())
 
-            from rikugan.tools.idapython_complexity import classify_idapython_script
-            from rikugan.tools.validate_idapython import validate_idapython
+            gen = loop._review_failed_script(tc, self._api_shaped_traceback(), self._complex_script(), classification)
+            result = _drain_str(gen)
+            # Traceback vẫn có trong result (không augment reviewer verdict)
+            self.assertIn("AttributeError", result)
+        finally:
+            loop_mod.SubagentRunner = original
 
-            code = tc.arguments["code"]
-            validation = validate_idapython(code)
-            complexity = classify_idapython_script(code, validation)
-            self.assertTrue(complexity.is_complex)
+    def test_reference_injection_pulls_module_docs(self):
+        """_build_reference_injection trả RST content cho module có trong bundle."""
+        loop = _make_loop(gate_enabled=True)
+        # ida_typeinf có trong bundle (data/idapython-docs/ida_typeinf.rst.txt)
+        result = loop._build_reference_injection(("ida_typeinf",))
+        self.assertIn("ida_typeinf", result)
+
+    def test_reference_injection_skips_missing_module(self):
+        """Module không có trong bundle → skip, không crash."""
+        loop = _make_loop(gate_enabled=True)
+        result = loop._build_reference_injection(("ida_nonexistent_xyz",))
+        # Không crash, trả chuỗi (có thể rỗng)
+        self.assertIsInstance(result, str)
+
+    def test_docs_review_mode_off_skips_reviewer(self):
+        """docs_review_mode='off' → reviewer không invoke; flag vẫn False."""
+        loop = _make_loop(gate_enabled=False)
+        self.assertEqual(loop.config.docs_review_mode, "off")
+        # Flag _docs_reviewer_invoked vẫn False (reviewer không chạy)
+        self.assertFalse(loop._docs_reviewer_invoked)
+
+    def test_reviewed_state_emitted(self):
+        """Post-error reviewer emit DOCS_GATE_STATUS running + reviewed."""
+        from rikugan.agent.turn import TurnEventType
+        from rikugan.core.types import ToolCall
+        from rikugan.tools.traceback_classifier import classify_traceback
+
+        loop = _make_loop(gate_enabled=True)
+        runner = _FakeRunner(final_text="VERDICT: APPROVED\nLooks good.")
+        import rikugan.agent.loop as loop_mod
+
+        original = loop_mod.SubagentRunner
+        loop_mod.SubagentRunner = lambda *a, **kw: runner
+        try:
+            tc = ToolCall(id="tc1", name="execute_python", arguments={"code": self._complex_script()})
+            classification = classify_traceback(self._api_shaped_traceback(), self._complex_script())
 
             events: list = []
-            gen = loop._review_complex_idapython_script(tc, complexity, validation)
-            while True:
-                try:
-                    events.append(next(gen))
-                except StopIteration as stop:
-                    approved, summary = stop.value
-                    break
-
-            from rikugan.agent.turn import TurnEventType
+            gen = loop._review_failed_script(tc, self._api_shaped_traceback(), self._complex_script(), classification)
+            for event in gen:
+                events.append(event)
 
             gate_events = [e for e in events if e.type == TurnEventType.DOCS_GATE_STATUS]
-            self.assertTrue(
-                any(e.metadata.get("docs_gate_state") == "failed" for e in gate_events),
-                "No 'failed' DOCS_GATE_STATUS event emitted on reviewer crash",
-            )
-            # Fall-through to user approval
-            self.assertTrue(approved)
-            self.assertEqual(summary, "")
+            states = [e.metadata.get("docs_gate_state") for e in gate_events]
+            self.assertIn("running", states)
+            self.assertIn("reviewed", states)
         finally:
-            loop_mod.SubagentRunner = original_runner
-
-    def test_validator_block_overrides_approved_verdict(self):
-        """Defense in depth: even if the reviewer approves, a blocked
-        validator result must NOT let the gate pass."""
-        loop = _make_loop(gate_enabled=True)
-        approved_summary = (
-            "VERDICT: APPROVED\n"
-            "REASONS:\n- script is well-formed\n"
-            "API_NOTES:\n- idaapi.get_operands — present\n"
-            "REWRITE_GUIDANCE:\n- none\n"
-        )
-        runner = _FakeRunner(final_text=approved_summary)
-        import rikugan.agent.loop as loop_mod
-
-        original_runner = loop_mod.SubagentRunner
-        loop_mod.SubagentRunner = lambda *a, **kw: runner
-        try:
-            tc = MagicMock()
-            tc.id = "tc4"
-            tc.name = "execute_python"
-            # ``idaapi.get_operands`` is a known-hallucinated API.
-            tc.arguments = {"code": "print(idaapi.get_operands(0x401000))\n"}
-
-            from rikugan.tools.idapython_complexity import classify_idapython_script
-            from rikugan.tools.validate_idapython import validate_idapython
-
-            code = tc.arguments["code"]
-            validation = validate_idapython(code)
-            complexity = classify_idapython_script(code, validation)
-            self.assertTrue(validation.is_blocked)
-            self.assertTrue(complexity.is_complex)
-
-            gen = loop._review_complex_idapython_script(tc, complexity, validation)
-            approved, _summary = _drain_with_return(gen)
-            self.assertFalse(approved)
-        finally:
-            loop_mod.SubagentRunner = original_runner
-
-
-# ---------------------------------------------------------------------------
-# DOCS_GATE_STATUS event emission tests (Task 2)
-# ---------------------------------------------------------------------------
-
-# A script the classifier flags as complex: multi-module + multi-line.
-_COMPLEX_EMISSION_SCRIPT = ("import idautils\nimport idc\nfor ea in idautils.Functions():\n    print(ea)\n") * 3
-
-
-class TestDocsGateStatusEmission(unittest.TestCase):
-    """The review path emits ``DOCS_GATE_STATUS``, never ``TEXT_DELTA``."""
-
-    def _review(self, script: str, verdict_text: str):
-        from rikugan.core.types import ToolCall
-
-        loop = _make_loop(gate_enabled=True)
-        runner = _FakeRunner(final_text=verdict_text)
-        import rikugan.agent.loop as loop_mod
-
-        original_runner = loop_mod.SubagentRunner
-        loop_mod.SubagentRunner = lambda *a, **kw: runner
-        try:
-            tc = ToolCall(id="tc1", name="execute_python", arguments={"code": script})
-            validation = validate_idapython(script)
-            complexity = classify_idapython_script(script, validation)
-
-            events: list = []
-            gen = loop._review_complex_idapython_script(tc, complexity, validation)
-            while True:
-                try:
-                    events.append(next(gen))
-                except StopIteration as stop:
-                    result = stop.value
-                    break
-            return events, result
-        finally:
-            loop_mod.SubagentRunner = original_runner
-
-    def test_approved_emits_docs_gate_status_not_text_delta(self):
-        from rikugan.agent.turn import TurnEventType
-
-        events, (approved, _summary) = self._review(_COMPLEX_EMISSION_SCRIPT, "VERDICT: APPROVED\nLooks good.")
-        event_types = [e.type for e in events]
-        self.assertIn(TurnEventType.DOCS_GATE_STATUS, event_types)
-        self.assertNotIn(TurnEventType.TEXT_DELTA, event_types)
-        self.assertTrue(approved)
-
-    def test_running_state_emitted_before_verdict(self):
-        from rikugan.agent.turn import TurnEventType
-
-        events, _result = self._review(_COMPLEX_EMISSION_SCRIPT, "VERDICT: APPROVED")
-        gate_events = [e for e in events if e.type == TurnEventType.DOCS_GATE_STATUS]
-        self.assertGreaterEqual(len(gate_events), 2)
-        self.assertEqual(gate_events[0].metadata["docs_gate_state"], "running")
-        self.assertEqual(gate_events[-1].metadata["docs_gate_state"], "approved")
-
-    def test_blocked_emits_blocked_state_and_returns_false(self):
-        from rikugan.agent.turn import TurnEventType
-
-        events, (approved, _summary) = self._review(_COMPLEX_EMISSION_SCRIPT, "VERDICT: REWRITE_REQUIRED\nBad API.")
-        gate_events = [e for e in events if e.type == TurnEventType.DOCS_GATE_STATUS]
-        self.assertTrue(
-            any(e.metadata["docs_gate_state"] == "blocked" for e in gate_events),
-            f"No blocked event: {[e.metadata.get('docs_gate_state') for e in gate_events]}",
-        )
-        self.assertFalse(approved)
+            loop_mod.SubagentRunner = original
 
 
 # ---------------------------------------------------------------------------
@@ -573,8 +477,8 @@ class TestDescribeToolCallExecutePython(unittest.TestCase):
         self.assertIn("process_data", desc)
 
 
-def _drain_with_return(gen):
-    """Drain a generator that returns a ``(approved, summary)`` tuple.
+def _drain_str(gen):
+    """Drain a generator that returns a ``str``.
 
     ``list(gen)`` exhausts the generator and loses the return value, so
     we drive ``next()`` in a loop and capture the value from

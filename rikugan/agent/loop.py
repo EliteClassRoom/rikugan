@@ -34,8 +34,8 @@ from ..providers.base import LLMProvider
 from ..skills.registry import SkillRegistry
 from ..state.session import SessionState
 from ..tools.coercion import coerce_bool
-from ..tools.idapython_complexity import classify_idapython_script
 from ..tools.registry import ToolRegistry
+from ..tools.traceback_classifier import TracebackClassification
 from ..tools.validate_idapython import validate_idapython
 from .context_window import ContextWindowManager
 from .exploration_mode import (
@@ -333,6 +333,10 @@ class AgentLoop:
         self._approval_queue: queue.Queue[str] = parent_loop._approval_queue if parent_loop else queue.Queue(maxsize=1)
         self._always_allow_scripts: bool = parent_loop._always_allow_scripts if parent_loop else False
         self.plan_mode = False
+
+        # Post-error docs-review: max 1 reviewer call per user message.
+        # Reset at the start of run() so each user task gets a fresh budget.
+        self._docs_reviewer_invoked: bool = False
 
         # Context window manager — compacts history when approaching limits
         ctx_window = getattr(config.provider, "context_window", 0) or 128000
@@ -1114,63 +1118,91 @@ class AgentLoop:
         return decision == "allow"
 
     # ------------------------------------------------------------------
-    # IDAPython docs-review gate
+    # IDAPython docs-review gate (post-error variant)
     # ------------------------------------------------------------------
 
-    #: Verdict prefix the docs reviewer must emit on its final message.
-    _DOCS_GATE_VERDICT_PREFIX = "VERDICT:"
+    #: Max number of IDA modules whose docs we auto-inject after a failed
+    #: script. Anything more bloats the tool result without proportional
+    #: diagnostic value — most failures trace to 1-2 API calls.
+    _DOCS_REFERENCE_MAX_MODULES: int = 3
 
-    def _review_complex_idapython_script(
+    #: Per-module character cap for the auto-injected docs block. Matches
+    #: ``MAX_CHARS_PER_MODULE`` used by the reviewer's tool calls.
+    _DOCS_REFERENCE_MAX_CHARS_PER_MODULE: int = 4000
+
+    def _build_reference_injection(self, modules: tuple[str, ...]) -> str:
+        """Pull offline docs cho mỗi module liên quan, ghép thành 1 block.
+
+        Gọi ``lookup_idapython_doc`` core function trực tiếp (pure Python,
+        không qua tool dispatch, không tốn LLM round-trip). Giới hạn
+        ``_DOCS_REFERENCE_MAX_MODULES`` để tránh phình token.
+        """
+        from ..tools.idapython_docs import lookup_idapython_doc
+
+        parts: list[str] = []
+        # Bounded slice — fail-safe if a future caller ignores the cap.
+        for module in modules[: self._DOCS_REFERENCE_MAX_MODULES]:
+            try:
+                # @tool decorator dùng functools.wraps → __wrapped__ trỏ về func gốc.
+                # Gọi core function trực tiếp, bypass tool dispatch + logging.
+                core_fn = getattr(lookup_idapython_doc, "__wrapped__", lookup_idapython_doc)
+                doc_text = core_fn(module=module, limit=self._DOCS_REFERENCE_MAX_CHARS_PER_MODULE)
+                parts.append(f"### {module}\n{doc_text}")
+            except Exception as e:
+                log_debug(f"reference injection skipped for {module}: {e}")
+        return "\n\n".join(parts)
+
+    def _review_failed_script(
         self,
         tc: ToolCall,
-        complexity,
-        validation,
-    ) -> Generator[TurnEvent, None, tuple[bool, str]]:
-        """Spawn a docs-reviewer subagent for a complex ``execute_python`` script.
+        traceback_text: str,
+        code: str,
+        classification: TracebackClassification,
+    ) -> Generator[TurnEvent, None, str]:
+        """Spawn docs-reviewer cho script đã fail runtime.
 
-        Yields the reviewer's progress events (text deltas, subagent
-        lifecycle) so the UI can show them.  Returns
-        ``(approved, summary_text)`` where ``approved`` is True only when
-        the reviewer emitted ``VERDICT: APPROVED`` AND the script is
-        not blocked by the static validator.
+        Reviewer chẩn đoán dựa trên traceback + exception type, trả verdict
+        + REWRITE_GUIDANCE. Hệ thống auto-inject reference docs của modules
+        liên quan vào kết quả. Trả về augmented result string:
+        traceback + reviewer verdict + reference docs.
 
-        This gate runs **before** the normal user approval prompt so the
-        user reviews a docs-checked script.
+        Set ``_docs_reviewer_invoked = True`` — chỉ 1 reviewer call per task
+        (reset mỗi user message trong ``run()``).
         """
         from .agents.ida_docs_reviewer import (
             IDA_DOCS_REVIEWER_MAX_TURNS,
             build_ida_docs_reviewer_addendum,
         )
 
-        code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-        goal = self.session.metadata.get(_GOAL_METADATA_KEY, "") or ""
+        self._docs_reviewer_invoked = True
 
-        # Build a structured task payload so the reviewer has everything
-        # it needs without having to mine conversation history.
-        reasons_block = "\n".join(f"- {r}" for r in complexity.reasons) or "- (no specific reasons)"
-        validation_block = validation.format_for_agent() or "(no validator issues)"
-
-        task_lines: list[str] = []
-        if goal:
-            task_lines.append(f"# User Goal\n\n{goal}\n")
-        task_lines.append(f"# Proposed IDAPython Script\n\n```python\n{code}\n```\n")
-        task_lines.append(f"# Complexity Classification\n\n{reasons_block}\n")
-        task_lines.append(f"# Static Validation Hints\n\n{validation_block}\n")
-        task_lines.append(
-            "# Your Task\n\n"
-            "Verify the script above against IDA Pro / IDAPython documentation "
-            "(use the `ida-scripting` skill, then official Hex-Rays docs). "
-            "Return the structured VERDICT block described in your system prompt.\n"
-            "Do NOT call execute_python — you are a reviewer, not an executor."
-        )
-        task = "\n".join(task_lines)
-
-        # Notify the chat that the gate is firing.
         yield TurnEvent.docs_gate_status(
             tc.id,
             state="running",
-            reasons=complexity.reasons,
+            reasons=(f"runtime {classification.exception_type}: {classification.exception_message}",),
         )
+
+        goal = self.session.metadata.get(_GOAL_METADATA_KEY, "") or ""
+
+        # Build task payload cho reviewer: script + traceback + goal.
+        task_lines: list[str] = []
+        if goal:
+            task_lines.append(f"# User Goal\n\n{goal}\n")
+        task_lines.append(f"# Failed IDAPython Script\n\n```python\n{code}\n```\n")
+        task_lines.append(
+            f"# Runtime Error\n\n"
+            f"Exception type: {classification.exception_type}\n"
+            f"Message: {classification.exception_message}\n\n"
+            f"```\n{traceback_text}\n```\n"
+        )
+        task_lines.append(
+            "# Your Task\n\n"
+            "Diagnose why this script failed. Check every IDA API call against "
+            "the `ida-scripting` skill and the bundled offline docs. Return the "
+            "structured VERDICT block described in your system prompt.\n"
+            "Do NOT call execute_python — you are a reviewer, not an executor."
+        )
+        task = "\n".join(task_lines)
 
         runner = SubagentRunner(
             provider=self.provider,
@@ -1181,7 +1213,6 @@ class AgentLoop:
             parent_loop=self,
         )
 
-        summary = ""
         try:
             summary = yield from runner.run_task(
                 task,
@@ -1190,8 +1221,6 @@ class AgentLoop:
                 silent=True,
             )
         except CancellationError:
-            # Re-raise so the outer loop cancels cleanly.  Do not let
-            # the docs reviewer consume a cancellation silently.
             raise
         except Exception as e:
             log_error(f"docs reviewer failed: {e}")
@@ -1200,47 +1229,29 @@ class AgentLoop:
                 state="failed",
                 summary=f"{type(e).__name__}: {e}",
             )
-            # Behavior change (Decision #6): a reviewer crash is an
-            # infrastructure fault, not a script fault.  Fall through to
-            # user approval so the user can still decide.  Return
-            # (True, "") — the caller proceeds to _wait_for_approval.
-            return (True, "")
+            # Reviewer crash → trả traceback thẳng (không augment).
+            # Đây là infrastructure fault, không phải script fault.
+            return f"--- Traceback ---\n{traceback_text}\n--- end ---"
 
-        # Parse the verdict block.  Be lenient: the LLM may emit prose
-        # around it.  Look for the prefix anywhere in the final summary.
-        verdict = ""
-        verdict_text = (summary or "").strip()
-        for line in verdict_text.splitlines():
-            stripped = line.strip()
-            if stripped.startswith(self._DOCS_GATE_VERDICT_PREFIX):
-                verdict = stripped[len(self._DOCS_GATE_VERDICT_PREFIX) :].strip().upper()
-                break
-        approved = verdict.startswith("APPROVED")
+        # Inject reference docs của modules liên quan.
+        reference_block = self._build_reference_injection(classification.modules_referenced)
 
-        # Defense in depth: if the static validator blocked the script,
-        # never let the gate approve it.  The reviewer may have missed
-        # a hallucinated API; the blocklist is the source of truth.
-        if validation.is_blocked and approved:
-            approved = False
-            verdict = "REWRITE_REQUIRED"
+        # Augment result: traceback + verdict + reference.
+        parts = [
+            f"Script failed with {classification.exception_type}: {classification.exception_message}",
+            "",
+            "--- Traceback ---",
+            traceback_text,
+            "--- Docs Reviewer Verdict ---",
+            summary or "(no verdict returned)",
+        ]
+        if reference_block:
+            parts.append("--- Module Reference (auto-injected) ---")
+            parts.append(reference_block)
+        parts.append("--- end ---")
 
-        if approved:
-            yield TurnEvent.docs_gate_status(tc.id, state="approved")
-            return (True, summary or "")
-
-        reason_msg = verdict or "REWRITE_REQUIRED"
-        yield TurnEvent.docs_gate_status(
-            tc.id,
-            state="blocked",
-            summary=summary or reason_msg,
-        )
-        return (
-            False,
-            f"IDA docs review verdict: {reason_msg}. "
-            "The script was NOT executed. "
-            "Review the reviewer's REWRITE_GUIDANCE and resubmit a corrected script.\n\n"
-            f"--- Reviewer summary ---\n{summary or '(no summary returned)'}\n--- end ---",
-        )
+        yield TurnEvent.docs_gate_status(tc.id, state="reviewed")
+        return "\n".join(parts)
 
     def _execute_single_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle approval gating, mutation tracking, and execution of a real tool."""
@@ -1254,43 +1265,34 @@ class AgentLoop:
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return tr
 
-        # execute_python always requires explicit approval
+        # execute_python always requires explicit approval.
+        # Static validator (validate_idapython) still runs pre-execute to
+        # block known-hallucinated APIs. The docs-reviewer now runs
+        # POST-error (see the except block below) instead of pre-execute.
         if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
-            # Docs-review gate: for complex scripts, run a docs reviewer
-            # BEFORE the user approval prompt so the user sees a
-            # docs-checked script.  Configurable via
-            # `require_ida_docs_for_complex_scripts`.
             code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-            if (
-                getattr(self.config, "require_ida_docs_for_complex_scripts", True)
-                and isinstance(code, str)
-                and code.strip()
-            ):
+            if isinstance(code, str) and code.strip():
                 try:
                     validation = validate_idapython(code)
-                    complexity = classify_idapython_script(code, validation)
                 except Exception as e:  # pragma: no cover — defensive
-                    log_error(f"docs-gate classification failed: {e}")
+                    log_error(f"docs-gate validation failed: {e}")
                     validation = None
-                    complexity = None
 
-                if complexity is not None and complexity.is_complex:
-                    approved, summary = yield from self._review_complex_idapython_script(tc, complexity, validation)
-                    if not approved:
-                        # Hard block — the script is not executed and the
-                        # main agent gets the reviewer summary as a tool
-                        # error so it can rewrite.
-                        tr = ToolResult(
-                            tool_call_id=tc.id,
-                            name=tc.name,
-                            content=summary,
-                            is_error=True,
-                        )
-                        yield TurnEvent.tool_result_event(tc.id, tc.name, summary, True)
-                        return tr
-                    # Approved — fall through to the normal approval path
-                    # so the user still gets to review the docs-checked
-                    # script before execution.
+                if validation is not None and validation.is_blocked:
+                    # Hard block: hallucinated API detected pre-execute.
+                    block_msg = (
+                        "Script blocked by static validator (hallucinated API detected):\n"
+                        f"{validation.format_for_agent()}\n"
+                        "Fix the API usage and resubmit."
+                    )
+                    tr = ToolResult(
+                        tool_call_id=tc.id,
+                        name=tc.name,
+                        content=block_msg,
+                        is_error=True,
+                    )
+                    yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
+                    return tr
 
             approved = yield from self._wait_for_approval(tc)
             if not approved:
@@ -1362,10 +1364,29 @@ class AgentLoop:
             self._consecutive_errors += 1
             log_error(f"Tool {tc.name} error: {e}")
         except Exception as e:
-            result = f"Unexpected error: {e}"
+            tb = traceback.format_exc()
+            result = f"Unexpected error: {e}\n{tb}"
             is_error = True
             self._consecutive_errors += 1
-            log_error(f"Tool {tc.name} unexpected error: {e}\n{traceback.format_exc()}")
+            log_error(f"Tool {tc.name} unexpected error: {e}\n{tb}")
+
+            # Post-error docs review for execute_python: spawn reviewer only
+            # when the exception is API-shaped (AttributeError, ImportError,
+            # NameError) and the reviewer hasn't been invoked for this task yet.
+            # Configurable via ``docs_review_mode`` ("on_error" / "off").
+            if (
+                tc.name == constants.EXECUTE_PYTHON_TOOL_NAME
+                and getattr(self.config, "docs_review_mode", "on_error") == "on_error"
+                and not self._docs_reviewer_invoked
+            ):
+                from ..tools.traceback_classifier import classify_traceback
+
+                code = tc.arguments.get("code", "") or tc.arguments.get("script", "") or ""
+                classification = classify_traceback(tb, code)
+                if classification.is_api_shaped:
+                    augmented = yield from self._review_failed_script(tc, tb, code, classification)
+                    if augmented:
+                        result = augmented
 
         # Sanitize tool output before it enters the conversation.
         # Error messages may contain attacker-controlled content (e.g. function
@@ -1893,43 +1914,34 @@ class AgentLoop:
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return tr
 
-        # execute_python always requires explicit approval
+        # execute_python always requires explicit approval.
+        # Static validator (validate_idapython) still runs pre-execute to
+        # block known-hallucinated APIs. The docs-reviewer now runs
+        # POST-error (see the except block below) instead of pre-execute.
         if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
-            # Docs-review gate: for complex scripts, run a docs reviewer
-            # BEFORE the user approval prompt so the user sees a
-            # docs-checked script.  Configurable via
-            # `require_ida_docs_for_complex_scripts`.
             code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-            if (
-                getattr(self.config, "require_ida_docs_for_complex_scripts", True)
-                and isinstance(code, str)
-                and code.strip()
-            ):
+            if isinstance(code, str) and code.strip():
                 try:
                     validation = validate_idapython(code)
-                    complexity = classify_idapython_script(code, validation)
                 except Exception as e:  # pragma: no cover — defensive
-                    log_error(f"docs-gate classification failed: {e}")
+                    log_error(f"docs-gate validation failed: {e}")
                     validation = None
-                    complexity = None
 
-                if complexity is not None and complexity.is_complex:
-                    approved, summary = yield from self._review_complex_idapython_script(tc, complexity, validation)
-                    if not approved:
-                        # Hard block — the script is not executed and the
-                        # main agent gets the reviewer summary as a tool
-                        # error so it can rewrite.
-                        tr = ToolResult(
-                            tool_call_id=tc.id,
-                            name=tc.name,
-                            content=summary,
-                            is_error=True,
-                        )
-                        yield TurnEvent.tool_result_event(tc.id, tc.name, summary, True)
-                        return tr
-                    # Approved — fall through to the normal approval path
-                    # so the user still gets to review the docs-checked
-                    # script before execution.
+                if validation is not None and validation.is_blocked:
+                    # Hard block: hallucinated API detected pre-execute.
+                    block_msg = (
+                        "Script blocked by static validator (hallucinated API detected):\n"
+                        f"{validation.format_for_agent()}\n"
+                        "Fix the API usage and resubmit."
+                    )
+                    tr = ToolResult(
+                        tool_call_id=tc.id,
+                        name=tc.name,
+                        content=block_msg,
+                        is_error=True,
+                    )
+                    yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
+                    return tr
 
             approved = yield from self._wait_for_approval(tc)
             if not approved:
@@ -2001,10 +2013,29 @@ class AgentLoop:
             self._consecutive_errors += 1
             log_error(f"Tool {tc.name} error: {e}")
         except Exception as e:
-            result = f"Unexpected error: {e}"
+            tb = traceback.format_exc()
+            result = f"Unexpected error: {e}\n{tb}"
             is_error = True
             self._consecutive_errors += 1
-            log_error(f"Tool {tc.name} unexpected error: {e}\n{traceback.format_exc()}")
+            log_error(f"Tool {tc.name} unexpected error: {e}\n{tb}")
+
+            # Post-error docs review for execute_python: spawn reviewer only
+            # when the exception is API-shaped (AttributeError, ImportError,
+            # NameError) and the reviewer hasn't been invoked for this task yet.
+            # Configurable via ``docs_review_mode`` ("on_error" / "off").
+            if (
+                tc.name == constants.EXECUTE_PYTHON_TOOL_NAME
+                and getattr(self.config, "docs_review_mode", "on_error") == "on_error"
+                and not self._docs_reviewer_invoked
+            ):
+                from ..tools.traceback_classifier import classify_traceback
+
+                code = tc.arguments.get("code", "") or tc.arguments.get("script", "") or ""
+                classification = classify_traceback(tb, code)
+                if classification.is_api_shaped:
+                    augmented = yield from self._review_failed_script(tc, tb, code, classification)
+                    if augmented:
+                        result = augmented
 
         # Sanitize tool output before it enters the conversation.
         # Error messages may contain attacker-controlled content (e.g. function
@@ -2145,6 +2176,7 @@ class AgentLoop:
         while the UI reads events via the event_queue or directly iterates.
         """
         self._cancelled.clear()
+        self._docs_reviewer_invoked = False
         self._running = True
         self.session.is_running = True
 
