@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — Central Memory Subsystem
+
+- **Central memory workspaces** — per-binary SQLite workspace stores
+  (`memory.db`) replace folder-scoped `RIKUGAN.md` / `.rikugan-kb/*.jsonl`
+  as the authoritative structured-memory backend. Each workspace has
+  deterministic `MEMORY.md` projection with managed/unmanaged region
+  separation and cross-process `portalocker` locking.
+- **Identity resolver** — ordered copy/move/conflict decision table
+  resolves IDB identity via filesystem evidence (POSIX `st_dev/st_ino`,
+  Windows volume serial + 64-bit file index) and netnode UUID. Raw
+  binaries use full SHA-256, hashed before IDA launch in headless mode.
+- **Write authority protocol** — non-serializable `MemoryWriteAuthority`
+  bound to a frozen `MemoryRunContext`; subagents never receive write
+  authority and can only emit `MemoryCandidate` records for explicit
+  main-agent review.
+- **Analysis cases** — cross-binary case membership with five relation
+  types (`embeds_or_loads`, `communicates_with`, `derived_from`,
+  `same_family_as`, `shares_artifact_with`), explicit promotion with
+  provenance, and lazy source-drift validation.
+- **Bundle interchange** — versioned ZIP format with validated manifest,
+  member-name safety checks, and coherent SQLite-snapshot export.
+- **Storage guard** — centralized path containment, symlink, size, and
+  permission checks for all central-memory file operations.
+- **Legacy importer** — one-time migration from `RIKUGAN.md` /
+  `.rikugan-kb/*.jsonl` into the central workspace, idempotent by
+  source fingerprint + target + selected items.
+- **Config flag** — `memory_workspaces_enabled` (default `False`).
+  When disabled, all runtime memory continues using the legacy
+  folder-scoped path. Typed-load rejection prevents a string `"true"`
+  from silently enabling the feature.
+
 ## [1.10.4] — 2026-07-14
 
 ### Changed
