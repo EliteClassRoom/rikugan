@@ -66,3 +66,6 @@ MagicMock/
 # Atomic-write remnants in bundle directory
 rikugan/data/**/*.tmp
 rikugan/data/**/*.tmp.*
+
+# CocoIndex Code (ccc)
+/.cocoindex_code/
