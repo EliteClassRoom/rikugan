@@ -528,7 +528,10 @@ class SessionControllerBase:
                 return
 
             paths = manager.require_persistent_paths()
-            store = WorkspaceStore.open(paths, owner_memory_id=result.binding.memory_id)
+            if paths.database.exists():
+                store = WorkspaceStore.open(paths, owner_memory_id=result.binding.memory_id)
+            else:
+                store = WorkspaceStore.create(paths, owner_memory_id=result.binding.memory_id)
             repo = SQLiteKnowledgeRepository(store, owner_memory_id=result.binding.memory_id)
             projector = MemoryProjector()
             issuer = MemoryAuthorityIssuer()
