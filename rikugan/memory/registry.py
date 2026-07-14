@@ -111,7 +111,41 @@ def _migrate_v1(conn: Any) -> None:
     )
 
 
-_MIGRATIONS = {1: _migrate_v1}
+def _migrate_v2(conn: Any) -> None:
+    """Registry schema v2: analysis cases and membership."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cases(
+            case_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('active', 'disabled', 'deleted')),
+            revision INTEGER NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS case_members(
+            case_id TEXT NOT NULL REFERENCES cases(case_id),
+            memory_id TEXT NOT NULL REFERENCES workspaces(memory_id),
+            status TEXT NOT NULL CHECK(status IN ('current', 'removed')),
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(case_id, memory_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_case_members_memory
+        ON case_members(memory_id, status)
+        """
+    )
+
+
+_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2}
 
 
 class MemoryRegistry:
