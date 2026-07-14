@@ -69,6 +69,10 @@ class SessionState:
     model_name: str = ""
     idb_path: str = ""
     db_instance_id: str = ""
+    # Central memory workspace binding — durable across reopen/restart.
+    # Populated by the MemoryWorkspaceManager when central memory is enabled.
+    binary_memory_id: str = ""
+    active_case_id: str = ""
     metadata: dict[str, str] = field(default_factory=dict)
     # Subagent message logs, keyed by the spawn_subagent tool_call_id.
     # Stored separately from main messages to avoid burning context tokens.
