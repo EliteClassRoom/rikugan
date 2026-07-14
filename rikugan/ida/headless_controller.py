@@ -8,7 +8,10 @@ for auto-analysis before accepting work.
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..memory.workspace import IdentityRequest
 
 from ..core.config import RikuganConfig
 from ..core.host import get_database_path
@@ -44,9 +47,11 @@ class HeadlessSessionController(SessionControllerBase):
         dispatcher: IdaHeadlessDispatcher,
         *,
         wait_for_auto_analysis: bool = True,
+        memory_source: IdentityRequest | None = None,
     ):
         self._dispatcher = dispatcher
         self._wait_for_auto = wait_for_auto_analysis
+        self._memory_source = memory_source
 
         super().__init__(
             config=config,

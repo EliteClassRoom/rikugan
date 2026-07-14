@@ -33,6 +33,10 @@ import os
 import sys
 import threading
 import traceback
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from rikugan.memory.workspace import IdentityRequest
 
 
 def _log_best_effort(context: str, exc: BaseException) -> None:
@@ -104,6 +108,43 @@ def _load_bootstrap_config() -> dict | None:
     except json.JSONDecodeError as e:
         _clean_exit_ida(3, f"Invalid bootstrap config JSON: {e}")
     return None
+
+
+def validate_bootstrap_memory_source(value: object) -> IdentityRequest | None:
+    """Validate the ``memory_source`` bootstrap key into a typed :class:`IdentityRequest`.
+
+    Returns ``None`` when the value is not a dict, the kind is unknown,
+    or a raw source lacks a valid 64-hex SHA-256.
+
+    This is a pure validation helper — it never touches the filesystem
+    and can be unit-tested without IDA.
+    """
+    import re
+    from pathlib import Path
+
+    from rikugan.memory.workspace import IdentityRequest
+
+    if not isinstance(value, dict):
+        return None
+
+    kind = value.get("kind")
+    original_path = value.get("original_path")
+    if kind not in {"idb", "raw"} or not isinstance(original_path, str) or not original_path:
+        return None
+
+    digest = ""
+    if kind == "raw":
+        raw_digest = value.get("sha256")
+        if not isinstance(raw_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", raw_digest):
+            return None
+        digest = raw_digest
+
+    return IdentityRequest(
+        source_kind=kind,
+        idb_path=original_path,
+        source_sha256=digest,
+        display_name=Path(original_path).name,
+    )
 
 
 def _apply_provider_overrides(config, bootstrap_cfg: dict) -> None:
@@ -340,11 +381,14 @@ def main() -> None:
         # Apply provider/model/api_base overrides from bootstrap config.
         _apply_provider_overrides(rk_config, config)
 
+        memory_source = validate_bootstrap_memory_source(config.get("memory_source"))
+
         dispatcher = IdaHeadlessDispatcher()
         controller = HeadlessSessionController(
             rk_config,
             dispatcher,
             wait_for_auto_analysis=wait_auto,
+            memory_source=memory_source,
         )
 
         controller.wait_auto_analysis()
