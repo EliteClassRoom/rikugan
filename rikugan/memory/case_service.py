@@ -95,7 +95,8 @@ class CaseMemoryService:
 
         Requires authority, current membership, and a valid active case.
         The source revision/hash is resolved internally — never accepted
-        from the caller.
+        from the caller. The promotion is persisted in the case workspace
+        DB as a structured fact with provenance observation.
         """
         if self._binary_repo is None:
             raise CaseMembershipError("no binary repository attached")
@@ -107,12 +108,10 @@ class CaseMemoryService:
         if fact is None:
             raise SourceDriftError(f"source record not found: {source_record_id}")
 
-        from .workspace import new_record_id
-
-        promotion_id = new_record_id("promotion")
-        case_fact_id = new_record_id("fact")
-
         import hashlib
+
+        from .workspace import new_record_id
+        from .workspace_store import WorkspaceStore
 
         source_hash = hashlib.sha256(fact.content.encode("utf-8")).hexdigest()
 
@@ -122,6 +121,44 @@ class CaseMemoryService:
             source_revision=fact.revision,
             source_hash=source_hash,
         )
+
+        promotion_id = new_record_id("promotion")
+        case_fact_id = new_record_id("fact")
+
+        # Persist in case workspace DB
+        case_paths = self._cases._locator.case(case_id)
+        if case_paths.database.exists():
+            case_store = WorkspaceStore.open(case_paths, owner_memory_id=case_id)
+        else:
+            case_store = WorkspaceStore.create(case_paths, owner_memory_id=case_id, workspace_kind="case")
+        case_store.put_fact(
+            case_fact_id,
+            "promoted",
+            fact.title,
+            fact.content,
+            fact.confidence,
+            expected_revision=0,
+        )
+        oid = new_record_id("observation")
+        import json
+
+        case_store.append_observation(
+            oid,
+            "promotion",
+            json.dumps(
+                {
+                    "promotion_id": promotion_id,
+                    "source_memory_id": source_memory_id,
+                    "source_record_id": source_record_id,
+                    "source_revision": fact.revision,
+                    "source_hash": source_hash,
+                    "promotion_kind": promotion_kind,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        case_store.close()
 
         return CasePromotion(
             promotion_id=promotion_id,

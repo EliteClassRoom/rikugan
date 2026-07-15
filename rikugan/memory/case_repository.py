@@ -343,7 +343,7 @@ class CaseRepository:
         # Store as entity pair + relation
         subj_entity = new_record_id("entity")
         obj_entity = new_record_id("entity")
-        store.put_entity(subj_entity, "binary_ref", subj, {"memory_id": subj})
+        store.put_entity(subj_entity, "binary_ref", subj, {"memory_id": subj, "artifact_ref": artifact_ref})
         store.put_entity(obj_entity, "binary_ref", obj, {"memory_id": obj})
         store.put_relation(relation_id, subj_entity, predicate.value, obj_entity, confidence)
         store.close()
@@ -396,6 +396,7 @@ class CaseRepository:
                         object_memory_id=obj_entity.metadata.get("memory_id", obj_entity.name),
                         confidence=r.confidence,
                         sources=(),
+                        artifact_ref=subj_entity.metadata.get("artifact_ref", ""),
                     )
                 )
             return relations
