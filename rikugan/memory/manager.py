@@ -12,6 +12,7 @@ and never touches the registry or workspace directories.
 from __future__ import annotations
 
 from ..core.config import RikuganConfig
+from .case_repository import CaseRepository
 from .identity import IdentityResolution, MemoryIdentityResolver, ResolutionStatus
 from .registry import MemoryRegistry
 from .workspace import (
@@ -46,6 +47,7 @@ class MemoryWorkspaceManager:
         self._binding: WorkspaceBinding | None = None
         self._database_generation = 0
         self._case_binding_generation = 0
+        self._active_case_id: str = ""
 
         if config.memory_workspaces_enabled:
             self._registry.initialize()
@@ -92,6 +94,45 @@ class MemoryWorkspaceManager:
         """Return True if *context* matches the current binding/generations."""
         current = self.run_context(context.active_case_id)
         return current == context
+
+    # ------------------------------------------------------------------
+    # Active-case binding
+    # ------------------------------------------------------------------
+
+    def set_active_case(self, case_id: str) -> MemoryRunContext:
+        """Set the active case for the current binary.
+
+        Requires the binary to be a current member of a non-deleted case.
+        Increments ``case_binding_generation`` on every change.
+        """
+        if not self._config.memory_workspaces_enabled:
+            raise PersistenceDisabled("central memory persistence is unavailable")
+        if self._binding is None or self._binding.state not in {"active", "provisional"}:
+            raise PersistenceDisabled("no active binary binding")
+
+        cases = CaseRepository(self._registry, self._locator)
+        case = cases.get_case(case_id)
+        if case is None or case.state == "deleted":
+            raise ValueError(f"case not found or deleted: {case_id}")
+        if not cases.is_current_member(case_id, self._binding.memory_id):
+            raise ValueError(f"binary is not a current member of case {case_id}")
+
+        if case_id != self._active_case_id:
+            self._active_case_id = case_id
+            self._case_binding_generation += 1
+        return self.run_context(self._active_case_id)
+
+    def clear_active_case(self) -> MemoryRunContext:
+        """Clear the active case binding."""
+        if self._active_case_id:
+            self._active_case_id = ""
+            self._case_binding_generation += 1
+        return self.run_context()
+
+    @property
+    def active_case_id(self) -> str:
+        """Return the current active case ID (empty if none)."""
+        return self._active_case_id
 
     def require_persistent_paths(self) -> WorkspacePaths:
         """Return workspace paths for the current active binding.
