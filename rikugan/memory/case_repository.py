@@ -10,10 +10,18 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from .case_schema import CaseMember, CaseRecord
+from .case_schema import (
+    CaseMember,
+    CaseRecord,
+    CaseRelation,
+    CaseRelationType,
+    PromotionSource,
+    canonicalize_relation_endpoints,
+    validate_case_relation,
+)
 from .registry import MemoryRegistry
 from .sqlite_backend import begin_immediate_with_retry
-from .workspace import MemoryLocator, new_case_id
+from .workspace import MemoryLocator, new_case_id, new_record_id
 
 
 class CaseRepository:
@@ -288,6 +296,111 @@ class CaseRepository:
             return [_row_to_case_record(r) for r in rows]
         finally:
             conn.close()
+
+    # ------------------------------------------------------------------
+    # Case relations (stored in case workspace DB via WorkspaceStore)
+    # ------------------------------------------------------------------
+
+    def put_case_relation(
+        self,
+        case_id: str,
+        subject_memory_id: str,
+        predicate: CaseRelationType,
+        object_memory_id: str,
+        confidence: float = 0.7,
+        artifact_ref: str = "",
+        sources: tuple[PromotionSource, ...] = (),
+    ) -> CaseRelation:
+        """Create or update a cross-binary relation within a case.
+
+        Both endpoints must be current members of the case. The relation
+        is stored in the case's workspace database as an entity-relation pair.
+        """
+        validate_case_relation(
+            subject_memory_id,
+            predicate,
+            object_memory_id,
+            confidence=confidence,
+            artifact_ref=artifact_ref,
+        )
+        # Canonicalize symmetric endpoints
+        subj, obj = canonicalize_relation_endpoints(subject_memory_id, predicate, object_memory_id)
+
+        # Require both endpoints as current members
+        if not self.is_current_member(case_id, subj) or not self.is_current_member(case_id, obj):
+            raise ValueError("both endpoints must be current case members")
+
+        # Store relation in case workspace DB
+        from .workspace_store import WorkspaceStore
+
+        case_paths = self._locator.case(case_id)
+        if case_paths.database.exists():
+            store = WorkspaceStore.open(case_paths, owner_memory_id=case_id)
+        else:
+            store = WorkspaceStore.create(case_paths, owner_memory_id=case_id, workspace_kind="case")
+
+        relation_id = new_record_id("relation")
+        # Store as entity pair + relation
+        subj_entity = new_record_id("entity")
+        obj_entity = new_record_id("entity")
+        store.put_entity(subj_entity, "binary_ref", subj, {"memory_id": subj})
+        store.put_entity(obj_entity, "binary_ref", obj, {"memory_id": obj})
+        store.put_relation(relation_id, subj_entity, predicate.value, obj_entity, confidence)
+        store.close()
+
+        return CaseRelation(
+            relation_id=relation_id,
+            case_id=case_id,
+            subject_memory_id=subj,
+            predicate=predicate,
+            object_memory_id=obj,
+            confidence=confidence,
+            sources=sources,
+            artifact_ref=artifact_ref,
+        )
+
+    def list_case_relations(self, case_id: str) -> list[CaseRelation]:
+        """List all relations in a case workspace."""
+        from .workspace_store import WorkspaceStore
+
+        case_paths = self._locator.case(case_id)
+        if not case_paths.database.exists():
+            return []
+
+        store = WorkspaceStore.open(case_paths, owner_memory_id=case_id)
+        try:
+            raw_relations = store.list_relations()
+            entities = {
+                e.entity_id: e
+                for e in [store.get_entity(r.subject_id) for r in raw_relations]
+                + [store.get_entity(r.object_id) for r in raw_relations]
+                if e is not None
+            }
+
+            relations: list[CaseRelation] = []
+            for r in raw_relations:
+                subj_entity = entities.get(r.subject_id)
+                obj_entity = entities.get(r.object_id)
+                if subj_entity is None or obj_entity is None:
+                    continue
+                try:
+                    pred = CaseRelationType(r.predicate)
+                except ValueError:
+                    continue
+                relations.append(
+                    CaseRelation(
+                        relation_id=r.relation_id,
+                        case_id=case_id,
+                        subject_memory_id=subj_entity.metadata.get("memory_id", subj_entity.name),
+                        predicate=pred,
+                        object_memory_id=obj_entity.metadata.get("memory_id", obj_entity.name),
+                        confidence=r.confidence,
+                        sources=(),
+                    )
+                )
+            return relations
+        finally:
+            store.close()
 
 
 def _row_to_case_record(row: Any) -> CaseRecord:
