@@ -165,6 +165,9 @@ class BinaryMemoryService:
                 warning="",
             )
         except Exception as exc:
+            from ..core.logging import log_error as _le
+
+            _le(f"MEMORY.md projection failed: {exc!r}")
             self.store.mark_projection_dirty()
             return SaveMemoryResult(
                 record_id=record.id,
