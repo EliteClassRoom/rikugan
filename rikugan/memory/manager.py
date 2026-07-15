@@ -81,11 +81,15 @@ class MemoryWorkspaceManager:
         return resolution
 
     def run_context(self, active_case_id: str = "") -> MemoryRunContext:
-        """Return a frozen run context for the current binding."""
+        """Return a frozen run context for the current binding.
+
+        If *active_case_id* is empty, uses the internally tracked active case.
+        """
         memory_id = self._binding.memory_id if self._binding is not None else ""
+        case_id = active_case_id if active_case_id else self._active_case_id
         return MemoryRunContext(
             binary_memory_id=memory_id,
-            active_case_id=active_case_id,
+            active_case_id=case_id,
             database_generation=self._database_generation,
             case_binding_generation=self._case_binding_generation,
         )
