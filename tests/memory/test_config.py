@@ -9,20 +9,11 @@ from pathlib import Path
 from rikugan.core.config import RikuganConfig
 
 
-def test_memory_dir_is_central_and_feature_is_dark(tmp_path: Path) -> None:
+def test_memory_dir_is_central(tmp_path: Path) -> None:
     config = RikuganConfig()
     config._config_dir = str(tmp_path)
 
     assert Path(config.memory_dir) == tmp_path / "memory"
-    assert config.memory_workspaces_enabled is False
-
-
-def test_invalid_memory_flag_type_keeps_safe_default(tmp_path: Path) -> None:
-    config = RikuganConfig()
-    config._config_dir = str(tmp_path)
-    config._apply_loaded_config({"memory_workspaces_enabled": "true"})
-
-    assert config.memory_workspaces_enabled is False
 
 
 def test_portalocker_runtime_dependency_is_in_all_manifests() -> None:
