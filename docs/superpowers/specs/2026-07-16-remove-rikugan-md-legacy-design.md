@@ -29,6 +29,8 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 2. **Không giữ importer.** Xóa `rikugan/memory/legacy.py` hoàn toàn (user chọn clean break — ai đang có `RIKUGAN.md` cũ phải copy thủ công).
 3. **Giữ `sanitize_memory()`.** Hàm này vẫn dùng trong central path để wrap `manual_memory_notes` từ `MEMORY.md` unmanaged region (`system_prompt.py:132`). Đổi docstring mention `RIKUGAN.md` → `MEMORY.md`.
 4. **Không backward-compat runtime.** Legacy branch bị xóa, không giữ "deprecated but functional".
+5. **Identity failure path = silent.** Khi `manager.bind()` trả `ephemeral` (không resolve được workspace — filesystem không hỗ trợ inode, read-only, ...), `_wire_central_memory()` return sớm (dòng 530-531), `loop.memory_service` vẫn `None`. Behavior: memory đơn giản không có — không warning, không log cho user (giữ behavior hiện tại). `save_memory`/`/memory` báo "not available" qua message error đã define ở Phase 2. Đây là edge case hiếm, không cần surfacing.
+6. **Legacy data không migrate.** CHANGELOG chỉ ghi "legacy RIKUGAN.md data is not migrated — the old file is ignored". Không thêm hướng dẫn copy thủ công. User tự chịu trách nhiệm nếu muốn giữ dữ liệu cũ.
 
 ## Thay đổi chi tiết
 
@@ -69,32 +71,49 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 **`rikugan/agent/loop_commands.py`:**
 - `_handle_memory_command()` (dòng 98): xóa legacy branch (dòng 124-147). Nếu `memory_service is None` → `TurnEvent.text_done("Central memory is not available...")` + return.
 
+**`rikugan/agent/loop.py` `_handle_case_command` (dòng 459-461):**
+- Message lỗi `"Central memory is not enabled. Set memory_workspaces_enabled=true in config."` — flag không còn, sửa thành `"Central memory is not available for this binary."` (không reference flag). Context: message này chạy khi `memory_service is None`, tức identity resolve thất bại.
+
 **`rikugan/agent/modes/research.py`:**
 - Docstring/prompt mention `RIKUGAN.md` (dòng 146, 162) → `MEMORY.md`.
 
 ### Phase 3 — Module removal + docstring cleanup
 
 - **Xóa file `rikugan/memory/legacy.py`** hoàn toàn.
-- `rikugan/memory/__init__.py`: docstring mention dark mode (dòng 7-17) → cập nhật hoặc rút gọn. Note: module này export `KnowledgeRawStore` cho knowledge subsystem (khác central memory) — **không** xóa, chỉ sửa docstring.
+- `rikugan/memory/__init__.py`: docstring dòng 7-17 mention `config.memory_workspaces_enabled` + dark mode → cập nhật/rút gọn (xóa đoạn deprecation). Note: module này export `KnowledgeRawStore` cho knowledge subsystem (khác central memory) — **không** xóa, chỉ sửa docstring.
 - `rikugan/memory/paths.py`: docstring dòng 11 mention `RIKUGAN.md` → `MEMORY.md` hoặc bỏ câu. Giữ entity-ID helpers + `knowledge_paths()`.
 - `rikugan/memory/manager.py`: docstring mention dark mode (dòng 7-9) → cập nhật. Xóa guards như Phase 1.
 - `rikugan/core/sanitize.py`: docstring dòng 5 "(skills, RIKUGAN.md)" → "(skills, MEMORY.md)".
 
 ### Phase 4 — Tests
 
-- **Xóa file** `tests/memory/test_legacy.py` (importer đã xóa).
-- **Sửa** `tests/agent/test_memory_cutover.py`: xóa `test_legacy_path_still_works_without_service` (dòng 74-88) — legacy path không còn.
-- **Sửa** `tests/memory/test_foundation_gate.py`: xóa assertion `_load_persistent_memory` callable (dòng 35-38).
-- **Kiểm tra + sửa nếu cần:** `tests/agent/test_prompt_cutover.py`, `tests/agent/test_memory_write_ownership.py`, `tests/agent/test_system_prompt.py` — remove RIKUGAN.md references, update cho `build_system_prompt` không còn param `idb_dir`.
-- **Giữ nguyên:** `tests/core/test_sanitize.py`, `rikugan/tests/test_session_restore_sanitization.py` (sanitize_memory vẫn dùng), các test central memory service/repo/workspace/case.
-- **Thêm 1 test guard:** grep-based test hoặc assertion rằng `build_system_prompt` không accept `idb_dir` (optional, phòng regression).
+**Xóa file hoàn toàn (test feature flag / legacy — vô nghĩa sau cutover):**
+- `tests/memory/test_legacy.py` (importer đã xóa)
+- `tests/memory/test_activation_gate.py` (toàn bộ 5 test đều test `memory_workspaces_enabled` flag: default-disabled, round-trip, invalid-type, manager-init, full-flow — flag không còn)
+- `tests/memory/test_foundation_gate.py` — kiểm tra: dòng 25 `assert config.memory_workspaces_enabled is False`, dòng 35-38 test `_load_persistent_memory`. Nếu cả file chỉ test flag + legacy → xóa; nếu còn test foundation khác → sửa giữ lại.
+
+**Sửa (xóa flag references, không xóa file):**
+- `tests/memory/test_config.py`: dòng 17 `assert ... is False`, dòng 23-25 test typed-load của flag → xóa các assertion liên quan flag (giữ phần test config khác nếu có).
+- `tests/memory/test_manager.py`: **7 sites** set `config.memory_workspaces_enabled = True` (dòng 68, 85, 98, 115, 133, 145, 165) → xóa tất cả (manager luôn-on sau cutover). Verify test vẫn pass không cần flag.
+- `tests/memory/test_first_open_regression.py`: 3 sites set flag (dòng 28, 69, 100) → xóa.
+- `tests/memory/test_case_binding.py`: 4 sites (dòng 20, 94 set `True`/`False`) → xóa. Test dòng 94 (`= False`) có thể cần rewrite logic nếu nó verify dark-mode.
+- `tests/memory/test_case_e2e.py` (dòng 32), `test_case_commands.py` (dòng 53): xóa set flag.
+- `tests/agent/test_memory_cutover.py`: xóa `test_legacy_path_still_works_without_service` (dòng 74-88) + dòng 38 set flag.
+- `tests/agent/test_prompt_cutover.py` (dòng 37): xóa set flag, update cho `build_system_prompt` không còn param `idb_dir`.
+
+**Kiểm tra + sửa nếu cần:**
+- `tests/agent/test_memory_write_ownership.py`, `tests/agent/test_system_prompt.py` — remove RIKUGAN.md references, update `build_system_prompt` signature.
+
+**Giữ nguyên:**
+- `tests/core/test_sanitize.py`, `rikugan/tests/test_session_restore_sanitization.py` (sanitize_memory vẫn dùng)
+- Các test central memory service/repo/workspace/case (chỉ bỏ set-flag, không đổi logic test)
 
 ### Phase 5 — Docs
 
 - `CLAUDE.md`: dòng 209 bảng sanitize (`RIKUGAN.md` → `MEMORY.md`), mục "Persistent memory" mention `RIKUGAN.md` (tìm + replace).
 - `AGENTS.md`: dòng 579 + grep toàn bộ `RIKUGAN.md` mention.
 - `ARCHITECTURE.md`, `README.md`, `llms.txt`, `webpage/llms.txt`, `webpage/index.html`, `webpage/docs.html`, `webpage/ARCHITECTURE.html`: cập nhật mention.
-- `CHANGELOG.md`: thêm entry `feat(memory): cut over to central MEMORY.md, remove legacy RIKUGAN.md`.
+- `CHANGELOG.md`: thêm entry `feat(memory): cut over to central MEMORY.md, remove legacy RIKUGAN.md` + note rõ "legacy `RIKUGAN.md` data is not migrated — the old file is ignored" (không hướng dẫn copy thủ công).
 - **Không sửa** `docs/superpowers/plans/2026-07-14-central-memory-cutover.md` và spec liên quan — đây là historical record của việc build hệ thống mới.
 
 ## Rủi ro và mitigations
@@ -103,9 +122,10 @@ Central path kích hoạt qua `memory_workspaces_enabled` flag, hiện `False`.
 |--------|------------|
 | User đang có config file chứa 3 flags cũ → load fail | Flags không trong load-key list → tự bỏ qua. Test `test_config.py` verify. |
 | User đang có `RIKUGAN.md` cũ → mất dữ liệu | Clean break (user chọn b). Note trong CHANGELOG rằng dữ liệu legacy không auto-migrate. |
-| `memory_service` None trong headless/a2a context → `save_memory` báo error thay vì ghi | Behavior đúng — central memory cần controller wire service. Headless phải wire hoặc disable. Verify headless path. |
-| `idb_dir` param xóa khỏi `build_system_prompt` → caller khác miss | Chỉ 2 caller (đã map). Grep verify sau khi sửa. |
-| Test `test_legacy.py` xóa nhưng có import vào conftest | Kiểm tra `tests/memory/__init__.py` và conftest. |
+| `memory_service` None trong headless/a2a/identity-failure context → `save_memory` báo error thay vì ghi | Behavior đúng — central memory cần controller wire service + identity resolve thành công. Identity failure silent (quyết định #5). Headless phải wire hoặc disable. Verify headless path. |
+| `idb_dir` param xóa khỏi `build_system_prompt` → caller khác miss | Chỉ 2 caller (đã map: `loop.py` + `orchestra/main_agent.py`). Grep verify sau khi sửa. |
+| Test `test_legacy.py` / `test_activation_gate.py` xóa nhưng có import vào conftest | Kiểm tra `tests/memory/__init__.py`, `tests/conftest.py`, `tests/memory/conftest.py` trước khi xóa. |
+| ~20+ test sites set `memory_workspaces_enabled` → NameError sau xóa field | Phase 4 đã map đầy đủ (test_manager 7x, test_first_open 3x, test_case_binding 4x, test_case_e2e/commands, test_config, test_cutover, test_prompt_cutover). Grep `"memory_workspaces_enabled\|case_memory_enabled\|peer_retrieval_enabled" -- tests/` = empty sau khi sửa. |
 
 ## Out of scope
 
