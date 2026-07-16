@@ -143,7 +143,7 @@ something useful → call `exploration_report` immediately.**
   significant discovery.** Set relevance to "high" for key findings.
 - `research_note`: Write an Obsidian-compatible markdown note to the `notes/` folder.
 - `spawn_subagent`: Delegate research-heavy subtasks to isolated subagents.
-- `save_memory`: Persist confirmed findings to RIKUGAN.md for future sessions.
+- `save_memory`: Persist confirmed findings to central memory (MEMORY.md) for future sessions.
 
 ### Exploration strategy (applied to the binary):
 1. **Orient** — get_binary_info, list_imports, list_exports, search strings
@@ -159,7 +159,7 @@ ones. Batch renames of local variables (multiple `rename_variable` calls) are al
 when decompiling a key function.
 
 ### Persist your findings:
-Use `save_memory` to persist confirmed findings to RIKUGAN.md so future sessions \
+Use `save_memory` to persist confirmed findings to central memory (MEMORY.md) so future sessions \
 start with context. Do this as you go — don't wait until the end.
 
 Log every significant finding with `exploration_report`. Keep exploring the binary \
