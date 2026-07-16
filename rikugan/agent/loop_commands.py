@@ -98,53 +98,28 @@ def _open_knowledge_store(loop: AgentLoop) -> tuple[KnowledgeRawStore | None, Kn
 def _handle_memory_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
     """Show current memory contents in chat.
 
-    When central memory is enabled, reads from BinaryMemoryService
-    (SQLite structured facts + unmanaged MEMORY.md notes). Otherwise
-    falls back to legacy RIKUGAN.md.
+    Reads from BinaryMemoryService (SQLite structured facts + unmanaged
+    MEMORY.md notes). When memory_service is None (identity resolution
+    failed), reports central memory unavailable.
     """
-    # Central memory path
-    if loop.memory_service is not None:
-        try:
-            structured = loop.memory_service.structured_context()
-            manual = loop.memory_service.manual_notes_context()
-            parts = []
-            if structured:
-                parts.append(structured)
-            if manual:
-                parts.append(f"\n## Manual Notes\n{manual}")
-            if not parts:
-                yield TurnEvent.text_done("No memory saved yet. Use `save_memory` to persist facts.")
-            else:
-                yield TurnEvent.text_done("**Memory**:\n\n" + "\n".join(parts))
-            return
-        except Exception as e:
-            yield TurnEvent.error_event(f"Failed to read central memory: {e}")
-            return
-
-    # Legacy path: RIKUGAN.md
-    idb_dir = ""
-    if loop.session.idb_path:
-        idb_dir = os.path.dirname(loop.session.idb_path)
-    if not idb_dir:
-        yield TurnEvent.text_done("No IDB path set — persistent memory is not available.")
-        return
-
-    md_path = os.path.join(idb_dir, "RIKUGAN.md")
-    if not os.path.isfile(md_path):
-        yield TurnEvent.text_done(
-            "No persistent memory file found.\n\nUse `save_memory` to save facts that persist across sessions."
-        )
+    if loop.memory_service is None:
+        yield TurnEvent.text_done("Central memory is not available for this binary.")
         return
 
     try:
-        with open(md_path, encoding="utf-8") as f:
-            content = f.read()
-        if not content.strip():
-            yield TurnEvent.text_done("Memory file exists but is empty.")
+        structured = loop.memory_service.structured_context()
+        manual = loop.memory_service.manual_notes_context()
+        parts = []
+        if structured:
+            parts.append(structured)
+        if manual:
+            parts.append(f"\n## Manual Notes\n{manual}")
+        if not parts:
+            yield TurnEvent.text_done("No memory saved yet. Use `save_memory` to persist facts.")
         else:
-            yield TurnEvent.text_done(f"**Persistent Memory**:\n\n{content}")
-    except OSError as e:
-        yield TurnEvent.error_event(f"Failed to read memory file: {e}")
+            yield TurnEvent.text_done("**Memory**:\n\n" + "\n".join(parts))
+    except Exception as e:
+        yield TurnEvent.error_event(f"Failed to read central memory: {e}")
 
 
 def _handle_goal_command(loop: AgentLoop, raw_goal: str) -> Generator[TurnEvent, None, None]:

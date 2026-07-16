@@ -35,7 +35,6 @@ def _make_loop_with_central_memory(tmp_path: Path) -> tuple[AgentLoop, BinaryMem
     )
 
     config = RikuganConfig()
-    config.memory_workspaces_enabled = True
     session = SessionState(idb_path=str(tmp_path / "test.i64"))
     provider = MagicMock()
     tools = MagicMock()
@@ -71,18 +70,19 @@ class TestSaveMemoryCentralDispatch:
         md = service.paths.markdown.read_text(encoding="utf-8")
         assert "Uses HTTP" in md
 
-    def test_legacy_path_still_works_without_service(self, tmp_path: Path) -> None:
-        """When memory_service is None, the legacy RIKUGAN.md path is used."""
+    def test_save_memory_without_service_returns_error(self, tmp_path: Path) -> None:
+        """When memory_service is None (identity failure), save_memory reports unavailable."""
         config = RikuganConfig()
         session = SessionState(idb_path=str(tmp_path / "test.i64"))
         provider = MagicMock()
         tools = MagicMock()
         loop = AgentLoop(provider, tools, config, session)
+        # loop.memory_service stays None (no wiring)
 
-        tc = ToolCall(id="tc1", name="save_memory", arguments={"category": "test", "fact": "Legacy fact"})
-        list(loop._handle_save_memory_tool(tc))
+        tc = ToolCall(id="tc1", name="save_memory", arguments={"category": "test", "fact": "X"})
+        events = list(loop._handle_save_memory_tool(tc))
 
         legacy_path = tmp_path / "RIKUGAN.md"
-        assert legacy_path.exists()
-        content = legacy_path.read_text(encoding="utf-8")
-        assert "Legacy fact" in content
+        assert not legacy_path.exists()  # no legacy file written
+        tr = events[-1] if events else None
+        assert tr is not None

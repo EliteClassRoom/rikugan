@@ -33,8 +33,8 @@ class TestSubagentNoMemoryService:
         assert child.memory_service is None
         assert child._memory_authority is None
 
-    def test_subagent_save_memory_falls_back_to_legacy(self, tmp_path: Path) -> None:
-        """When memory_service is None, subagent save_memory uses legacy path."""
+    def test_subagent_save_memory_without_service_returns_error(self, tmp_path: Path) -> None:
+        """When memory_service is None, subagent save_memory reports unavailable (no legacy fallback)."""
         config = RikuganConfig()
         session = SessionState(idb_path=str(tmp_path / "child.i64"))
         provider = MagicMock()
@@ -43,12 +43,14 @@ class TestSubagentNoMemoryService:
         child = AgentLoop(provider, tools, config, session)
         assert child.memory_service is None
 
-        # save_memory should work via the legacy path, not crash
+        # save_memory must not crash and must NOT write a legacy RIKUGAN.md file
         tc = ToolCall(id="tc1", name="save_memory", arguments={"category": "test", "fact": "child note"})
-        list(child._handle_save_memory_tool(tc))
+        events = list(child._handle_save_memory_tool(tc))
 
         legacy_path = tmp_path / "RIKUGAN.md"
-        assert legacy_path.exists()
+        assert not legacy_path.exists()
+        tr = events[-1] if events else None
+        assert tr is not None
 
     def test_subagent_cannot_use_parent_authority(self, tmp_path: Path) -> None:
         """Even if a parent authority is leaked, the child service check rejects it."""

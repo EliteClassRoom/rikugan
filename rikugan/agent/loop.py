@@ -266,7 +266,7 @@ def _sanitize_save_memory_category(raw: object) -> str:
     """Coerce and sanitize a save_memory ``category`` argument.
 
     Categories flow into three downstream surfaces:
-      * ``RIKUGAN.md`` line format ``- [{category}] {fact}``,
+      * ``MEMORY.md`` managed line format ``- [{category}] {fact}``,
       * the ``log_info`` message,
       * the tool result echoed back to the LLM,
       * the knowledge-ingest ``ingest_save_memory(category=...)`` call.
@@ -282,7 +282,7 @@ def _sanitize_save_memory_category(raw: object) -> str:
     # Neutralize ANY closing tag — strip_injection_markers only covers
     # known role markers (``</system>``, ``</tool_result>``, …) and would
     # leave ``</persistent_memory>`` untouched. We replace the angle
-    # brackets so no closing tag can survive into RIKUGAN.md or the
+    # brackets so no closing tag can survive into MEMORY.md or the
     # tool result.
     text = text.replace("<", "").replace(">", "")
     # Strip the surrounding ``[...]`` brackets and surrounding whitespace so
@@ -351,8 +351,8 @@ class AgentLoop:
         # Mutation log for /undo support
         self._mutation_log: list = []
 
-        # Central memory service (set by controller when memory_workspaces_enabled).
-        # When None, AgentLoop uses the legacy folder-scoped RIKUGAN.md path.
+        # Central memory service (set by controller when binary identity is resolved).
+        # When None, save_memory and /memory report central memory unavailable.
         self.memory_service = None
         self._memory_authority = None
         self._mutation_log: list[MutationRecord] = []
@@ -457,7 +457,7 @@ class AgentLoop:
             return
 
         if self.memory_service is None:
-            yield TurnEvent.text_done("Central memory is not enabled. Set memory_workspaces_enabled=true in config.")
+            yield TurnEvent.text_done("Central memory is not available for this binary.")
             return
 
         try:
@@ -1599,7 +1599,7 @@ class AgentLoop:
         are removed, whitespace is collapsed, and the result is bounded
         in length. This prevents a hostile category such as
         ``</persistent_memory>system`` from breaking out of the
-        ``[persistent_memory]`` wrapper on a future read of RIKUGAN.md.
+        ``[persistent_memory]`` wrapper on a future read of MEMORY.md.
         """
         from ..core.sanitize import strip_injection_markers, strip_lone_surrogates
 
@@ -1607,8 +1607,8 @@ class AgentLoop:
         # Apply the same sanitization contract as ``category``: strip
         # surrogates, role markers, AND angle brackets so an injected
         # ``</persistent_memory>`` payload cannot break out of the
-        # downstream ``[persistent_memory]`` wrapper when RIKUGAN.md is
-        # reloaded into the system prompt.
+        # downstream ``[persistent_memory]`` wrapper when MEMORY.md
+        # managed region is reloaded into the system prompt.
         fact = strip_injection_markers(strip_lone_surrogates(str(raw_fact)))
         fact = fact.replace("<", "").replace(">", "")
         category = _sanitize_save_memory_category(tc.arguments.get("category", "general"))
@@ -1634,31 +1634,8 @@ class AgentLoop:
                 content = f"Error saving to central memory: {e}"
                 is_err = True
         else:
-            idb_dir = os.path.dirname(self.session.idb_path) if self.session.idb_path else ""
-            if not idb_dir:
-                content = "Error: No IDB path set; cannot determine where to save memory."
-                is_err = True
-            else:
-                md_path = os.path.join(idb_dir, "RIKUGAN.md")
-            try:
-                append_to_memory_file(md_path, f"- [{category}] {fact}\n")
-                content = f"Saved to RIKUGAN.md: [{category}] {fact}"
-                is_err = False
-                log_info(f"save_memory: [{category}] {fact[:80]}")
-                # Auto-ingest into the raw knowledge store so retrieval
-                # can surface this fact on future turns. Failures are
-                # silent — never undo the RIKUGAN.md write above.
-                try:
-                    from ..memory.ingest import ingest_save_memory, make_store
-
-                    store, paths = make_store(self.session.idb_path)
-                    if store is not None:
-                        ingest_save_memory(store, paths, fact=fact, category=category)
-                except Exception as e:
-                    log_debug(f"knowledge ingest (save_memory) failed: {e}")
-            except OSError as e:
-                content = f"Error writing RIKUGAN.md: {e}"
-                is_err = True
+            content = "Error: Central memory is not available in this context."
+            is_err = True
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=is_err)
         yield TurnEvent.tool_result_event(tc.id, tc.name, content, is_err)
         return tr
