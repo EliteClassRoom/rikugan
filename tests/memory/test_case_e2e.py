@@ -29,7 +29,6 @@ def _full_setup(tmp_path: Path) -> dict:
     """Set up complete case subsystem with 2 binaries and a case."""
     config = RikuganConfig()
     config._config_dir = str(tmp_path)
-    config.memory_workspaces_enabled = True
     manager = MemoryWorkspaceManager(config)
 
     # Binary A

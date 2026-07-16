@@ -8,7 +8,7 @@ import pytest
 
 from rikugan.core.config import RikuganConfig
 from rikugan.memory.case_repository import CaseRepository
-from rikugan.memory.manager import MemoryWorkspaceManager, PersistenceDisabled
+from rikugan.memory.manager import MemoryWorkspaceManager
 from rikugan.memory.registry import MemoryRegistry
 from rikugan.memory.workspace import FilesystemIdentity, IdentityRequest, MemoryLocator
 
@@ -17,7 +17,6 @@ def _bind_workspace(tmp_path: Path) -> tuple[MemoryWorkspaceManager, str, str]:
     """Bind a binary workspace and return (manager, memory_id, db_instance_id)."""
     config = RikuganConfig()
     config._config_dir = str(tmp_path)
-    config.memory_workspaces_enabled = True
     manager = MemoryWorkspaceManager(config)
     request = IdentityRequest(
         source_kind="idb",
@@ -87,11 +86,3 @@ class TestSetActiveCase:
 
         with pytest.raises(ValueError, match="deleted"):
             manager.set_active_case(case.case_id)
-
-    def test_disabled_config_rejects_case_operations(self, tmp_path: Path) -> None:
-        config = RikuganConfig()
-        config._config_dir = str(tmp_path)
-        config.memory_workspaces_enabled = False
-        manager = MemoryWorkspaceManager(config)
-        with pytest.raises(PersistenceDisabled):
-            manager.set_active_case("case-bogus")

@@ -1,4 +1,4 @@
-"""Foundation integration gate: dark mode, no cutover, stable types."""
+"""Foundation integration gate: stable types and enabled flow."""
 
 from __future__ import annotations
 
@@ -8,34 +8,12 @@ from pathlib import Path
 import pytest
 
 from rikugan.core.config import RikuganConfig
-from rikugan.memory.manager import MemoryWorkspaceManager
+from rikugan.memory.manager import MemoryWorkspaceManager, PersistenceDisabled
 from rikugan.memory.workspace import (
     FilesystemIdentity,
     IdentityRequest,
     new_record_id,
 )
-
-
-class TestDarkModeGate:
-    """Foundation must not change current runtime memory behavior."""
-
-    def test_default_config_has_memory_disabled(self, tmp_path: Path) -> None:
-        config = RikuganConfig()
-        config._config_dir = str(tmp_path)
-        assert config.memory_workspaces_enabled is False
-
-    def test_disabled_manager_creates_no_registry(self, tmp_path: Path) -> None:
-        config = RikuganConfig()
-        config._config_dir = str(tmp_path)
-        MemoryWorkspaceManager(config)
-        assert not (tmp_path / "memory" / "registry.db").exists()
-
-    def test_legacy_memory_still_uses_folder_path(self) -> None:
-        """Legacy RIKUGAN.md path derivation should still work."""
-        from rikugan.agent.system_prompt import _load_persistent_memory
-
-        # The legacy path function should still be importable and callable
-        assert callable(_load_persistent_memory)
 
 
 class TestStableTypes:
@@ -102,30 +80,16 @@ class TestStableTypes:
             assert hasattr(mod, name), f"manager module missing {name}"
 
 
-class TestEndToEndDarkFlow:
-    """Full dark-mode flow: bind → context → no persistence."""
+class TestEndToEndFlow:
+    """Full flow: bind → context → persistence."""
 
-    def test_disabled_bind_returns_ephemeral_and_no_paths(self, tmp_path: Path) -> None:
+    def test_unbound_manager_rejects_persistent_paths(self, tmp_path: Path) -> None:
+        """A manager with no active binding rejects persistent paths."""
         config = RikuganConfig()
         config._config_dir = str(tmp_path)
         manager = MemoryWorkspaceManager(config)
 
-        request = IdentityRequest(
-            source_kind="idb",
-            idb_path=str(tmp_path / "test.i64"),
-            db_instance_id="uuid-x",
-            display_name="test.i64",
-            filesystem_identity=FilesystemIdentity("vol", "1"),
-        )
-        result = manager.bind(request)
-        assert result.binding is not None
-        assert result.binding.state == "disabled"
-
-        ctx = manager.run_context()
-        assert ctx.binary_memory_id == ""
-
-        from rikugan.memory.manager import PersistenceDisabled
-
+        # bind() never called — binding is None
         with pytest.raises(PersistenceDisabled):
             manager.require_persistent_paths()
 
@@ -136,7 +100,6 @@ class TestEndToEndDarkFlow:
 
         config = RikuganConfig()
         config._config_dir = str(tmp_path)
-        config.memory_workspaces_enabled = True
         manager = MemoryWorkspaceManager(config)
 
         request = IdentityRequest(

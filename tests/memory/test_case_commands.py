@@ -50,7 +50,6 @@ class TestDispatchCaseCommand:
     def _setup(self, tmp_path: Path):
         config = RikuganConfig()
         config._config_dir = str(tmp_path)
-        config.memory_workspaces_enabled = True
         manager = MemoryWorkspaceManager(config)
         manager.bind(
             IdentityRequest(

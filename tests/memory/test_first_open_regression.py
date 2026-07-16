@@ -25,7 +25,6 @@ class TestFirstOpenCreatesDb:
         """Simulates controller _wire_central_memory on first agent run."""
         config = RikuganConfig()
         config._config_dir = str(tmp_path)
-        config.memory_workspaces_enabled = True
 
         manager = MemoryWorkspaceManager(config)
         request = IdentityRequest(
@@ -66,7 +65,6 @@ class TestFirstOpenCreatesDb:
         """Second agent run: DB already exists, open() succeeds."""
         config = RikuganConfig()
         config._config_dir = str(tmp_path)
-        config.memory_workspaces_enabled = True
 
         manager = MemoryWorkspaceManager(config)
         request = IdentityRequest(
@@ -97,7 +95,6 @@ class TestFirstOpenCreatesDb:
 
         config = RikuganConfig()
         config._config_dir = str(tmp_path)
-        config.memory_workspaces_enabled = True
 
         manager = MemoryWorkspaceManager(config)
         request = IdentityRequest(
