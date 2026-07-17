@@ -409,7 +409,7 @@ def _plain_text_fast_path(text: str, source=None) -> str | None:
         with_br = escaped.replace("\n", "<br>")
         collapsed = _re.sub(r"(<br>\s*){3,}", "<br><br>", with_br)
         if collapsed.strip():
-            rendered.append(f'<div{body_color}>{collapsed}</div>')
+            rendered.append(f"<div{body_color}>{collapsed}</div>")
     if not rendered:
         return ""
     return "".join(rendered)

@@ -761,7 +761,7 @@ result = future.result(timeout=timeout)  # default 30s</code></pre>
     </div>
     <div class="arch-item" style="text-align:left">
       <div class="at" style="color:var(--accent-3)">save_memory</div>
-      <div class="ad" style="margin-top:8px">Persists a fact to <code>RIKUGAN.md</code> in the IDB directory. Categories: <code>function_purpose</code>, <code>architecture</code>, <code>naming_convention</code>, <code>prior_analysis</code>, <code>general</code>.</div>
+      <div class="ad" style="margin-top:8px">Persists a fact to central memory (managed <code>MEMORY.md</code> region + SQLite) for the active binary. Categories: <code>function_purpose</code>, <code>architecture</code>, <code>naming_convention</code>, <code>prior_analysis</code>, <code>general</code>.</div>
     </div>
     <div class="arch-item" style="text-align:left">
       <div class="at" style="color:var(--accent-5)">spawn_subagent</div>
@@ -1048,12 +1048,12 @@ class MutationRecord:
   <h2>Persistent Memory</h2>
   <p><strong>Files:</strong> <code>rikugan/agent/system_prompt.py</code>, <code>rikugan/agent/loop.py</code></p>
 
-  <h3>RIKUGAN.md</h3>
-  <p>A per-binary Markdown file stored alongside the IDB. It acts as cross-session memory.</p>
+  <h3>Central Memory Workspace</h3>
+  <p>Per-binary SQLite-backed memory (<code>memory.db</code>) plus a deterministic <code>MEMORY.md</code> projection with managed/unmanaged region separation. Always-on; acts as cross-session memory.</p>
   <ul>
-    <li><strong>Location:</strong> <code>&lt;idb_directory&gt;/RIKUGAN.md</code></li>
-    <li><strong>Loading:</strong> First 200 lines loaded into the system prompt</li>
-    <li><strong>Writing:</strong> Via the <code>save_memory</code> pseudo-tool or plan persistence</li>
+    <li><strong>Location:</strong> <code>&lt;rikugan_config_dir&gt;/memory/binaries/&lt;workspace-id&gt;/</code> — <code>memory.db</code> (SQLite) + <code>MEMORY.md</code> (projection). The workspace ID (<code>mem-&lt;hex&gt;</code>) is resolved from the binary's filesystem identity, not its path.</li>
+    <li><strong>Loading:</strong> Structured facts from SQLite and manual notes from <code>MEMORY.md</code> injected into the system prompt</li>
+    <li><strong>Writing:</strong> Via the <code>save_memory</code> pseudo-tool, plan persistence, or direct SQLite writes</li>
   </ul>
 
   <h3>save_memory Pseudo-Tool</h3>
@@ -1173,7 +1173,7 @@ class SessionState:
       <text x="250" y="38" text-anchor="middle" fill="#7c6aef" font-family="Inter,sans-serif" font-size="12" font-weight="600">Host-specific base prompt (ida.py)</text>
 
       <rect x="40" y="68" width="420" height="48" rx="8" fill="url(#g2)" stroke="#e06090" stroke-opacity=".3"/>
-      <text x="250" y="96" text-anchor="middle" fill="#e06090" font-family="Inter,sans-serif" font-size="12" font-weight="600">Persistent Memory (RIKUGAN.md, first 200 lines)</text>
+      <text x="250" y="96" text-anchor="middle" fill="#e06090" font-family="Inter,sans-serif" font-size="12" font-weight="600">Persistent Memory (SQLite facts + MEMORY.md manual notes)</text>
 
       <rect x="40" y="126" width="420" height="48" rx="8" fill="url(#g3)" stroke="#40b0f0" stroke-opacity=".3"/>
       <text x="250" y="154" text-anchor="middle" fill="#40b0f0" font-family="Inter,sans-serif" font-size="12" font-weight="600">Current Binary info (name, arch, entry point)</text>
@@ -1325,7 +1325,7 @@ class SessionState:
       <tr><td><code>/plan &lt;msg&gt;</code></td><td>Enter plan mode: generate plan, then execute step-by-step</td></tr>
       <tr><td><code>/modify &lt;msg&gt;</code></td><td>Enter exploration mode: EXPLORE &rarr; PLAN &rarr; EXECUTE &rarr; SAVE</td></tr>
       <tr><td><code>/explore &lt;msg&gt;</code></td><td>Enter explore-only mode: autonomous read-only analysis</td></tr>
-      <tr><td><code>/memory</code></td><td>Show current RIKUGAN.md contents</td></tr>
+      <tr><td><code>/memory</code></td><td>Show current central memory contents (structured facts + <code>MEMORY.md</code> manual notes)</td></tr>
       <tr><td><code>/undo [N]</code></td><td>Undo last N mutations (default 1)</td></tr>
       <tr><td><code>/mcp</code></td><td>Show MCP server health status</td></tr>
       <tr><td><code>/doctor</code></td><td>Diagnose provider, API key, tools, skills, config issues</td></tr>

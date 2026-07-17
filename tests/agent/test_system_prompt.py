@@ -175,5 +175,25 @@ class TestBasePromptContent(unittest.TestCase):
         self.assertNotIn("Use rename_multi_variables", RENAMING_SECTION)
 
 
+def test_ida_base_prompt_contains_module_reference():
+    """Module Quick Reference section phải có trong system prompt."""
+    from rikugan.agent.prompts.ida import IDA_BASE_PROMPT
+
+    assert "IDAPython Module Quick Reference" in IDA_BASE_PROMPT
+    assert "ida_bytes" in IDA_BASE_PROMPT
+    assert "ida_typeinf" in IDA_BASE_PROMPT
+    assert "decode_insn" in IDA_BASE_PROMPT
+
+
+def test_ida_base_prompt_docs_review_section_updated():
+    """Docs-review gate section must describe post-error behavior, not pre-execute."""
+    from rikugan.agent.prompts.ida import IDA_BASE_PROMPT
+
+    # New post-error heading — absent from old code.
+    assert "Docs-review gate (post-error)" in IDA_BASE_PROMPT
+    # Old pre-execute language must be gone.
+    assert "before user approval" not in IDA_BASE_PROMPT.lower()
+
+
 if __name__ == "__main__":
     unittest.main()

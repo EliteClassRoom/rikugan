@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import time
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any
 
 from ...core.errors import ProviderError
-from ...core.logging import log_error, log_info
+from ...core.logging import log_debug, log_error, log_info
 from ...core.sanitize import sanitize_skill_body
 from ...core.types import Message, Role, UserDecision, parse_approval
 from ..plan_mode import parse_plan as _parse_plan_impl
@@ -107,25 +105,24 @@ def _execute_step(
 
 
 def persist_plan(loop: AgentLoop, user_goal: str, steps: list[str]) -> None:
-    """Save an approved plan to RIKUGAN.md for cross-session reference."""
-    from ..loop import append_to_memory_file
+    """Save an approved plan to central memory for cross-session reference.
 
-    idb_dir = ""
-    if loop.session.idb_path:
-        idb_dir = os.path.dirname(loop.session.idb_path)
-    if not idb_dir:
+    Writes a structured plan fact via BinaryMemoryService. When central
+    memory is not wired (identity failure), this is a silent no-op.
+    """
+    if loop.memory_service is None or loop._memory_authority is None:
+        log_debug("persist_plan skipped — central memory not available")
         return
 
-    md_path = os.path.join(idb_dir, "RIKUGAN.md")
     try:
-        timestamp = time.strftime("%Y-%m-%d %H:%M")
-        lines = [f"\n## Plan ({timestamp})\n", f"Goal: {user_goal[:200]}\n"]
-        lines += [f"{i}. {step}\n" for i, step in enumerate(steps, 1)]
-        lines.append("\n")
-        append_to_memory_file(md_path, "".join(lines))
-        log_info(f"Plan persisted to RIKUGAN.md ({len(steps)} steps)")
-    except OSError as e:
-        log_error(f"Failed to persist plan to RIKUGAN.md: {e}")
+        loop.memory_service.save_plan(
+            loop._memory_authority,
+            goal=user_goal,
+            steps=steps,
+        )
+        log_info(f"Plan persisted to central memory ({len(steps)} steps)")
+    except Exception as e:
+        log_error(f"Failed to persist plan to central memory: {e}")
 
 
 def run_plan_mode(

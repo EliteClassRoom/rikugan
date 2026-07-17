@@ -204,9 +204,7 @@ def search_functions(
     # a direct walk only when IDA is unavailable.
     matches = function_index.search_function_names(query, limit)
     if matches:
-        return f"Found {len(matches)} function(s):\n" + "\n".join(
-            f"  0x{e.start_ea:x}  {e.name}" for e in matches
-        )
+        return f"Found {len(matches)} function(s):\n" + "\n".join(f"  0x{e.start_ea:x}  {e.name}" for e in matches)
 
     # No IDA → fall back to direct enumeration so the contract is preserved.
     results = []

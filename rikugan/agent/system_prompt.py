@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from ..core.logging import log_debug
@@ -15,85 +14,6 @@ _BASE_PROMPT = IDA_BASE_PROMPT  # backward compat alias
 
 if TYPE_CHECKING:
     from ..core.profile import AnalysisProfile
-
-
-# Maximum number of lines to load from RIKUGAN.md
-_MAX_MEMORY_LINES = 200
-
-# Phase 4.1: persistent-memory cache.
-#
-# The agent loop re-builds the system prompt on every turn, so
-# ``_load_persistent_memory`` runs once per LLM call. For a long session
-# with no memory edits that's pure I/O waste — ``os.path.isfile``,
-# ``os.stat``, and ``open(...)`` on every prompt build.
-#
-# Cache key: absolute path. Value: ``(mtime_ns, content_or_marker)``
-# where *content_or_marker* is either the loaded text or a sentinel
-# ``"<missing>"`` so we can cache the "file does not exist" answer
-# without re-running ``isfile`` every turn.
-#
-# Invalidation is purely mtime-based: any save_memory tool write (which
-# appends to ``RIKUGAN.md`` via ``loop.append_to_memory_file``) bumps
-# the file's mtime, so the next prompt build sees a new mtime and
-# rebuilds.  Manual edits by the user also bump mtime, so they are
-# picked up automatically.
-_MEMORY_CACHE: dict[str, tuple[int, str]] = {}
-_MEMORY_MISSING_SENTINEL = "<missing>"
-
-
-def _load_persistent_memory(idb_dir: str = "") -> str | None:
-    """Load RIKUGAN.md from the IDB directory (first 200 lines).
-
-    The file acts as persistent cross-session memory for the agent.
-
-    Phase 4.1: results are cached by ``(path, mtime_ns)`` so back-to-back
-    calls within the same session (one per LLM turn) do not re-stat /
-    re-open the file when nothing has changed.
-    """
-    if not idb_dir:
-        return None
-
-    md_path = os.path.join(idb_dir, "RIKUGAN.md")
-
-    try:
-        st = os.stat(md_path)
-        mtime_ns = getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))
-    except OSError:
-        # File missing (or unreadable) — cache the miss so we do not
-        # re-stat on every prompt build.
-        cached = _MEMORY_CACHE.get(md_path)
-        if cached is not None and cached[0] == -1:
-            return None
-        _MEMORY_CACHE[md_path] = (-1, _MEMORY_MISSING_SENTINEL)
-        return None
-
-    cached = _MEMORY_CACHE.get(md_path)
-    if cached is not None and cached[0] == mtime_ns:
-        cached_content = cached[1]
-        if cached_content == _MEMORY_MISSING_SENTINEL:
-            return None
-        return cached_content
-
-    # mtime differs (or no cache) — reload from disk.
-    try:
-        with open(md_path, encoding="utf-8", errors="replace") as f:
-            lines = []
-            for i, line in enumerate(f):
-                if i >= _MAX_MEMORY_LINES:
-                    lines.append(f"\n... (truncated at {_MAX_MEMORY_LINES} lines)")
-                    break
-                lines.append(line)
-        content = "".join(lines).strip()
-        if content:
-            _MEMORY_CACHE[md_path] = (mtime_ns, content)
-            log_debug(f"Loaded persistent memory from {md_path} ({len(lines)} lines)")
-            return content
-    except OSError as e:
-        log_debug(f"Failed to load RIKUGAN.md: {e}")
-
-    # Empty file — still cache so we don't re-read a zero-byte file.
-    _MEMORY_CACHE[md_path] = (mtime_ns, "")
-    return None
 
 
 # Re-export so callers that still import ``format_tools_catalog`` from
@@ -112,19 +32,21 @@ def build_system_prompt(
     active_goal: str | None = None,
     tool_names: list[str] | None = None,
     skill_summary: str | None = None,
-    idb_dir: str | None = None,
     profile: AnalysisProfile | None = None,
     tools_table: str | None = None,
+    structured_memory: str = "",
+    manual_memory_notes: str = "",
 ) -> str:
     """Build the full system prompt with optional binary context."""
     base_prompt = IDA_BASE_PROMPT
     parts = [base_prompt]
 
-    # Persistent memory — loaded early so it's part of the cached prefix.
-    # Sanitized to prevent poisoned memory files from injecting instructions.
-    memory = _load_persistent_memory(idb_dir or "")
-    if memory:
-        parts.append(f"\n## Persistent Memory (RIKUGAN.md)\n{sanitize_memory(memory)}")
+    # Central memory: structured facts from SQLite + manual notes from
+    # MEMORY.md unmanaged region. Both supplied by BinaryMemoryService.
+    if structured_memory:
+        parts.append(f"\n{structured_memory}")
+    if manual_memory_notes:
+        parts.append(f"\n## Manual Notes\n{sanitize_memory(manual_memory_notes)}")
 
     if active_goal:
         parts.append(

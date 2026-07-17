@@ -22,7 +22,7 @@ Rikugan is a plugin that embeds a full agentic LLM loop — with its own tool fr
 - **Mutation Undo** (`/undo [N]`): Every rename, comment, type change, or prototype modification is tracked with a reverse operation.
 - **Script Approval**: `execute_python` always shows the full code for user approval before running. Scripts are limited to the disassembler's scripting API.
 - **MCP Client**: Connects external MCP servers via stdio + JSON-RPC 2.0 with Content-Length framing. Heartbeat monitoring detects dead servers.
-- **Persistent Memory**: `RIKUGAN.md` next to the IDB persists findings across sessions. First 200 lines injected into system prompt.
+- **Persistent Memory**: Central memory workspace (SQLite structured facts + `MEMORY.md` manual notes) next to the IDB persists findings across sessions. Injected into system prompt.
 - **Multi-Tab Chat**: Multiple independent sessions per file with fork support and auto-save/restore.
 - **Context Management**: Auto-compaction at 80% of configured context window threshold.
 

@@ -54,7 +54,7 @@ The agent really ***lives*** and ***breaths*** reversing.
 
 **60+ native tools** covering navigation, functions, database (segments, imports, exports), strings, xrefs, disassembly, decompiler, annotations, types, microcode, scripting, and IDAPython docs lookup. The agent always asks permission before running scripts and will never execute the target binary. Full tool reference in the [docs](https://rikugan.reversing.codes/docs.html).
 
-**Multi-tab sessions with persistent memory** — Each tab is an independent conversation with its own token tracking. Findings are saved to `RIKUGAN.md` next to your database, persisting across sessions and re-injected into future prompts.
+**Multi-tab sessions with persistent memory** — Each tab is an independent conversation with its own token tracking. Findings are saved to a per-binary central memory workspace (SQLite structured facts + `MEMORY.md` manual notes under your Rikugan user directory), persisting across sessions and re-injected into future prompts.
 
 **Plan / explore / modify workflows** — `/plan`, `/modify`, and `/explore` enter structured workflows with approval gates. Every mutating tool records a `MutationRecord` so changes can be undone with `/undo` or via the Mutation Log panel.
 

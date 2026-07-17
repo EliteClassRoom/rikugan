@@ -939,6 +939,18 @@ wheels = [
 ]
 
 [[package]]
+name = "portalocker"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/77/65b857a69ed876e1951e88aaba60f5ce6120c33703f7cb61a3c894b8c1b6/portalocker-3.2.0.tar.gz", hash = "sha256:1f3002956a54a8c3730586c5c77bf18fae4149e07eaf1c29fc3faf4d5a3f89ac", size = 95644, upload-time = "2025-06-14T13:20:40.03Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4b/a6/38c8e2f318bf67d338f4d629e93b0b4b9af331f455f0390ea8ce4a099b26/portalocker-3.2.0-py3-none-any.whl", hash = "sha256:3cdc5f565312224bc570c49337bd21428bba0ef363bbcf58b9ef4a9f11779968", size = 22424, upload-time = "2025-06-14T13:20:38.083Z" },
+]
+
+[[package]]
 name = "pyasn1"
 version = "0.6.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1326,7 +1338,7 @@ wheels = [
 
 [[package]]
 name = "rikugan"
-version = "1.10.3"
+version = "1.10.4"
 source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
@@ -1337,6 +1349,7 @@ dependencies = [
     { name = "markdown-it-py" },
     { name = "mcp" },
     { name = "openai" },
+    { name = "portalocker" },
     { name = "requests" },
     { name = "tomli" },
 ]
@@ -1362,6 +1375,7 @@ requires-dist = [
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "mcp", specifier = ">=1.28.0" },
     { name = "openai", specifier = ">=2.0.0" },
+    { name = "portalocker", specifier = ">=3.0.0,<4" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "tomli", specifier = ">=2.4.0" },
 ]

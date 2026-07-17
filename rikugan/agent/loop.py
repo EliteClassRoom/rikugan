@@ -34,8 +34,8 @@ from ..providers.base import LLMProvider
 from ..skills.registry import SkillRegistry
 from ..state.session import SessionState
 from ..tools.coercion import coerce_bool
-from ..tools.idapython_complexity import classify_idapython_script
 from ..tools.registry import ToolRegistry
+from ..tools.traceback_classifier import TracebackClassification
 from ..tools.validate_idapython import validate_idapython
 from .context_window import ContextWindowManager
 from .exploration_mode import (
@@ -80,12 +80,6 @@ from .system_prompt import build_system_prompt
 from .turn import TurnEvent, TurnEventType
 
 _MIN_CONTEXT_WINDOW_TOKENS = 8_000
-
-_MEMORY_HEADER = (
-    "# Rikugan Persistent Memory\n\n"
-    "This file persists across sessions. "
-    "The agent reads the first 200 lines into its system prompt.\n\n"
-)
 
 # Backward-compat alias — the canonical key now lives in loop_commands
 # so the parser, the state-only handler, and the prompt builder all
@@ -234,6 +228,9 @@ def _parse_user_command(user_message: str) -> _ParsedCommand:
         )
     if lower == "/orchestra" or lower.startswith("/orchestra "):
         return _ParsedCommand(message=stripped[10:].strip() if len(stripped) > 10 else "", use_orchestra_mode=True)
+    # /case <action> <args...> — analysis case management
+    if lower == "/case" or lower.startswith("/case "):
+        return _ParsedCommand(message=stripped, direct_command="/case")
     # /a2a <agent> <message...>  — delegate to external agent directly
     # without LLM mediation. The first whitespace-separated token is
     # the agent name; the rest is the task. Empty body is treated as
@@ -245,15 +242,6 @@ def _parse_user_command(user_message: str) -> _ParsedCommand:
     return _ParsedCommand(message=stripped)
 
 
-def append_to_memory_file(md_path: str, content: str) -> None:
-    """Create RIKUGAN.md with header if missing, then append *content*."""
-    if not os.path.exists(md_path):
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(_MEMORY_HEADER)
-    with open(md_path, "a", encoding="utf-8") as f:
-        f.write(content)
-
-
 # Maximum length allowed for a save_memory category token. Anything longer
 # is hostile noise — categories are short labels, not free-form descriptions.
 _SAVE_MEMORY_CATEGORY_MAX_LEN = 64
@@ -263,7 +251,7 @@ def _sanitize_save_memory_category(raw: object) -> str:
     """Coerce and sanitize a save_memory ``category`` argument.
 
     Categories flow into three downstream surfaces:
-      * ``RIKUGAN.md`` line format ``- [{category}] {fact}``,
+      * ``MEMORY.md`` managed line format ``- [{category}] {fact}``,
       * the ``log_info`` message,
       * the tool result echoed back to the LLM,
       * the knowledge-ingest ``ingest_save_memory(category=...)`` call.
@@ -279,7 +267,7 @@ def _sanitize_save_memory_category(raw: object) -> str:
     # Neutralize ANY closing tag — strip_injection_markers only covers
     # known role markers (``</system>``, ``</tool_result>``, …) and would
     # leave ``</persistent_memory>`` untouched. We replace the angle
-    # brackets so no closing tag can survive into RIKUGAN.md or the
+    # brackets so no closing tag can survive into MEMORY.md or the
     # tool result.
     text = text.replace("<", "").replace(">", "")
     # Strip the surrounding ``[...]`` brackets and surrounding whitespace so
@@ -334,6 +322,10 @@ class AgentLoop:
         self._always_allow_scripts: bool = parent_loop._always_allow_scripts if parent_loop else False
         self.plan_mode = False
 
+        # Post-error docs-review: max 1 reviewer call per user message.
+        # Reset at the start of run() so each user task gets a fresh budget.
+        self._docs_reviewer_invoked: bool = False
+
         # Context window manager — compacts history when approaching limits
         ctx_window = getattr(config.provider, "context_window", 0) or 128000
         self._context_manager = ContextWindowManager(
@@ -342,6 +334,12 @@ class AgentLoop:
         )
 
         # Mutation log for /undo support
+        self._mutation_log: list = []
+
+        # Central memory service (set by controller when binary identity is resolved).
+        # When None, save_memory and /memory report central memory unavailable.
+        self.memory_service = None
+        self._memory_authority = None
         self._mutation_log: list[MutationRecord] = []
 
         # Exploration mode state (populated when /modify or /explore is used)
@@ -434,6 +432,50 @@ class AgentLoop:
             except queue.Empty:
                 continue  # poll timeout — retry until item arrives or cancelled
 
+    def _handle_case_command(self, user_message: str) -> Generator[TurnEvent, None, None]:
+        """Handle /case slash commands."""
+        from ..memory.case_commands import dispatch_case_command, parse_case_command
+
+        parsed = parse_case_command(user_message)
+        if parsed is None:
+            yield TurnEvent.text_done("Invalid /case command.")
+            return
+
+        if self.memory_service is None:
+            yield TurnEvent.text_done("Central memory is not available for this binary.")
+            return
+
+        try:
+            from ..memory.case_repository import CaseRepository
+            from ..memory.case_service import CaseMemoryService
+
+            # Build case repository and service from the current session's memory binding
+            session = self.session
+            if not session.binary_memory_id:
+                yield TurnEvent.text_done("No active binary workspace binding.")
+                return
+
+            # Access the manager through the controller (if available) or create a temporary one
+
+            manager = getattr(self, "_memory_manager", None)
+            if manager is None:
+                yield TurnEvent.text_done("Case operations require an active controller session.")
+                return
+
+            cases = CaseRepository(manager._registry, manager.locator)
+            case_service = CaseMemoryService(cases, binary_repository=self.memory_service.repository)
+            result = dispatch_case_command(
+                parsed,
+                case_repository=cases,
+                case_service=case_service,
+                manager=manager,
+                authority=self._memory_authority,
+                context=manager.run_context(),
+            )
+            yield TurnEvent.text_done(result)
+        except Exception as e:
+            yield TurnEvent.error_event(f"Case command failed: {e}")
+
     def _build_system_prompt(self) -> str:
         profile = self.config.get_active_profile()
         binary_info = None
@@ -455,10 +497,17 @@ class AgentLoop:
         if self.skills:
             skill_summary = self.skills.get_summary_for_prompt()
 
-        # Derive IDB directory for persistent memory loading
-        idb_dir = ""
-        if self.session.idb_path:
-            idb_dir = os.path.dirname(self.session.idb_path)
+        # Central memory prompt sources: structured facts from SQLite and
+        # manual notes from unmanaged MEMORY.md. Both supplied by
+        # BinaryMemoryService when wired, otherwise stay empty.
+        structured_memory = ""
+        manual_memory_notes = ""
+        if self.memory_service is not None:
+            try:
+                structured_memory = self.memory_service.structured_context()
+                manual_memory_notes = self.memory_service.manual_notes_context()
+            except Exception as e:
+                log_debug(f"central memory context load failed: {e}")
 
         # Retrieved knowledge — per-turn compilation of stored memories,
         # entities, relations, and note excerpts relevant to the current
@@ -479,12 +528,13 @@ class AgentLoop:
             active_goal=self.session.metadata.get(_GOAL_METADATA_KEY, ""),
             tool_names=self.tools.list_names(),
             skill_summary=skill_summary,
-            idb_dir=idb_dir,
             profile=profile,
             # Cached — first call rebuilds, every subsequent call returns
             # the same string.  Invalidation happens when a tool is
             # registered/unregistered or capabilities change.
             tools_table=self.tools.tools_catalog(),
+            structured_memory=structured_memory,
+            manual_memory_notes=manual_memory_notes,
         )
 
     def _build_retrieved_knowledge_section(
@@ -1114,63 +1164,91 @@ class AgentLoop:
         return decision == "allow"
 
     # ------------------------------------------------------------------
-    # IDAPython docs-review gate
+    # IDAPython docs-review gate (post-error variant)
     # ------------------------------------------------------------------
 
-    #: Verdict prefix the docs reviewer must emit on its final message.
-    _DOCS_GATE_VERDICT_PREFIX = "VERDICT:"
+    #: Max number of IDA modules whose docs we auto-inject after a failed
+    #: script. Anything more bloats the tool result without proportional
+    #: diagnostic value — most failures trace to 1-2 API calls.
+    _DOCS_REFERENCE_MAX_MODULES: int = 3
 
-    def _review_complex_idapython_script(
+    #: Per-module character cap for the auto-injected docs block. Matches
+    #: ``MAX_CHARS_PER_MODULE`` used by the reviewer's tool calls.
+    _DOCS_REFERENCE_MAX_CHARS_PER_MODULE: int = 4000
+
+    def _build_reference_injection(self, modules: tuple[str, ...]) -> str:
+        """Pull offline docs cho mỗi module liên quan, ghép thành 1 block.
+
+        Gọi ``lookup_idapython_doc`` core function trực tiếp (pure Python,
+        không qua tool dispatch, không tốn LLM round-trip). Giới hạn
+        ``_DOCS_REFERENCE_MAX_MODULES`` để tránh phình token.
+        """
+        from ..tools.idapython_docs import lookup_idapython_doc
+
+        parts: list[str] = []
+        # Bounded slice — fail-safe if a future caller ignores the cap.
+        for module in modules[: self._DOCS_REFERENCE_MAX_MODULES]:
+            try:
+                # @tool decorator dùng functools.wraps → __wrapped__ trỏ về func gốc.
+                # Gọi core function trực tiếp, bypass tool dispatch + logging.
+                core_fn = getattr(lookup_idapython_doc, "__wrapped__", lookup_idapython_doc)
+                doc_text = core_fn(module=module, limit=self._DOCS_REFERENCE_MAX_CHARS_PER_MODULE)
+                parts.append(f"### {module}\n{doc_text}")
+            except Exception as e:
+                log_debug(f"reference injection skipped for {module}: {e}")
+        return "\n\n".join(parts)
+
+    def _review_failed_script(
         self,
         tc: ToolCall,
-        complexity,
-        validation,
-    ) -> Generator[TurnEvent, None, tuple[bool, str]]:
-        """Spawn a docs-reviewer subagent for a complex ``execute_python`` script.
+        traceback_text: str,
+        code: str,
+        classification: TracebackClassification,
+    ) -> Generator[TurnEvent, None, str]:
+        """Spawn docs-reviewer cho script đã fail runtime.
 
-        Yields the reviewer's progress events (text deltas, subagent
-        lifecycle) so the UI can show them.  Returns
-        ``(approved, summary_text)`` where ``approved`` is True only when
-        the reviewer emitted ``VERDICT: APPROVED`` AND the script is
-        not blocked by the static validator.
+        Reviewer chẩn đoán dựa trên traceback + exception type, trả verdict
+        + REWRITE_GUIDANCE. Hệ thống auto-inject reference docs của modules
+        liên quan vào kết quả. Trả về augmented result string:
+        traceback + reviewer verdict + reference docs.
 
-        This gate runs **before** the normal user approval prompt so the
-        user reviews a docs-checked script.
+        Set ``_docs_reviewer_invoked = True`` — chỉ 1 reviewer call per task
+        (reset mỗi user message trong ``run()``).
         """
         from .agents.ida_docs_reviewer import (
             IDA_DOCS_REVIEWER_MAX_TURNS,
             build_ida_docs_reviewer_addendum,
         )
 
-        code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-        goal = self.session.metadata.get(_GOAL_METADATA_KEY, "") or ""
+        self._docs_reviewer_invoked = True
 
-        # Build a structured task payload so the reviewer has everything
-        # it needs without having to mine conversation history.
-        reasons_block = "\n".join(f"- {r}" for r in complexity.reasons) or "- (no specific reasons)"
-        validation_block = validation.format_for_agent() or "(no validator issues)"
-
-        task_lines: list[str] = []
-        if goal:
-            task_lines.append(f"# User Goal\n\n{goal}\n")
-        task_lines.append(f"# Proposed IDAPython Script\n\n```python\n{code}\n```\n")
-        task_lines.append(f"# Complexity Classification\n\n{reasons_block}\n")
-        task_lines.append(f"# Static Validation Hints\n\n{validation_block}\n")
-        task_lines.append(
-            "# Your Task\n\n"
-            "Verify the script above against IDA Pro / IDAPython documentation "
-            "(use the `ida-scripting` skill, then official Hex-Rays docs). "
-            "Return the structured VERDICT block described in your system prompt.\n"
-            "Do NOT call execute_python — you are a reviewer, not an executor."
-        )
-        task = "\n".join(task_lines)
-
-        # Notify the chat that the gate is firing.
         yield TurnEvent.docs_gate_status(
             tc.id,
             state="running",
-            reasons=complexity.reasons,
+            reasons=(f"runtime {classification.exception_type}: {classification.exception_message}",),
         )
+
+        goal = self.session.metadata.get(_GOAL_METADATA_KEY, "") or ""
+
+        # Build task payload cho reviewer: script + traceback + goal.
+        task_lines: list[str] = []
+        if goal:
+            task_lines.append(f"# User Goal\n\n{goal}\n")
+        task_lines.append(f"# Failed IDAPython Script\n\n```python\n{code}\n```\n")
+        task_lines.append(
+            f"# Runtime Error\n\n"
+            f"Exception type: {classification.exception_type}\n"
+            f"Message: {classification.exception_message}\n\n"
+            f"```\n{traceback_text}\n```\n"
+        )
+        task_lines.append(
+            "# Your Task\n\n"
+            "Diagnose why this script failed. Check every IDA API call against "
+            "the `ida-scripting` skill and the bundled offline docs. Return the "
+            "structured VERDICT block described in your system prompt.\n"
+            "Do NOT call execute_python — you are a reviewer, not an executor."
+        )
+        task = "\n".join(task_lines)
 
         runner = SubagentRunner(
             provider=self.provider,
@@ -1181,7 +1259,6 @@ class AgentLoop:
             parent_loop=self,
         )
 
-        summary = ""
         try:
             summary = yield from runner.run_task(
                 task,
@@ -1190,8 +1267,6 @@ class AgentLoop:
                 silent=True,
             )
         except CancellationError:
-            # Re-raise so the outer loop cancels cleanly.  Do not let
-            # the docs reviewer consume a cancellation silently.
             raise
         except Exception as e:
             log_error(f"docs reviewer failed: {e}")
@@ -1200,47 +1275,29 @@ class AgentLoop:
                 state="failed",
                 summary=f"{type(e).__name__}: {e}",
             )
-            # Behavior change (Decision #6): a reviewer crash is an
-            # infrastructure fault, not a script fault.  Fall through to
-            # user approval so the user can still decide.  Return
-            # (True, "") — the caller proceeds to _wait_for_approval.
-            return (True, "")
+            # Reviewer crash → trả traceback thẳng (không augment).
+            # Đây là infrastructure fault, không phải script fault.
+            return f"--- Traceback ---\n{traceback_text}\n--- end ---"
 
-        # Parse the verdict block.  Be lenient: the LLM may emit prose
-        # around it.  Look for the prefix anywhere in the final summary.
-        verdict = ""
-        verdict_text = (summary or "").strip()
-        for line in verdict_text.splitlines():
-            stripped = line.strip()
-            if stripped.startswith(self._DOCS_GATE_VERDICT_PREFIX):
-                verdict = stripped[len(self._DOCS_GATE_VERDICT_PREFIX) :].strip().upper()
-                break
-        approved = verdict.startswith("APPROVED")
+        # Inject reference docs của modules liên quan.
+        reference_block = self._build_reference_injection(classification.modules_referenced)
 
-        # Defense in depth: if the static validator blocked the script,
-        # never let the gate approve it.  The reviewer may have missed
-        # a hallucinated API; the blocklist is the source of truth.
-        if validation.is_blocked and approved:
-            approved = False
-            verdict = "REWRITE_REQUIRED"
+        # Augment result: traceback + verdict + reference.
+        parts = [
+            f"Script failed with {classification.exception_type}: {classification.exception_message}",
+            "",
+            "--- Traceback ---",
+            traceback_text,
+            "--- Docs Reviewer Verdict ---",
+            summary or "(no verdict returned)",
+        ]
+        if reference_block:
+            parts.append("--- Module Reference (auto-injected) ---")
+            parts.append(reference_block)
+        parts.append("--- end ---")
 
-        if approved:
-            yield TurnEvent.docs_gate_status(tc.id, state="approved")
-            return (True, summary or "")
-
-        reason_msg = verdict or "REWRITE_REQUIRED"
-        yield TurnEvent.docs_gate_status(
-            tc.id,
-            state="blocked",
-            summary=summary or reason_msg,
-        )
-        return (
-            False,
-            f"IDA docs review verdict: {reason_msg}. "
-            "The script was NOT executed. "
-            "Review the reviewer's REWRITE_GUIDANCE and resubmit a corrected script.\n\n"
-            f"--- Reviewer summary ---\n{summary or '(no summary returned)'}\n--- end ---",
-        )
+        yield TurnEvent.docs_gate_status(tc.id, state="reviewed")
+        return "\n".join(parts)
 
     def _execute_single_tool(self, tc: ToolCall) -> Generator[TurnEvent, None, ToolResult]:
         """Handle approval gating, mutation tracking, and execution of a real tool."""
@@ -1254,43 +1311,34 @@ class AgentLoop:
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return tr
 
-        # execute_python always requires explicit approval
+        # execute_python always requires explicit approval.
+        # Static validator (validate_idapython) still runs pre-execute to
+        # block known-hallucinated APIs. The docs-reviewer now runs
+        # POST-error (see the except block below) instead of pre-execute.
         if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
-            # Docs-review gate: for complex scripts, run a docs reviewer
-            # BEFORE the user approval prompt so the user sees a
-            # docs-checked script.  Configurable via
-            # `require_ida_docs_for_complex_scripts`.
             code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-            if (
-                getattr(self.config, "require_ida_docs_for_complex_scripts", True)
-                and isinstance(code, str)
-                and code.strip()
-            ):
+            if isinstance(code, str) and code.strip():
                 try:
                     validation = validate_idapython(code)
-                    complexity = classify_idapython_script(code, validation)
                 except Exception as e:  # pragma: no cover — defensive
-                    log_error(f"docs-gate classification failed: {e}")
+                    log_error(f"docs-gate validation failed: {e}")
                     validation = None
-                    complexity = None
 
-                if complexity is not None and complexity.is_complex:
-                    approved, summary = yield from self._review_complex_idapython_script(tc, complexity, validation)
-                    if not approved:
-                        # Hard block — the script is not executed and the
-                        # main agent gets the reviewer summary as a tool
-                        # error so it can rewrite.
-                        tr = ToolResult(
-                            tool_call_id=tc.id,
-                            name=tc.name,
-                            content=summary,
-                            is_error=True,
-                        )
-                        yield TurnEvent.tool_result_event(tc.id, tc.name, summary, True)
-                        return tr
-                    # Approved — fall through to the normal approval path
-                    # so the user still gets to review the docs-checked
-                    # script before execution.
+                if validation is not None and validation.is_blocked:
+                    # Hard block: hallucinated API detected pre-execute.
+                    block_msg = (
+                        "Script blocked by static validator (hallucinated API detected):\n"
+                        f"{validation.format_for_agent()}\n"
+                        "Fix the API usage and resubmit."
+                    )
+                    tr = ToolResult(
+                        tool_call_id=tc.id,
+                        name=tc.name,
+                        content=block_msg,
+                        is_error=True,
+                    )
+                    yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
+                    return tr
 
             approved = yield from self._wait_for_approval(tc)
             if not approved:
@@ -1362,10 +1410,36 @@ class AgentLoop:
             self._consecutive_errors += 1
             log_error(f"Tool {tc.name} error: {e}")
         except Exception as e:
-            result = f"Unexpected error: {e}"
+            tb = traceback.format_exc()
             is_error = True
             self._consecutive_errors += 1
-            log_error(f"Tool {tc.name} unexpected error: {e}\n{traceback.format_exc()}")
+            log_error(f"Tool {tc.name} unexpected error: {e}\n{tb}")
+            # Only include the full traceback in the tool result for
+            # execute_python (the docs-review classifier consumes it). For
+            # other tools, keep the one-liner so internal paths/line numbers
+            # never leak into the LLM context.
+            if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
+                result = f"Unexpected error: {e}\n{tb}"
+            else:
+                result = f"Unexpected error: {e}"
+
+            # Post-error docs review for execute_python: spawn reviewer only
+            # when the exception is API-shaped (AttributeError, ImportError,
+            # NameError) and the reviewer hasn't been invoked for this task yet.
+            # Configurable via ``docs_review_mode`` ("on_error" / "off").
+            if (
+                tc.name == constants.EXECUTE_PYTHON_TOOL_NAME
+                and getattr(self.config, "docs_review_mode", "on_error") == "on_error"
+                and not self._docs_reviewer_invoked
+            ):
+                from ..tools.traceback_classifier import classify_traceback
+
+                code = tc.arguments.get("code", "") or tc.arguments.get("script", "") or ""
+                classification = classify_traceback(tb, code)
+                if classification.is_api_shaped:
+                    augmented = yield from self._review_failed_script(tc, tb, code, classification)
+                    if augmented:
+                        result = augmented
 
         # Sanitize tool output before it enters the conversation.
         # Error messages may contain attacker-controlled content (e.g. function
@@ -1510,7 +1584,7 @@ class AgentLoop:
         are removed, whitespace is collapsed, and the result is bounded
         in length. This prevents a hostile category such as
         ``</persistent_memory>system`` from breaking out of the
-        ``[persistent_memory]`` wrapper on a future read of RIKUGAN.md.
+        ``[persistent_memory]`` wrapper on a future read of MEMORY.md.
         """
         from ..core.sanitize import strip_injection_markers, strip_lone_surrogates
 
@@ -1518,40 +1592,35 @@ class AgentLoop:
         # Apply the same sanitization contract as ``category``: strip
         # surrogates, role markers, AND angle brackets so an injected
         # ``</persistent_memory>`` payload cannot break out of the
-        # downstream ``[persistent_memory]`` wrapper when RIKUGAN.md is
-        # reloaded into the system prompt.
+        # downstream ``[persistent_memory]`` wrapper when MEMORY.md
+        # managed region is reloaded into the system prompt.
         fact = strip_injection_markers(strip_lone_surrogates(str(raw_fact)))
         fact = fact.replace("<", "").replace(">", "")
         category = _sanitize_save_memory_category(tc.arguments.get("category", "general"))
         if not fact:
             content = "Error: 'fact' is required."
             is_err = True
-        else:
-            idb_dir = os.path.dirname(self.session.idb_path) if self.session.idb_path else ""
-            if not idb_dir:
-                content = "Error: No IDB path set; cannot determine where to save memory."
-                is_err = True
-            else:
-                md_path = os.path.join(idb_dir, "RIKUGAN.md")
+        elif self.memory_service is not None and self._memory_authority is not None:
+            # Central memory path: write through BinaryMemoryService.
             try:
-                append_to_memory_file(md_path, f"- [{category}] {fact}\n")
-                content = f"Saved to RIKUGAN.md: [{category}] {fact}"
+                result = self.memory_service.save_fact(
+                    self._memory_authority,
+                    category=category,
+                    fact=fact,
+                    source="save_memory",
+                )
+                if result.projection_dirty:
+                    content = f"Saved to MEMORY.md (projection pending): [{category}] {fact}"
+                else:
+                    content = f"Saved to MEMORY.md: [{category}] {fact}"
                 is_err = False
                 log_info(f"save_memory: [{category}] {fact[:80]}")
-                # Auto-ingest into the raw knowledge store so retrieval
-                # can surface this fact on future turns. Failures are
-                # silent — never undo the RIKUGAN.md write above.
-                try:
-                    from ..memory.ingest import ingest_save_memory, make_store
-
-                    store, paths = make_store(self.session.idb_path)
-                    if store is not None:
-                        ingest_save_memory(store, paths, fact=fact, category=category)
-                except Exception as e:
-                    log_debug(f"knowledge ingest (save_memory) failed: {e}")
-            except OSError as e:
-                content = f"Error writing RIKUGAN.md: {e}"
+            except Exception as e:
+                content = f"Error saving to central memory: {e}"
                 is_err = True
+        else:
+            content = "Error: Central memory is not available in this context."
+            is_err = True
         tr = ToolResult(tool_call_id=tc.id, name=tc.name, content=content, is_error=is_err)
         yield TurnEvent.tool_result_event(tc.id, tc.name, content, is_err)
         return tr
@@ -1893,43 +1962,34 @@ class AgentLoop:
             yield TurnEvent.tool_result_event(tc.id, tc.name, content, True)
             return tr
 
-        # execute_python always requires explicit approval
+        # execute_python always requires explicit approval.
+        # Static validator (validate_idapython) still runs pre-execute to
+        # block known-hallucinated APIs. The docs-reviewer now runs
+        # POST-error (see the except block below) instead of pre-execute.
         if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
-            # Docs-review gate: for complex scripts, run a docs reviewer
-            # BEFORE the user approval prompt so the user sees a
-            # docs-checked script.  Configurable via
-            # `require_ida_docs_for_complex_scripts`.
             code = tc.arguments.get("code", "") or tc.arguments.get("script", "")
-            if (
-                getattr(self.config, "require_ida_docs_for_complex_scripts", True)
-                and isinstance(code, str)
-                and code.strip()
-            ):
+            if isinstance(code, str) and code.strip():
                 try:
                     validation = validate_idapython(code)
-                    complexity = classify_idapython_script(code, validation)
                 except Exception as e:  # pragma: no cover — defensive
-                    log_error(f"docs-gate classification failed: {e}")
+                    log_error(f"docs-gate validation failed: {e}")
                     validation = None
-                    complexity = None
 
-                if complexity is not None and complexity.is_complex:
-                    approved, summary = yield from self._review_complex_idapython_script(tc, complexity, validation)
-                    if not approved:
-                        # Hard block — the script is not executed and the
-                        # main agent gets the reviewer summary as a tool
-                        # error so it can rewrite.
-                        tr = ToolResult(
-                            tool_call_id=tc.id,
-                            name=tc.name,
-                            content=summary,
-                            is_error=True,
-                        )
-                        yield TurnEvent.tool_result_event(tc.id, tc.name, summary, True)
-                        return tr
-                    # Approved — fall through to the normal approval path
-                    # so the user still gets to review the docs-checked
-                    # script before execution.
+                if validation is not None and validation.is_blocked:
+                    # Hard block: hallucinated API detected pre-execute.
+                    block_msg = (
+                        "Script blocked by static validator (hallucinated API detected):\n"
+                        f"{validation.format_for_agent()}\n"
+                        "Fix the API usage and resubmit."
+                    )
+                    tr = ToolResult(
+                        tool_call_id=tc.id,
+                        name=tc.name,
+                        content=block_msg,
+                        is_error=True,
+                    )
+                    yield TurnEvent.tool_result_event(tc.id, tc.name, block_msg, True)
+                    return tr
 
             approved = yield from self._wait_for_approval(tc)
             if not approved:
@@ -2001,10 +2061,36 @@ class AgentLoop:
             self._consecutive_errors += 1
             log_error(f"Tool {tc.name} error: {e}")
         except Exception as e:
-            result = f"Unexpected error: {e}"
+            tb = traceback.format_exc()
             is_error = True
             self._consecutive_errors += 1
-            log_error(f"Tool {tc.name} unexpected error: {e}\n{traceback.format_exc()}")
+            log_error(f"Tool {tc.name} unexpected error: {e}\n{tb}")
+            # Only include the full traceback in the tool result for
+            # execute_python (the docs-review classifier consumes it). For
+            # other tools, keep the one-liner so internal paths/line numbers
+            # never leak into the LLM context.
+            if tc.name == constants.EXECUTE_PYTHON_TOOL_NAME:
+                result = f"Unexpected error: {e}\n{tb}"
+            else:
+                result = f"Unexpected error: {e}"
+
+            # Post-error docs review for execute_python: spawn reviewer only
+            # when the exception is API-shaped (AttributeError, ImportError,
+            # NameError) and the reviewer hasn't been invoked for this task yet.
+            # Configurable via ``docs_review_mode`` ("on_error" / "off").
+            if (
+                tc.name == constants.EXECUTE_PYTHON_TOOL_NAME
+                and getattr(self.config, "docs_review_mode", "on_error") == "on_error"
+                and not self._docs_reviewer_invoked
+            ):
+                from ..tools.traceback_classifier import classify_traceback
+
+                code = tc.arguments.get("code", "") or tc.arguments.get("script", "") or ""
+                classification = classify_traceback(tb, code)
+                if classification.is_api_shaped:
+                    augmented = yield from self._review_failed_script(tc, tb, code, classification)
+                    if augmented:
+                        result = augmented
 
         # Sanitize tool output before it enters the conversation.
         # Error messages may contain attacker-controlled content (e.g. function
@@ -2145,6 +2231,7 @@ class AgentLoop:
         while the UI reads events via the event_queue or directly iterates.
         """
         self._cancelled.clear()
+        self._docs_reviewer_invoked = False
         self._running = True
         self.session.is_running = True
 
@@ -2155,6 +2242,9 @@ class AgentLoop:
                 return
             if cmd.direct_command == "/memory":
                 yield from _handle_memory_command(self)
+                return
+            if cmd.direct_command == "/case":
+                yield from self._handle_case_command(user_message)
                 return
             if cmd.direct_command == "/undo":
                 yield from _handle_undo_command(self, cmd.direct_arg)

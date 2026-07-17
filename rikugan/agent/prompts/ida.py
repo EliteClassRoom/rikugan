@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .base import (
     IDA_API_DISCIPLINE_SECTION,
+    IDA_API_MODULE_REFERENCE_SECTION,
     SHARED_CAPABILITIES_BULLETS,
     assemble_system_prompt,
 )
@@ -71,5 +72,6 @@ IDA_BASE_PROMPT = assemble_system_prompt(
     _IDA_INTRO,
     _IDA_TOOL_USAGE,
     _IDA_CAPABILITIES,
+    IDA_API_MODULE_REFERENCE_SECTION,
     IDA_API_DISCIPLINE_SECTION,
 )

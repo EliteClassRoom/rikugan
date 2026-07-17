@@ -96,32 +96,30 @@ def _open_knowledge_store(loop: AgentLoop) -> tuple[KnowledgeRawStore | None, Kn
 
 
 def _handle_memory_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
-    """Show current RIKUGAN.md contents in chat."""
-    idb_dir = ""
-    if loop.session.idb_path:
-        idb_dir = os.path.dirname(loop.session.idb_path)
-    if not idb_dir:
-        yield TurnEvent.text_done("No IDB path set — persistent memory is not available.")
-        return
+    """Show current memory contents in chat.
 
-    md_path = os.path.join(idb_dir, "RIKUGAN.md")
-    if not os.path.isfile(md_path):
-        yield TurnEvent.text_done(
-            f"No persistent memory file found.\n\n"
-            f"A `RIKUGAN.md` file will be created in `{idb_dir}` "
-            f"when the agent first uses `save_memory`."
-        )
+    Reads from BinaryMemoryService (SQLite structured facts + unmanaged
+    MEMORY.md notes). When memory_service is None (identity resolution
+    failed), reports central memory unavailable.
+    """
+    if loop.memory_service is None:
+        yield TurnEvent.text_done("Central memory is not available for this binary.")
         return
 
     try:
-        with open(md_path, encoding="utf-8") as f:
-            content = f.read()
-        if not content.strip():
-            yield TurnEvent.text_done("RIKUGAN.md exists but is empty.")
+        structured = loop.memory_service.structured_context()
+        manual = loop.memory_service.manual_notes_context()
+        parts = []
+        if structured:
+            parts.append(structured)
+        if manual:
+            parts.append(f"\n## Manual Notes\n{manual}")
+        if not parts:
+            yield TurnEvent.text_done("No memory saved yet. Use `save_memory` to persist facts.")
         else:
-            yield TurnEvent.text_done(f"**Persistent Memory** (`{md_path}`):\n\n{content}")
-    except OSError as e:
-        yield TurnEvent.error_event(f"Failed to read RIKUGAN.md: {e}")
+            yield TurnEvent.text_done("**Memory**:\n\n" + "\n".join(parts))
+    except Exception as e:
+        yield TurnEvent.error_event(f"Failed to read central memory: {e}")
 
 
 def _handle_goal_command(loop: AgentLoop, raw_goal: str) -> Generator[TurnEvent, None, None]:

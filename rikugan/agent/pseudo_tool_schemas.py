@@ -119,7 +119,7 @@ SAVE_MEMORY_SCHEMA: dict = {
     "function": {
         "name": "save_memory",
         "description": (
-            "Save a fact to persistent memory (RIKUGAN.md). "
+            "Save a fact to persistent memory. "
             "Use this to remember important findings across sessions: "
             "function purposes, naming conventions, architecture notes, "
             "or analysis results that would be useful in future sessions."

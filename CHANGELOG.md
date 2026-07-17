@@ -5,6 +5,86 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Central memory subsystem (`BinaryMemoryService`) now the sole persistent
+  memory path — SQLite structured facts + `MEMORY.md` managed region.
+
+### Removed
+- Legacy `RIKUGAN.md` runtime read/write. **Legacy `RIKUGAN.md` data is
+  not migrated — the old file is ignored.**
+- `rikugan/memory/legacy.py` importer (clean break, no migration tool).
+- Config flags `memory_workspaces_enabled`, `case_memory_enabled`,
+  `peer_retrieval_enabled` (central memory is always-on).
+
+## [1.11.0] — 2026-07-16
+
+### Added — Central Memory Subsystem
+
+- **Central memory workspaces** — per-binary SQLite workspace stores
+  (`memory.db`) replace folder-scoped `RIKUGAN.md` / `.rikugan-kb/*.jsonl`
+  as the authoritative structured-memory backend. Each workspace has
+  deterministic `MEMORY.md` projection with managed/unmanaged region
+  separation and cross-process `portalocker` locking. UUID-priority
+  identity resolution prevents duplicate workspaces when Windows file
+  index changes between opens.
+- **Identity resolver** — ordered copy/move/conflict decision table
+  resolves IDB identity via filesystem evidence (POSIX `st_dev/st_ino`,
+  Windows volume serial + 64-bit file index) and netnode UUID. Raw
+  binaries use full SHA-256, hashed before IDA launch in headless mode.
+- **Write authority protocol** — non-serializable `MemoryWriteAuthority`
+  bound to a frozen `MemoryRunContext`; subagents never receive write
+  authority and can only emit `MemoryCandidate` records for explicit
+  main-agent review.
+- **Prompt source separation** — system prompt reads structured facts
+  from SQLite and manual notes from unmanaged `MEMORY.md` when central
+  memory is enabled. Legacy `RIKUGAN.md` path used when disabled.
+- **Analysis cases** — cross-binary case membership with five relation
+  types (`embeds_or_loads`, `communicates_with`, `derived_from`,
+  `same_family_as`, `shares_artifact_with`), explicit promotion with
+  provenance, lazy source-drift validation, and controlled peer
+  retrieval with read-only/query-only opens.
+- **`/case` commands** — parser and dispatch for case CRUD, membership,
+  promotion, and active-case binding.
+- **Bundle interchange** — versioned ZIP format with validated manifest,
+  member-name safety checks, coherent SQLite-snapshot export, and staged
+  import with graph-wide ID remap.
+- **SQLite backup/restore** — `Connection.backup()` API for coherent
+  snapshots; restore creates new workspace with updated owner metadata.
+- **Storage guard** — centralized path containment, symlink, size, and
+  permission checks for all central-memory file operations.
+- **Legacy importer** — one-time migration from `RIKUGAN.md` /
+  `.rikugan-kb/*.jsonl` into the central workspace, idempotent by
+  source fingerprint + target + selected items.
+- **Config flags** — `memory_workspaces_enabled`, `case_memory_enabled`,
+  and `peer_retrieval_enabled` (all default `False`). Typed-load
+  rejection prevents string values from silently enabling features.
+
+### Fixed — Central Memory Runtime
+
+- First-open workspace DB creation (was calling `open()` on missing file)
+- SQLite `check_same_thread=False` for agent worker threads
+- UUID-priority identity linking when Windows file index changes
+- MEMORY.md projection now works after `portalocker` installed in IDA
+
+## [1.10.4] — 2026-07-14
+
+### Changed
+- **Docs-review gate moved from pre-execute to post-error** — the IDA docs-reviewer subagent no longer runs before every "complex" `execute_python` script. Scripts now execute immediately after user approval, and the reviewer only spawns when a script fails at runtime with an API-shaped exception (`AttributeError`, `ImportError`, `ModuleNotFoundError`, `NameError`). Logic bugs (`ValueError`, `TypeError`, etc.) do not trigger the reviewer — the main agent handles those itself. This eliminates the LLM round-trip for scripts that would have run fine, making `execute_python` significantly faster for the common case while keeping a safety net for genuine API misuse.
+- **Module Quick Reference preloaded into the system prompt** — a compact IDA API router (task → module map with key items) plus verified Core Patterns and Critical rules is now embedded in the main agent's system prompt, reducing API-hallucination rate from the start of a session.
+- **Reviewer auto-injects module reference on failure** — when the post-error reviewer runs, it automatically pulls the offline docs of the IDA modules referenced in the failed script and appends them to the tool result, so the main agent can fix the script with full reference context.
+- **Config field replaced with an enum** — `require_ida_docs_for_complex_scripts` (boolean) is now `docs_review_mode` (`"on_error"` / `"off"`). Legacy config migrates automatically: `False` → `"off"`, `True` or missing → `"on_error"`. The settings dialog exposes this as a combobox instead of a checkbox.
+
+### Added
+- **`rikugan/tools/traceback_classifier.py`** — new pure-function module that classifies an `execute_python` traceback as API-shaped (or not) and extracts the IDA modules referenced in the script, used by the post-error gate to decide whether to spawn the reviewer and which module docs to inject.
+
+### Fixed
+- **Traceback no longer leaks into non-`execute_python` tool error results** — when the post-error gate was added, the full Python traceback was inadvertently appended to the error result of every tool. It is now scoped to `execute_python` only (where the classifier consumes it); other tools keep the clean one-liner, so internal paths and line numbers no longer enter the LLM context.
+
+### Security
+- All existing `execute_python` invariants preserved: the tool still always requires explicit user approval; the `validate_idapython` static validator still hard-blocks known-hallucinated APIs before execution; the `script_guard` AST check still blocks process-execution and reflective-escape primitives.
+
 ## [1.10.3] — 2026-07-13
 
 ### Fixed

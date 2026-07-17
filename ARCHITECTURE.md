@@ -83,14 +83,14 @@ The entry point is `AgentLoop.run()`, a Python generator. It yields `TurnEvent` 
    - `/plan <msg>` → plan mode
    - `/modify <msg>` → exploration mode (4-phase, with patching)
    - `/explore <msg>` → exploration mode (explore-only, read-only)
-   - `/memory` → show RIKUGAN.md contents
+   - `/memory` → show central memory contents (structured facts + `MEMORY.md` manual notes)
    - `/undo [N]` → undo last N mutations
    - `/mcp` → show MCP server health
    - `/doctor` → diagnose setup issues
 
 2. **Skill Resolution** — `_resolve_skill()` checks if the message starts with a skill slug (e.g., `/malware-analysis`). If matched, the skill's body is prepended to the system prompt and `allowed_tools` is enforced.
 
-3. **System Prompt Build** — `build_system_prompt()` assembles the prompt from host-specific base + binary context + cursor position + tool list + skill + persistent memory (RIKUGAN.md).
+3. **System Prompt Build** — `build_system_prompt()` assembles the prompt from host-specific base + binary context + cursor position + tool list + skill + persistent memory (central memory subsystem: SQLite structured facts + `MEMORY.md` manual notes).
 
 4. **Turn Loop** — The core loop:
    ```
@@ -305,7 +305,7 @@ Requests a phase change in exploration mode. Validates via `ExplorationState.can
 
 ### `save_memory`
 
-Persists a fact to `RIKUGAN.md` in the IDB directory:
+Persists a fact to the central memory workspace (managed `MEMORY.md` region backed by SQLite):
 ```json
 {"fact": "sub_401230 is the snake initializer", "category": "function_purpose"}
 ```
@@ -427,7 +427,7 @@ The agent synthesizes findings into a concrete modification plan.
 - Parsed into `ModificationPlan` with `PlannedChange` objects
 - Addresses extracted from step text via regex
 - User must approve the plan before execution proceeds
-- Approved plans are persisted to `RIKUGAN.md` for cross-session reference
+- Approved plans are persisted to central memory (`MEMORY.md`) for cross-session reference
 
 ### Phase 3: EXECUTE
 
@@ -650,13 +650,13 @@ if self._context_manager.should_compact():
 
 **Files**: `rikugan/agent/system_prompt.py`, `rikugan/agent/loop.py`
 
-### RIKUGAN.md
+### Central Memory Workspace
 
-A per-binary Markdown file stored alongside the IDB. It acts as cross-session memory.
+Per-binary SQLite-backed memory (`memory.db`) plus a deterministic `MEMORY.md` projection with managed/unmanaged region separation. Always-on; acts as cross-session memory.
 
-- **Location**: `<idb_directory>/RIKUGAN.md`
-- **Loading**: First 200 lines loaded into the system prompt at the start of every session
-- **Writing**: Via the `save_memory` pseudo-tool or plan persistence
+- **Location**: `<rikugan_config_dir>/memory/binaries/<workspace-id>/` — `memory.db` (SQLite) + `MEMORY.md` (projection). The workspace ID (`mem-<hex>`) is resolved from the binary's filesystem identity, not its path.
+- **Loading**: Structured facts from SQLite + manual notes from `MEMORY.md` (unmanaged region) injected into the system prompt at the start of every session
+- **Writing**: Via the `save_memory` pseudo-tool, plan persistence, or direct SQLite writes via `BinaryMemoryService`
 
 ### `save_memory` Pseudo-Tool
 
@@ -669,11 +669,11 @@ Categories: `function_purpose`, `architecture`, `naming_convention`, `prior_anal
 
 ### Plan Persistence
 
-Approved plans from exploration mode are saved to RIKUGAN.md with a timestamp, preserving analysis context across sessions.
+Approved plans from exploration mode are saved to central memory (`MEMORY.md`) with a timestamp, preserving analysis context across sessions.
 
 ### `/memory` Command
 
-Shows the current contents of RIKUGAN.md in the chat.
+Shows the current contents of central memory (structured facts + `MEMORY.md` manual notes) in the chat.
 
 ---
 
@@ -820,7 +820,7 @@ In `_stream_llm_turn()`:
 │  (tool usage guidelines,    │
 │   discipline, safety)       │
 ├─────────────────────────────┤
-│  Persistent Memory          │ ← RIKUGAN.md (first 200 lines)
+│  Persistent Memory          │ ← Central memory (SQLite facts + MEMORY.md manual notes)
 ├─────────────────────────────┤
 │  Current Binary info        │ ← binary name, arch, entry point
 ├─────────────────────────────┤
@@ -994,7 +994,7 @@ for attempt in range(max_retries):
 | `/plan <msg>` | Enter plan mode: generate plan, then execute step-by-step |
 | `/modify <msg>` | Enter exploration mode: EXPLORE → PLAN → EXECUTE → SAVE |
 | `/explore <msg>` | Enter explore-only mode: autonomous read-only analysis |
-| `/memory` | Show current RIKUGAN.md contents |
+| `/memory` | Show current central memory contents (structured facts + `MEMORY.md` manual notes) |
 | `/undo [N]` | Undo last N mutations (default 1) |
 | `/mcp` | Show MCP server health status |
 | `/doctor` | Diagnose provider, API key, tools, skills, config issues |

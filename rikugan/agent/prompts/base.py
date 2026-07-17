@@ -131,9 +131,9 @@ Prefer precise search and filter tools over listing everything:
 
 PERSISTENT_MEMORY_SECTION = """\
 ## Persistent Memory (save_memory)
-You have a `save_memory` tool that writes facts to a RIKUGAN.md file next to the \
-binary. This file is loaded into your system prompt on every future session, so \
-anything you save persists across conversations.
+You have a `save_memory` tool that writes structured facts to a central memory \
+workspace. These facts are loaded into your system prompt on every future session, \
+so anything you save persists across conversations.
 
 **When to save:**
 - After confidently identifying a function's purpose (category: function_purpose)
@@ -319,17 +319,13 @@ turn instead of repeating the script. The mapping covers
 imports/exports/strings/functions/xrefs/segments plus common
 annotations, decompiler, disassembly, and type/struct APIs.
 
-**Docs-review gate.** Complex IDAPython scripts (multi-module, mutating,
-visitor-based, or anything that touches Hex-Rays / types / frames / UI /
-domain APIs) are automatically routed through a docs-reviewer subagent
-before user approval. Write the script so it survives the review:
-- Every ``ida_*`` / ``idautils`` / ``idc`` / ``idaapi`` call must be a
-  real, verifiable API in IDA 9.x.
-- If you are unsure whether an API exists, call
-  ``activate_skill(slug="ida-scripting")`` and check BEFORE you write
-  the script. The reviewer will block on invented convenience helpers.
-- Scripts that fail the review are returned with the reviewer's
-  ``REWRITE_GUIDANCE`` so you can fix them and retry.
+**Docs-review gate (post-error).** When an `execute_python` script fails at
+runtime with an API-shaped exception (AttributeError, ImportError, NameError),
+a docs-reviewer subagent diagnoses the failure and auto-injects the relevant
+module reference into the tool result. You get one reviewer diagnosis per
+task — after that, fix based on the reference already in context. To avoid
+this round-trip, verify APIs against the Module Quick Reference above and
+call `lookup_idapython_doc(module="<module>")` before writing the script.
 
 **Verifying APIs with the offline docs tool.** When you need to confirm
 what a specific module exports (signatures, parameter types, return
@@ -358,4 +354,76 @@ reading 200 KB of RST just to verify one function. Use this instead of
 / ``pathlib.Path.read_text()`` / guessing the install path — that
 bypasses path-traversal protection and the tool logging, and the
 guessed path is often wrong.
+"""
+
+IDA_API_MODULE_REFERENCE_SECTION = """\
+## IDAPython Module Quick Reference
+
+When you write `execute_python` scripts, use this router to pick the right
+module. The static validator blocks known-hallucinated APIs; this table
+helps you pick correctly the first time.
+
+| Task | Module | Key items |
+|------|--------|-----------|
+| Bytes/memory | `ida_bytes` | `get_bytes`, `patch_bytes`, `get_byte/word/dword/qword`, `get_strlit_contents` |
+| Functions | `ida_funcs` | `func_t`, `get_func`, `add_func`, `get_func_name`, `get_next_func` |
+| Names | `ida_name` | `set_name`, `get_name`, `demangle_name`, `get_name_ea` |
+| Types | `ida_typeinf` | `tinfo_t`, `udt_type_data_t`, `apply_tinfo`, `apply_cdecl`, `parse_decl` |
+| Decompiler | `ida_hexrays` | `decompile`, `cfunc_t`, `lvar_t`, `ctree_visitor_t` |
+| Segments | `ida_segment` | `segment_t`, `getseg`, `get_segm_by_name` |
+| Xrefs | `ida_xref` | `xrefblk_t`, `add_cref`, `add_dref` |
+| Instructions | `ida_ua` | `insn_t`, `op_t`, `decode_insn` |
+| Stack frames | `ida_frame` | `get_func_frame`, `define_stkvar` |
+| Iteration | `idautils` | `Functions`, `Heads`, `XrefsTo`, `Strings`, `Names`, `Segments` |
+| UI/dialogs | `ida_kernwin` | `msg`, `ask_str`, `ask_yn`, `jumpto`, `get_screen_ea` |
+| Database info | `ida_ida` | `inf_get_procname`, `inf_is_64bit`, `inf_get_min_ea` |
+| Analysis | `ida_auto` | `auto_wait`, `plan_and_wait` |
+| Persistent storage | `ida_netnode` | `netnode`, `hashset`, `hashstr` |
+
+### Core Patterns (verified IDA 9.x)
+
+```python
+# Iterate functions
+for ea in idautils.Functions():
+    name = ida_funcs.get_func_name(ea)
+    func = ida_funcs.get_func(ea)        # func_t or None — check before .start_ea
+
+# Decode instruction operands
+insn = ida_ua.insn_t()
+if ida_ua.decode_insn(insn, ea):
+    for op in insn.ops:
+        print(op.type, op.value)
+
+# Cross-references
+for xref in idautils.XrefsTo(ea, ida_xref.XREF_ALL):
+    print(f"{xref.frm:#x} -> {xref.to:#x}")
+
+# Read / write bytes
+data = ida_bytes.get_bytes(ea, size)
+ida_bytes.patch_bytes(ea, b"\\x90\\x90")
+
+# Decompile (ALWAYS wrap — raises DecompilationFailure)
+try:
+    cfunc = ida_hexrays.decompile(ea)
+    print(cfunc)
+except ida_hexrays.DecompilationFailure:
+    pass
+
+# Build a struct (IDA 9.x — offsets in BITS)
+tif = ida_typeinf.tinfo_t()
+tif.create_udt(ida_typeinf.udt_type_data_t(), ida_typeinf.BTF_STRUCT)
+tif.add_udm("field1", "int", offset=0 * 8)
+tif.add_udm("field2", "char *", offset=4 * 8)
+tif.set_named_type(ida_typeinf.get_idati(), "MyStruct", ida_typeinf.NTF_REPLACE)
+```
+
+### Critical rules
+- `ida_funcs.get_func()` returns `None` if no function — check before `.start_ea`.
+- `ida_hexrays.decompile()` raises `DecompilationFailure` — always wrap in try/except.
+- `ida_bytes.get_strlit_contents()` returns `bytes`, not `str` — decode if needed.
+- IDA 9 removed `ida_struct`/`ida_enum` → use `ida_typeinf`. `get_inf_structure()` → `inf_get_*()`.
+- `udm_t.offset`/`udm_t.size` in BITS. Use `create_simple_type()`, never `tinfo_t(BT_*)`.
+
+For deeper reference, call `lookup_idapython_doc(module="<module>")` — reads
+from the bundled offline docs (54 modules, no network).
 """

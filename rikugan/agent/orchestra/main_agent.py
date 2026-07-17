@@ -138,10 +138,6 @@ class OrchestraMainAgent:
             except Exception as exc:
                 log_debug(f"Orchestra auto_context cursor/function failed: {exc}")
 
-        idb_dir = ""
-        if self.session.idb_path:
-            idb_dir = __import__("os").path.dirname(self.session.idb_path)
-
         base_prompt = build_system_prompt(
             host_name=self.host_name,
             binary_info=binary_info,
@@ -149,7 +145,6 @@ class OrchestraMainAgent:
             current_address=current_address,
             tool_names=self.tools.list_names(),
             skill_summary=self.skills.get_summary_for_prompt() if self.skills else None,
-            idb_dir=idb_dir,
             profile=profile,
         )
 

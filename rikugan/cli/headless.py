@@ -33,6 +33,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from rikugan.memory.workspace import IdentityRequest
 
 # Auth token must be 64 lowercase/uppercase hex characters (32 bytes).
 _TOKEN_HEX_PATTERN = re.compile(r"[0-9a-fA-F]{64}")
@@ -129,6 +133,45 @@ def _generate_bootstrap_script() -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(content)
     return path
+
+
+def _build_memory_source(binary: str) -> IdentityRequest | None:
+    """Hash a raw binary before IDA launch and build an :class:`IdentityRequest`.
+
+    Returns ``None`` if the binary does not exist or changes during hashing.
+
+    For ``.i64``/``.idb`` inputs, returns an IDB-mode request with no
+    SHA-256 (the IDB's own identity will be resolved inside the controller).
+
+    For raw executables, returns a raw-mode request with the full SHA-256
+    of the original file. This allows the headless controller to resolve
+    the same workspace across runs without depending on the temporary
+    IDB path that IDA creates.
+    """
+    from pathlib import Path
+
+    from rikugan.memory.identity import hash_raw_binary
+    from rikugan.memory.workspace import IdentityRequest
+
+    p = Path(binary)
+    if not p.is_file():
+        return None
+
+    resolved = str(p.resolve())
+    if resolved.lower().endswith((".i64", ".idb")):
+        return IdentityRequest(
+            source_kind="idb",
+            idb_path=resolved,
+            display_name=p.name,
+        )
+
+    digest = hash_raw_binary(resolved)
+    return IdentityRequest(
+        source_kind="raw",
+        idb_path=resolved,
+        source_sha256=digest,
+        display_name=p.name,
+    )
 
 
 def _build_ida_args(
@@ -496,6 +539,13 @@ def cmd_ask(args: argparse.Namespace) -> None:
         "prompt": args.prompt,
         "wait_for_auto_analysis": not args.no_auto_wait,
     }
+    memory_source = _build_memory_source(binary)
+    if memory_source is not None:
+        bootstrap_cfg["memory_source"] = {
+            "kind": memory_source.source_kind,
+            "original_path": memory_source.idb_path,
+            **({"sha256": memory_source.source_sha256} if memory_source.source_sha256 else {}),
+        }
     if args.output:
         bootstrap_cfg["output_file"] = os.path.abspath(args.output)
     if args.json:
@@ -550,6 +600,13 @@ def cmd_serve(args: argparse.Namespace) -> None:
         "server_port": args.port,
         "wait_for_auto_analysis": not args.no_auto_wait,
     }
+    memory_source = _build_memory_source(binary)
+    if memory_source is not None:
+        bootstrap_cfg["memory_source"] = {
+            "kind": memory_source.source_kind,
+            "original_path": memory_source.idb_path,
+            **({"sha256": memory_source.source_sha256} if memory_source.source_sha256 else {}),
+        }
     if ready_file:
         bootstrap_cfg["ready_file"] = ready_file
     if args.token:

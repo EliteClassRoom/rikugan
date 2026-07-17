@@ -37,12 +37,13 @@ class TestReviewerPromptUrlGuidance(unittest.TestCase):
         )
 
     def test_prompt_recommends_source_with_module_template(self):
-        # The reviewer must understand the <module> slot.
+        # The reviewer must understand the <module> slot in the RST URL.
+        # The post-error prompt uses the generic <module> template rather
+        # than a concrete module example.
         self.assertIn(
-            "_sources/ida_",
+            "_sources/<module>/index.rst.txt",
             IDA_DOCS_REVIEWER_PROMPT,
-            "Reviewer prompt must show a concrete example URL using a "
-            "real Hex-Rays module name (e.g. _sources/ida_name/index.rst.txt).",
+            "Reviewer prompt must show the RST source URL with a <module> slot.",
         )
 
     def test_prompt_warns_about_html_403(self):

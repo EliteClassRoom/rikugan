@@ -15,7 +15,7 @@
 - **Providers**: Anthropic (Claude), OpenAI, Google Gemini, Ollama, MiniMax, OpenAI-compatible endpoints.
 - **Session Persistence**: Per-file auto-save/restore. Multi-tab chat. Session fork (deep copy to new tab).
 - **Context Window**: Auto-compaction at 80% usage threshold.
-- **Persistent Memory**: `RIKUGAN.md` per binary — facts saved by `save_memory` pseudo-tool, loaded into system prompt.
+- **Persistent Memory**: Central memory workspace per binary (SQLite structured facts + `MEMORY.md` manual notes) — facts saved by `save_memory` pseudo-tool, loaded into system prompt.
 
 ## Documentation
 
@@ -48,7 +48,7 @@ rikugan_plugin.py           # IDA Pro entry point
 | `/modify <msg>` | Exploration mode: EXPLORE → PLAN → EXECUTE → SAVE |
 | `/explore <msg>` | Explore-only: autonomous read-only binary analysis |
 | `/undo [N]` | Undo last N mutations (default 1) |
-| `/memory` | Show current RIKUGAN.md contents |
+| `/memory` | Show current central memory contents (structured facts + `MEMORY.md` manual notes) |
 | `/mcp` | Show MCP server health |
 | `/doctor` | Diagnose setup issues |
 | `/<skill-slug>` | Activate a skill (e.g. `/malware-analysis`, `/ctf`) |

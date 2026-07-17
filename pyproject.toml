@@ -1,6 +1,6 @@
 [project]
 name = "rikugan"
-version = "1.10.3"
+version = "1.11.1"
 description = "Agentic LLM reverse-engineering companion embedded directly in IDA Pro."
 readme = "README.md"
 license = "MIT"
@@ -45,6 +45,7 @@ dependencies = [
     "requests>=2.31.0",
     "html2text>=2025.4.15",
     "markdown-it-py>=3.0.0",
+    "portalocker>=3.0.0,<4",
 ]
 
 [tool.ruff]

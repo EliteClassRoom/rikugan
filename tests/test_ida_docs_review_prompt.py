@@ -83,6 +83,30 @@ class TestReviewerPromptPrefersTool(unittest.TestCase):
         )
 
 
+class TestReviewerPostErrorRole(unittest.TestCase):
+    """Task 4 (SDD): reviewer is now a post-error diagnostician, not a
+    pre-execute gate.  Its input carries a traceback + exception type and
+    it diagnoses why the script FAILED at runtime."""
+
+    def test_reviewer_prompt_describes_post_error_role(self):
+        """Reviewer prompt must describe the post-error diagnostician role."""
+        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+
+        # Phai nhac den runtime error / diagnose failure
+        assert "diagnose" in IDA_DOCS_REVIEWER_PROMPT.lower() or "runtime" in IDA_DOCS_REVIEWER_PROMPT.lower()
+        # Phai nhac den traceback trong input
+        assert "traceback" in IDA_DOCS_REVIEWER_PROMPT.lower()
+
+    def test_reviewer_prompt_keeps_verdict_contract(self):
+        """Output contract (VERDICT/REASONS/API_NOTES/REWRITE_GUIDANCE) stays."""
+        from rikugan.agent.agents.ida_docs_reviewer import IDA_DOCS_REVIEWER_PROMPT
+
+        assert "VERDICT:" in IDA_DOCS_REVIEWER_PROMPT
+        assert "REASONS:" in IDA_DOCS_REVIEWER_PROMPT
+        assert "API_NOTES:" in IDA_DOCS_REVIEWER_PROMPT
+        assert "REWRITE_GUIDANCE:" in IDA_DOCS_REVIEWER_PROMPT
+
+
 class TestSkillPrefersTool(unittest.TestCase):
     SKILL_PATH = (
         Path(__file__).resolve().parent.parent / "rikugan" / "skills" / "builtins" / "ida-scripting" / "SKILL.md"

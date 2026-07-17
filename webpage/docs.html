@@ -448,7 +448,7 @@ cd rikugan</code></pre>
     <tr><td><code>/plan &lt;msg&gt;</code></td><td>Generate a multi-step plan, get approval, then execute step-by-step</td></tr>
     <tr><td><code>/modify &lt;msg&gt;</code></td><td>Enter 4-phase exploration mode: EXPLORE &rarr; PLAN &rarr; EXECUTE &rarr; SAVE</td></tr>
     <tr><td><code>/explore &lt;msg&gt;</code></td><td>Read-only autonomous analysis (explore phase only)</td></tr>
-    <tr><td><code>/memory</code></td><td>Show current RIKUGAN.md persistent memory contents</td></tr>
+    <tr><td><code>/memory</code></td><td>Show current central memory contents (structured facts + <code>MEMORY.md</code> manual notes)</td></tr>
     <tr><td><code>/undo [N]</code></td><td>Undo the last N mutations (default 1)</td></tr>
     <tr><td><code>/mcp</code></td><td>Show MCP server health status</td></tr>
     <tr><td><code>/doctor</code></td><td>Diagnose provider, API key, tools, skills, and config issues</td></tr>
@@ -561,9 +561,9 @@ Task: &lt;instruction for the agent&gt;
 </div>
 
 <h2 id="memory">Persistent Memory</h2>
-<p>Rikugan automatically creates a <code>RIKUGAN.md</code> file in the same directory as your IDB. This file persists across sessions:</p>
+<p>Rikugan maintains a central memory workspace per binary: a SQLite database (<code>memory.db</code>) for structured facts plus a deterministic <code>MEMORY.md</code> projection with a managed region (agent-written) and an unmanaged region (manual notes). This persists across sessions:</p>
 <ul>
-  <li>The first 200 lines are loaded into the system prompt on every session</li>
+  <li>Structured facts from SQLite and manual notes from <code>MEMORY.md</code> are loaded into the system prompt on every session</li>
   <li>The agent can save facts via the <code>save_memory</code> pseudo-tool</li>
   <li>Approved plans from exploration mode are also saved here</li>
   <li>Use <code>/memory</code> to view current contents</li>
@@ -628,7 +628,7 @@ Task: &lt;instruction for the agent&gt;
     <tr><td>Sessions</td><td><code>~/.idapro/rikugan/sessions/</code></td><td><code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\sessions\</code></td></tr>
     <tr><td>Debug log</td><td><code>~/.idapro/rikugan/rikugan_debug.log</code></td><td><code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\rikugan_debug.log</code></td></tr>
     <tr><td>Structured log</td><td><code>~/.idapro/rikugan/rikugan_structured.jsonl</code></td><td><code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\rikugan_structured.jsonl</code></td></tr>
-    <tr><td>Persistent memory</td><td colspan="2"><code>&lt;idb_directory&gt;/RIKUGAN.md</code></td></tr>
+    <tr><td>Persistent memory</td><td><code>~/.idapro/rikugan/memory/binaries/&lt;workspace-id&gt;/</code> (<code>memory.db</code> + <code>MEMORY.md</code>)</td><td><code>%APPDATA%\Hex-Rays\IDA Pro\rikugan\memory\binaries\&lt;workspace-id&gt;\</code> (<code>memory.db</code> + <code>MEMORY.md</code>)</td></tr>
   </table>
 </div>
 

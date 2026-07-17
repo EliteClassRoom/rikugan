@@ -486,9 +486,77 @@ class SessionControllerBase:
             skill_registry=self._skill_registry,
             host_name=self.host_name,
         )
+
+        # Inject central memory service for every agent run.
+        self._wire_central_memory(loop)
+
         self._runner = BackgroundAgentRunner(loop)
         self._runner.start(user_message)
         return None
+
+    def _wire_central_memory(self, loop: AgentLoop) -> None:
+        """Construct and inject BinaryMemoryService into the loop.
+
+        Called for every agent run. If identity resolution fails (bind
+        returns ephemeral), this method returns early without injecting
+        a service, so the loop runs without central memory.
+        """
+        try:
+            from ..memory.authority import MemoryAuthorityIssuer
+            from ..memory.manager import MemoryWorkspaceManager
+            from ..memory.markdown import MemoryProjector
+            from ..memory.repository import SQLiteKnowledgeRepository
+            from ..memory.workspace_store import WorkspaceStore
+
+            session = self._sessions[self._active_tab_id]
+            manager = MemoryWorkspaceManager(self.config)
+
+            # Build identity request from current session
+            from ..memory.identity import get_filesystem_identity
+            from ..memory.workspace import IdentityRequest
+
+            fs = get_filesystem_identity(session.idb_path) if session.idb_path else None
+            request = IdentityRequest(
+                source_kind="idb",
+                idb_path=session.idb_path or "",
+                db_instance_id=session.db_instance_id or "",
+                display_name=session.idb_path.split("/")[-1] if session.idb_path else "",
+                filesystem_identity=fs,
+            )
+            result = manager.bind(request)
+            if result.binding is None or result.binding.state not in {"active", "provisional"}:
+                return
+
+            paths = manager.require_persistent_paths()
+            if paths.database.exists():
+                store = WorkspaceStore.open(paths, owner_memory_id=result.binding.memory_id)
+            else:
+                store = WorkspaceStore.create(paths, owner_memory_id=result.binding.memory_id)
+            repo = SQLiteKnowledgeRepository(store, owner_memory_id=result.binding.memory_id)
+            projector = MemoryProjector()
+            issuer = MemoryAuthorityIssuer()
+
+            context = manager.run_context()
+            from ..memory.service import BinaryMemoryService
+
+            service = BinaryMemoryService(
+                context=context,
+                paths=paths,
+                repository=repo,
+                store=store,
+                projector=projector,
+                authority_issuer=issuer,
+            )
+            loop.memory_service = service
+            loop._memory_authority = issuer.issue(context)
+            loop._memory_manager = manager
+            session.binary_memory_id = result.binding.memory_id
+            log_info(f"Central memory wired: memory_id={result.binding.memory_id[:12]}")
+        except Exception as e:
+            log_error(f"Central memory wiring failed: {e}")
+            import traceback
+
+            log_error(traceback.format_exc())
 
     def get_event(self, timeout: float = 0) -> TurnEvent | None:
         if self._runner is None:

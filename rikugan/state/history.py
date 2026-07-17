@@ -159,6 +159,8 @@ class SessionHistory:
             "model": session.model_name,
             "idb_path": db_path,
             "db_instance_id": session.db_instance_id,
+            "binary_memory_id": session.binary_memory_id,
+            "active_case_id": session.active_case_id,
             "messages": len(session.messages),
             "description": description,
             "file_mtime_ns": file_mtime,
@@ -256,6 +258,8 @@ class SessionHistory:
                 "model": data.get("model_name", ""),
                 "idb_path": _normalize_db_path(data.get("idb_path", "")),
                 "db_instance_id": data.get("db_instance_id", ""),
+                "binary_memory_id": data.get("binary_memory_id", ""),
+                "active_case_id": data.get("active_case_id", ""),
                 "messages": len(data.get("messages", [])),
                 "description": data.get("description", ""),
                 "file_mtime_ns": file_mtime,
@@ -288,6 +292,8 @@ class SessionHistory:
             "model_name": session.model_name,
             "idb_path": db_path,
             "db_instance_id": session.db_instance_id,
+            "binary_memory_id": session.binary_memory_id,
+            "active_case_id": session.active_case_id,
             "current_turn": session.current_turn,
             "metadata": session.metadata,
             "messages": [m.to_dict() for m in session.messages],
@@ -397,6 +403,8 @@ class SessionHistory:
             model_name=_safe_persisted_identifier(data.get("model_name", "")),
             idb_path=_safe_persisted_identifier(data.get("idb_path", "")),
             db_instance_id=_safe_persisted_identifier(data.get("db_instance_id", "")),
+            binary_memory_id=_safe_persisted_identifier(data.get("binary_memory_id", "")),
+            active_case_id=_safe_persisted_identifier(data.get("active_case_id", "")),
             current_turn=data.get("current_turn", 0),
             metadata=safe_metadata,
         )
@@ -435,8 +443,16 @@ class SessionHistory:
                 session.subagent_logs[safe_key] = restored
         return session
 
-    def list_sessions(self, idb_path: str = "", db_instance_id: str = "") -> list[dict[str, Any]]:
-        """List saved session summaries, filtered by IDB path and instance ID.
+    def list_sessions(
+        self,
+        idb_path: str = "",
+        db_instance_id: str = "",
+        binary_memory_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """List saved session summaries, filtered by IDB path, instance ID, or memory ID.
+
+        When ``binary_memory_id`` is supplied, it is the authoritative filter —
+        path/UUID remain compatibility/display metadata.
 
         Uses the session manifest for fast filtering when available.
         Falls back to scanning JSON files if the manifest is missing,
@@ -482,8 +498,11 @@ class SessionHistory:
         sessions: list[dict[str, Any]] = []
         manifest_misses = 0
         for sid, entry in entries.items():
-            # Filter by instance ID or IDB path
-            if db_instance_id:
+            # binary_memory_id is the authoritative filter when supplied
+            if binary_memory_id:
+                if entry.get("binary_memory_id", "") != binary_memory_id:
+                    continue
+            elif db_instance_id:
                 if entry.get("db_instance_id", "") != db_instance_id:
                     continue
             elif normalized_target:
@@ -506,6 +525,8 @@ class SessionHistory:
                     "model": entry.get("model", ""),
                     "idb_path": entry.get("idb_path", ""),
                     "db_instance_id": entry.get("db_instance_id", ""),
+                    "binary_memory_id": entry.get("binary_memory_id", ""),
+                    "active_case_id": entry.get("active_case_id", ""),
                     "messages": entry.get("messages", 0),
                     "description": entry.get("description", ""),
                 }

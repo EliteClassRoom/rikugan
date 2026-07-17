@@ -8,7 +8,7 @@ canonical sub-directories used by Rikugan's knowledge store:
 
 The filesystem layout is fixed by the plan. ``<idb_dir>`` is the
 parent directory of the IDB file, matching how existing code derives
-``idb_dir`` for ``RIKUGAN.md`` and the ``notes/`` directory.
+``idb_dir`` for the ``notes/`` directory.
 
 The ``binary_id`` is a stable identifier for the analyzed binary. It is
 derived from the IDB path so the same binary reopens with the same

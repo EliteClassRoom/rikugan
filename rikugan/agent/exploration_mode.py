@@ -300,7 +300,7 @@ hypothesis in an `exploration_report` instead. Batch renames of local variables 
 (multiple `rename_variable` calls per local) are also encouraged when decompiling a key function.
 
 ### Persist your findings:
-Use `save_memory` to persist confirmed findings to RIKUGAN.md so future sessions \
+Use `save_memory` to persist confirmed findings so future sessions \
 start with context. Save function purposes, architecture notes, and data structures \
 you've confidently identified. Do this as you go — don't wait until the end.
 

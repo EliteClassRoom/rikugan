@@ -624,20 +624,22 @@ class SettingsDialog(QDialog):
         )
         behavior_form.addRow(self._encrypt_keys_cb)
 
-        # --- IDAPython docs-review gate ---
-        self._docs_gate_cb = QCheckBox("Require IDA docs review for complex scripts")
-        self._docs_gate_cb.setChecked(getattr(self._config, "require_ida_docs_for_complex_scripts", True))
-        self._docs_gate_cb.setToolTip(
-            "When enabled, complex `execute_python` scripts (multi-module, "
-            "mutating, Hex-Rays / types / frames / UI / domain APIs, or any "
-            "script that fails the IDAPython validator) are routed through a "
-            "docs-reviewer subagent before you are asked to approve them. "
-            "The reviewer consults the bundled `ida-scripting` skill and the "
-            "official Hex-Rays docs, and blocks scripts that rely on "
-            "hallucinated APIs. Disable to skip the gate and use the legacy "
-            "fast path."
+        # --- IDAPython docs-review gate (post-error) ---
+        self._docs_review_mode_cb = QComboBox()
+        self._docs_review_mode_cb.addItem("Review on runtime error (recommended)", "on_error")
+        self._docs_review_mode_cb.addItem("Off (no docs review)", "off")
+        current_mode = getattr(self._config, "docs_review_mode", "on_error")
+        idx = self._docs_review_mode_cb.findData(current_mode)
+        self._docs_review_mode_cb.setCurrentIndex(max(0, idx))
+        self._docs_review_mode_cb.setToolTip(
+            "Controls when the IDA docs-reviewer subagent runs for execute_python:\n"
+            "• On runtime error: reviewer diagnoses only when a script fails with "
+            "an API-shaped exception (AttributeError, ImportError, NameError). "
+            "The reviewer auto-injects the relevant module reference so the agent "
+            "can fix the script. This is faster than reviewing every complex script.\n"
+            "• Off: no reviewer — you handle all script errors yourself."
         )
-        behavior_form.addRow(self._docs_gate_cb)
+        behavior_form.addRow("IDA docs review mode:", self._docs_review_mode_cb)
 
         # --- IDA Output window verbosity ---
         # Controls which log records appear in IDA's Output window.
@@ -1414,8 +1416,8 @@ class SettingsDialog(QDialog):
         self._config.oauth_consent_accepted = self._oauth_cb.isChecked()
         if hasattr(self, "_knowledge_enabled_cb"):
             self._config.knowledge_enabled = self._knowledge_enabled_cb.isChecked()
-        if hasattr(self, "_docs_gate_cb"):
-            self._config.require_ida_docs_for_complex_scripts = self._docs_gate_cb.isChecked()
+        if hasattr(self, "_docs_review_mode_cb"):
+            self._config.docs_review_mode = self._docs_review_mode_cb.currentData()
         # Persist the selected theme.  ``_on_theme_changed`` already
         # wrote it when the user changed the combo, but we re-write
         # here so even users who accepted the dialog without touching

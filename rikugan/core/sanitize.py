@@ -2,7 +2,7 @@
 
 All data originating from binary analysis (strings, function names, decompiled
 code, comments), external sources (MCP servers), or user-controlled files
-(skills, RIKUGAN.md) is considered **untrusted**.  This module provides:
+(skills, MEMORY.md) is considered **untrusted**.  This module provides:
 
 1. **Delimiter quoting** — wraps untrusted content in XML-style tags so the
    model can distinguish data from instructions.
@@ -392,7 +392,7 @@ def sanitize_binary_context(content: str, context_type: str = "binary_data") -> 
 
 
 def sanitize_memory(content: str) -> str:
-    """Sanitize persistent memory (RIKUGAN.md) content for the system prompt."""
+    """Sanitize persistent memory (MEMORY.md manual notes) content for the system prompt."""
     if not content:
         return content
     text = strip_lone_surrogates(content)
