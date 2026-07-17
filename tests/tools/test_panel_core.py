@@ -992,154 +992,141 @@ class TestShutdownDisconnectsThemeChanged(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Bulk renamer function-enumeration pump
+# Tools tab order, default selection, and renamer isolation
 # ---------------------------------------------------------------------------
 
 
-class TestLoadRenamerFunctions(unittest.TestCase):
-    """``_load_renamer_functions`` should drive the host controller's
-    structured enumeration pump and stream chunks into the widget.
+class TestToolsTabOrderAndDefault(unittest.TestCase):
+    """The visible Tools tabs are Agents, A2A, Knowledge in that order,
+    and the Knowledge tab is the default landing tab.
 
-    These tests pin the behaviour restored in the bulk-renamer
-    regression fix: the panel must NOT parse text from
-    ``list_functions`` — it must call ``begin_function_enumeration``
-    and ``next_function_chunk`` on the host controller and forward
-    the structured rows (including ``is_import`` and ``size_bytes``)
-    to ``BulkRenamerWidget.append_function_chunk``.
+    The Bulk Renamer tab has been removed from the visible Tools
+    surface so opening Tools no longer enumerates the function table.
+    The renamer implementation is dormant, not deleted; these tests
+    pin the new contract that nothing in the panel builds a renamer
+    widget, engine, or enumeration pump on Tools open.
     """
 
-    def _make_panel(self):
+    def test_tab_constants_match_index_order(self):
+        from rikugan.ui.tools_panel import ToolsPanel
+
+        self.assertEqual(ToolsPanel.TAB_AGENTS, 0)
+        self.assertEqual(ToolsPanel.TAB_A2A, 1)
+        self.assertEqual(ToolsPanel.TAB_KNOWLEDGE, 2)
+        self.assertEqual(ToolsPanel.TAB_COUNT, 3)
+        # Order matters for ``_TAB_INITIALIZERS`` below.
+        self.assertLess(ToolsPanel.TAB_AGENTS, ToolsPanel.TAB_A2A)
+        self.assertLess(ToolsPanel.TAB_A2A, ToolsPanel.TAB_KNOWLEDGE)
+
+    def test_tab_initializer_keys_match_constants(self):
+        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        from rikugan.ui.tools_panel import ToolsPanel
+
+        initializers = panel._TAB_INITIALIZERS
+        # No renamer initializer should be reachable by tab index.
+        self.assertNotIn("_ensure_renamer_tab_initialized", initializers.values())
+        # The Renamer constant must NOT exist any more.
+        self.assertFalse(
+            hasattr(ToolsPanel, "TAB_RENAMER"),
+            "ToolsPanel.TAB_RENAMER has been removed; renamer is hidden.",
+        )
+        # Initializers line up with the public tab constants.
+        self.assertIn(ToolsPanel.TAB_AGENTS, initializers)
+        self.assertIn(ToolsPanel.TAB_A2A, initializers)
+        self.assertIn(ToolsPanel.TAB_KNOWLEDGE, initializers)
+        # Knowledge is bound to the Knowledge initializer.
+        self.assertEqual(
+            initializers[ToolsPanel.TAB_KNOWLEDGE],
+            "_ensure_knowledge_tab_initialized",
+        )
+
+    def test_show_tools_panel_defaults_to_knowledge(self):
+        """Calling ``show_tools_panel`` without arguments opens Knowledge."""
         panel = RikuganPanelCore.__new__(RikuganPanelCore)
         panel._is_shutdown = False
-        panel._bulk_renamer = MagicMock()
-        # The widget's ``begin_function_load`` must return None to
-        # match the real contract.
-        panel._bulk_renamer.begin_function_load.return_value = None
-        # Controller exposes the three pump methods.
-        panel._ctrl = MagicMock()
-        panel._ctrl.begin_function_enumeration = MagicMock()
-        panel._ctrl.next_function_chunk = MagicMock(
-            return_value=(
-                [
-                    {"address": 0x401000, "name": "sub_401000", "is_import": False, "size_bytes": 0x80},
-                    {"address": 0x401080, "name": "__imp_GetProcAddress", "is_import": True, "size_bytes": 0x10},
-                ],
-                True,  # more=True, so the pump keeps going
-            )
-        )
-        panel._ctrl.cancel_function_enumeration = MagicMock()
-        return panel
+        panel._mode_bar = MagicMock()
+        panel._tools_form = None
+        panel._tools_btn = MagicMock()
+        panel._tools_poll_timer = MagicMock()
+        panel._ensure_tools_panel_created = MagicMock()
 
-    def test_starts_controller_enumeration(self):
-        panel = self._make_panel()
-        # Patch the QTimer factory to a MagicMock so the test does
-        # not depend on a real Qt event loop.
-        with patch("rikugan.ui.panel_core.QTimer", MagicMock()):
-            panel._load_renamer_functions()
-        panel._ctrl.begin_function_enumeration.assert_called_once()
-        # Widget entered its loading state.
-        panel._bulk_renamer.begin_function_load.assert_called_once()
+        # Build a fake ToolsPanel whose ``_tabs`` we can spy on.
+        from rikugan.ui.tools_panel import ToolsPanel
 
-    def test_chunk_step_appends_and_preserves_metadata(self):
-        panel = self._make_panel()
-        panel._renamer_chunk_step()
-        # Chunk was forwarded to the widget unchanged.
-        panel._bulk_renamer.append_function_chunk.assert_called_once()
-        forwarded = panel._bulk_renamer.append_function_chunk.call_args[0][0]
-        self.assertEqual(len(forwarded), 2)
-        # ``is_import`` and ``size_bytes`` survive verbatim.
-        self.assertFalse(forwarded[0]["is_import"])
-        self.assertEqual(forwarded[0]["size_bytes"], 0x80)
-        self.assertTrue(forwarded[1]["is_import"])
-        self.assertEqual(forwarded[1]["size_bytes"], 0x10)
+        fake_panel = MagicMock()
+        fake_panel._tabs.currentIndex.return_value = ToolsPanel.TAB_A2A
+        fake_panel._tabs.count.return_value = ToolsPanel.TAB_COUNT
+        panel._tools_panel = fake_panel
+        # ``_ensure_tab_initialized`` should be called with the
+        # knowledge tab index.
+        panel._ensure_tab_initialized = MagicMock()
 
-    def test_chunk_step_finishes_on_last_chunk(self):
-        panel = self._make_panel()
-        # First call returns more=True (kept going)
-        # Second call returns more=False (terminator).
-        panel._ctrl.next_function_chunk.side_effect = [
-            ([{"address": 1, "name": "a", "is_import": False, "size_bytes": 16}], True),
-            ([{"address": 2, "name": "b", "is_import": False, "size_bytes": 16}], False),
-        ]
-        panel._renamer_chunk_step()  # first call — pump continues
-        self.assertFalse(panel._bulk_renamer.finish_function_load.called)
-        panel._renamer_chunk_step()  # second call — should finish
-        panel._bulk_renamer.finish_function_load.assert_called_once()
-        # Controller state was released.
-        panel._ctrl.cancel_function_enumeration.assert_called()
+        panel.show_tools_panel()
 
-    def test_chunk_step_fails_cleanly_on_controller_error(self):
-        panel = self._make_panel()
-        panel._ctrl.next_function_chunk.side_effect = RuntimeError("boom")
-        panel._renamer_chunk_step()  # must not raise
-        panel._bulk_renamer.fail_function_load.assert_called_once()
-        # Controller was still cancelled so the next load starts fresh.
-        panel._ctrl.cancel_function_enumeration.assert_called()
+        # Default tab is Knowledge (2), not the removed Renamer.
+        fake_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
+        panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
 
+    def test_show_tools_panel_falls_back_for_unknown_index(self):
+        """Out-of-range and explicit renamer indices fall back to Knowledge."""
+        from rikugan.ui.tools_panel import ToolsPanel
 
-class TestRenamerEnginePreflight(unittest.TestCase):
-    """``_get_or_create_renamer_engine`` must refuse to start when the
-    decompiler is not in the tool registry.  Otherwise every job
-    would fail with "tool not registered".
-    """
-
-    def _make_panel(self):
         panel = RikuganPanelCore.__new__(RikuganPanelCore)
-        panel._config = MagicMock()
-        panel._bulk_renamer = MagicMock()
-        ctrl = MagicMock()
-        ctrl.get_provider.return_value = MagicMock()
-        ctrl.get_tool_registry.return_value.get.return_value = None  # no decompile_function
-        ctrl.ensure_advanced_tools_ready = MagicMock(return_value=True)
-        panel._ctrl = ctrl
-        return panel
+        panel._is_shutdown = False
+        panel._mode_bar = MagicMock()
+        panel._tools_form = None
+        panel._tools_btn = MagicMock()
+        panel._tools_poll_timer = MagicMock()
+        panel._ensure_tools_panel_created = MagicMock()
+        panel._tools_panel = MagicMock()
+        panel._tools_panel._tabs.count.return_value = ToolsPanel.TAB_COUNT
+        panel._ensure_tab_initialized = MagicMock()
 
-    def test_returns_none_when_decompile_function_missing(self):
-        panel = self._make_panel()
-        with patch("rikugan.ui.panel_core.log_error") as mock_log:
-            result = panel._get_or_create_renamer_engine(10, 3)
-        self.assertIsNone(result)
-        # A clear error was logged (not a silent return).
-        self.assertTrue(
-            any("decompile_function" in str(call_args) for call_args in mock_log.call_args_list),
-            f"expected decompile_function error, got {mock_log.call_args_list}",
-        )
+        panel.show_tools_panel(tab_index=99)
+        panel._tools_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
+        panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_KNOWLEDGE)
 
-    def test_ensure_advanced_tools_ready_called_before_construction(self):
-        panel = self._make_panel()
-        # Force the registry to have a decompile_function so the
-        # engine can be created — this lets us observe that
-        # ``ensure_advanced_tools_ready`` was still called first.
-        panel._ctrl.get_tool_registry.return_value.get.return_value = MagicMock()
-        with patch("rikugan.agent.bulk_renamer.BulkRenamerEngine") as mock_engine:
-            mock_engine.return_value = MagicMock()
-            with patch.object(panel, "_get_or_create_subagent_manager", return_value=None):
-                panel._get_or_create_renamer_engine(10, 3)
-        panel._ctrl.ensure_advanced_tools_ready.assert_called_once()
+        # Historical numeric index ``0`` previously meant Renamer.
+        # It must now map to the new tab-zero (Agents), not raise.
+        panel._tools_panel._tabs.setCurrentIndex.reset_mock()
+        panel._ensure_tab_initialized.reset_mock()
+        panel.show_tools_panel(tab_index=0)
+        panel._tools_panel._tabs.setCurrentIndex.assert_called_with(ToolsPanel.TAB_AGENTS)
+        panel._ensure_tab_initialized.assert_called_with(ToolsPanel.TAB_AGENTS)
 
-
-class TestRenamerStartResetsWidget(unittest.TestCase):
-    """When the engine cannot be created (provider missing, preflight
-    failed, etc.), the widget must be returned to the idle state so
-    the Start button re-enables and the user can retry.
-    """
-
-    def test_widget_set_running_state_false_on_engine_failure(self):
+    def test_no_renamer_widget_or_engine_attributes_on_panel(self):
+        """Panel must not lazily construct renamer widgets, engines, or timers."""
         panel = RikuganPanelCore.__new__(RikuganPanelCore)
-        panel._config = MagicMock()
-        panel._bulk_renamer = MagicMock()
-        ctrl = MagicMock()
-        ctrl.get_provider.return_value = None  # no provider -> engine=None
-        panel._ctrl = ctrl
+        self.assertFalse(
+            hasattr(panel, "_bulk_renamer"),
+            "_bulk_renamer attribute should be gone after the renamer removal.",
+        )
+        self.assertFalse(hasattr(panel, "_renamer_engine"))
+        self.assertFalse(hasattr(panel, "_renamer_fetch_timer"))
+        # The panel must also not expose any renamer handler method.
+        self.assertFalse(hasattr(panel, "_on_renamer_start"))
+        self.assertFalse(hasattr(panel, "_on_renamer_cancel"))
+        self.assertFalse(hasattr(panel, "_ensure_renamer_tab_initialized"))
+        self.assertFalse(hasattr(panel, "show_tools_with_renamer"))
 
-        with patch("rikugan.ui.panel_core.log_error"):
-            panel._on_renamer_start(
-                jobs=[{"address": 0x401000, "current_name": "sub_401000"}],
-                mode="quick",
-                batch_size=10,
-                max_concurrent=3,
-            )
-        panel._bulk_renamer.set_running_state.assert_called_with(False)
+    def test_theme_refresh_iterates_only_active_tabs(self):
+        """The theme refresh loop should no longer touch a renamer widget."""
+        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel._bulk_renamer = None
+        # Look for any ``_bulk_renamer`` mention in the theme refresh
+        # code path. The active attribute list is the simplest check.
+        from rikugan.ui import panel_core as pc
+
+        # The expected active attribute list is documented inline at
+        # the loop site; verify no ``_bulk_renamer`` is iterated.
+        src = pc.__file__
+        with open(src, encoding="utf-8") as handle:
+            body = handle.read()
+        # Find the theme refresh loop and check it does not name renamer.
+        loop_idx = body.find("for attr in (")
+        self.assertGreaterEqual(loop_idx, 0, "theme refresh loop not found")
+        snippet = body[loop_idx : loop_idx + 200]
+        self.assertNotIn("_bulk_renamer", snippet)
 
 
 if __name__ == "__main__":

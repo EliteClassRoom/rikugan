@@ -64,9 +64,7 @@ The agent really ***lives*** and ***breaths*** reversing.
 |:--:|
 |Orchestrator spawning subagents in parallel|
 
-**Tools Panel** — A slide-out panel with three tabs: Bulk Renamer, Agents (live subagent tree), and A2A Bridge for delegating tasks to external A2A-compatible agents or local CLI agents (Claude Code, Codex).
-
-**Bulk Renamer** — Batch-rename functions using quick mode (single LLM call per function from decompiled code) or deep mode (isolated subagent per function with full tool access, xref chasing, string harvesting). All renames are tracked and reversible.
+**Tools Panel** — A slide-out panel with three tabs: Agents (live subagent tree), A2A Bridge for delegating tasks to external A2A-compatible agents or local CLI agents (Claude Code, Codex), and Knowledge (memory, entities, relations, observations). The Knowledge tab is the default view so opening Tools does not eagerly enumerate every function in the binary.
 
 **Offline IDAPython docs** — A bundled copy of the Hex-Rays Python reference (`rikugan/data/idapython-docs/`, 54 modules) backs the `lookup_idapython_doc` tool. API verification prefers the offline bundle; web fetch against Hex-Rays is strictly a last resort.
 

@@ -147,7 +147,7 @@ if _HAS_IDA:
             return idaapi.AST_ENABLE_ALWAYS
 
     class _OpenToolsAction(idaapi.action_handler_t):
-        """Open the Rikugan Tools panel."""
+        """Open the Rikugan Tools panel (lands on the Knowledge tab)."""
 
         def __init__(self, panel_getter: Callable[[], Any]):
             super().__init__()
@@ -157,29 +157,7 @@ if _HAS_IDA:
             panel = self._get_panel()
             if panel is None:
                 return 0
-            panel.show_tools_panel(tab_index=0)
-            return 1
-
-        def update(self, ctx) -> int:
-            return idaapi.AST_ENABLE_ALWAYS
-
-    class _SendToBulkRenameAction(idaapi.action_handler_t):
-        """Send the current function to the Bulk Renamer."""
-
-        def __init__(self, panel_getter: Callable[[], Any]):
-            super().__init__()
-            self._get_panel = panel_getter
-
-        def activate(self, ctx) -> int:
-            panel = self._get_panel()
-            if panel is None:
-                return 0
-            context = _get_context()
-            func_ea = context.get("func_ea")
-            if func_ea is not None:
-                panel.show_tools_with_renamer(address=func_ea)
-            else:
-                panel.show_tools_panel(tab_index=0)
+            panel.show_tools_panel()
             return 1
 
         def update(self, ctx) -> int:
@@ -355,17 +333,6 @@ if _HAS_IDA:
                 idaapi.SETMENU_APP,
             )
 
-            # Register "Send to Bulk Rename" action
-            idaapi.register_action(
-                idaapi.action_desc_t(
-                    "rikugan:send_to_bulk_rename",
-                    "Send to Bulk Rename",
-                    _SendToBulkRenameAction(self._get_panel),
-                    "",
-                    "Send function to Rikugan Bulk Renamer",
-                )
-            )
-
             self._registered = True
 
         def finish_populating_widget_popup(self, widget, popup) -> None:
@@ -378,9 +345,10 @@ if _HAS_IDA:
                 if view_key in views:
                     idaapi.attach_action_to_popup(widget, popup, action_id, "Rikugan/")
 
-            # Always attach "Send to Bulk Rename" and "Open Tools" in disasm/pseudo views
+            # Always attach "Open Tools" in disasm/pseudo views.
+            # The Bulk Renamer action has been removed because the
+            # Renamer tab is hidden from the visible Tools surface.
             if view_key in ("disasm", "pseudo"):
-                idaapi.attach_action_to_popup(widget, popup, "rikugan:send_to_bulk_rename", "Rikugan/")
                 idaapi.attach_action_to_popup(widget, popup, "rikugan:open_tools", "Rikugan/")
 
         def database_inited(self, is_new_database: bool, idc_script: str) -> None:
@@ -403,7 +371,6 @@ if _HAS_IDA:
                 for action_id, *_ in _ACTION_DEFS:
                     idaapi.unregister_action(action_id)
                 idaapi.unregister_action("rikugan:open_tools")
-                idaapi.unregister_action("rikugan:send_to_bulk_rename")
                 self._registered = False
 
 else:

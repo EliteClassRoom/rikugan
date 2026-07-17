@@ -1,4 +1,9 @@
-"""Tools panel: container for bulk renamer, agent tree, and A2A bridge.
+"""Tools panel: container for Agents, A2A bridge, and Knowledge panel.
+
+The Bulk Renamer tab has been removed from the visible Tools surface so
+opening Tools does not eagerly enumerate every function in the binary.
+The Renamer UI/backend modules remain in the repository for a future
+re-enable, but no Tools entry point builds them.
 
 Can be shown as an independent window (QDialog) or embedded in a layout.
 """
@@ -25,7 +30,15 @@ from .theme.applicator import bind_theme, disconnect_theme
 
 
 class ToolsPanel(QWidget):
-    """Standalone tools window containing tabs: Renamer, Agents, A2A."""
+    """Standalone tools window containing tabs: Agents, A2A, Knowledge."""
+
+    # Public tab index contract.  Tests and external callers should
+    # reference these constants instead of hard-coded integers so the
+    # order can be reshuffled without code edits in callers.
+    TAB_AGENTS = 0
+    TAB_A2A = 1
+    TAB_KNOWLEDGE = 2
+    TAB_COUNT = 3
 
     def __init__(self, parent: QWidget | None = None):
         _early_log("tools_panel:init:entry")
@@ -70,7 +83,6 @@ class ToolsPanel(QWidget):
         # widget has been created/replaced by panel_core. Keeps the
         # placeholder until the user actually selects the tab (or
         # panel_core explicitly requests it via ``show_tools_panel``).
-        self._renamer_initialized = False
         self._agents_initialized = False
         self._a2a_initialized = False
         self._knowledge_initialized = False
@@ -80,12 +92,8 @@ class ToolsPanel(QWidget):
         # ``_placeholder_labels`` tracks every QLabel we own so
         # ``_apply_styles`` can re-paint them on a theme change.
         self._placeholder_labels: list[QLabel] = []
-        self._renamer_placeholder = QLabel("Not loaded")
-        self._renamer_placeholder.setStyleSheet(get_placeholder_style())
-        self._renamer_placeholder.setWordWrap(True)
-        self._tabs.addTab(self._renamer_placeholder, "Renamer")
-        self._placeholder_labels.append(self._renamer_placeholder)
 
+        # Agents tab — always visible first.
         self._agents_placeholder = QLabel("Not loaded")
         self._agents_placeholder.setStyleSheet(get_placeholder_style())
         self._agents_placeholder.setWordWrap(True)
@@ -105,16 +113,20 @@ class ToolsPanel(QWidget):
         # When replaced, ``set_a2a_widget`` updates this attribute
         # and ``_apply_styles`` reads the current value.
 
-        # Knowledge tab: lazily filled by panel_core from
-        # ``_ensure_knowledge_tab_initialized()``. A placeholder
-        # keeps the tab order stable (0=Renamer, 1=Agents, 2=A2A,
-        # 3=Knowledge) so existing ``tab_index=0/1/2`` callers
-        # keep working.
+        # Knowledge tab — default visible tab so opening Tools lands on
+        # a cheap, read-only view instead of triggering function
+        # enumeration.  A placeholder keeps the tab order stable so
+        # the index contract above stays valid.
         self._knowledge_widget = QLabel("Not loaded")
         self._knowledge_widget.setStyleSheet(get_placeholder_style())
         self._knowledge_widget.setWordWrap(True)
         self._tabs.addTab(self._knowledge_widget, "Knowledge")
         self._placeholder_labels.append(self._knowledge_widget)
+
+        # Land on Knowledge by default.  ``addTab`` leaves the index
+        # at 0 (Agents), so setCurrentIndex must run after the tabs
+        # are populated.
+        self._tabs.setCurrentIndex(self.TAB_KNOWLEDGE)
 
         main_layout.addWidget(self._tabs)
 
@@ -214,14 +226,9 @@ class ToolsPanel(QWidget):
             old.deleteLater()
         return old
 
-    def set_renamer_widget(self, widget: QWidget) -> None:
-        """Replace the Renamer tab content."""
-        self._replace_tab(0, widget, "Renamer")
-        self._renamer_initialized = True
-
     def set_agents_widget(self, widget: QWidget) -> None:
         """Replace the Agents tab content."""
-        self._replace_tab(1, widget, "Agents")
+        self._replace_tab(self.TAB_AGENTS, widget, "Agents")
         self._agents_initialized = True
 
     def set_a2a_widget(self, widget: QWidget) -> None:
@@ -231,18 +238,17 @@ class ToolsPanel(QWidget):
         which widget is active in the A2A slot. ``shutdown()`` only
         needs this when the caller later destroys the panel.
         """
-        self._replace_tab(2, widget, "A2A")
+        self._replace_tab(self.TAB_A2A, widget, "A2A")
         self._a2a_widget = widget
         self._a2a_initialized = True
 
     def set_knowledge_widget(self, widget: QWidget) -> None:
-        """Replace the Knowledge tab content (4th tab).
+        """Replace the Knowledge tab content (default tab).
 
-        Index 3 must remain stable so :meth:`show_tools_with_renamer`
-        and other ``tab_index=0/1/2`` callers don't shift the Renamer
-        and Agents tabs when Knowledge is added.
+        Knowledge lives at :data:`TAB_KNOWLEDGE` so external callers
+        and panel_core agree on a stable index.
         """
-        self._replace_tab(3, widget, "Knowledge")
+        self._replace_tab(self.TAB_KNOWLEDGE, widget, "Knowledge")
         self._knowledge_widget = widget
         self._knowledge_initialized = True
 

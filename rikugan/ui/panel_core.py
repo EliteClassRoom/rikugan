@@ -735,7 +735,7 @@ class RikuganPanelCore(QWidget):
                     log_debug(f"ToolsPanel._apply_styles failed: {e}")
             # Per-tab heavy widgets (built lazily — may be absent
             # until the user first selects that tab).
-            for attr in ("_bulk_renamer", "_agent_tree", "_knowledge_panel", "_a2a_bridge_widget"):
+            for attr in ("_agent_tree", "_knowledge_panel", "_a2a_bridge_widget"):
                 widget = getattr(self, attr, None)
                 if widget is None:
                     continue
@@ -1160,21 +1160,6 @@ class RikuganPanelCore(QWidget):
         try:
             tools_form = getattr(self, "_tools_form", None)
             tools_panel = getattr(self, "_tools_panel", None)
-            # Stop the bulk-renamer chunk fetch timer (if any) so
-            # it does not fire after teardown and dereference
-            # already-disposed widgets.
-            self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=False)
-            # Cancel any in-flight renamer engine so background worker
-            # threads exit before the panel teardown completes.  Without
-            # this, an active engine can keep the panel alive across
-            # teardown and dereference disposed widgets.
-            engine = getattr(self, "_renamer_engine", None)
-            if engine is not None:
-                try:
-                    engine.cancel()
-                except Exception as e:  # defensive
-                    log_debug(f"renamer engine cancel on shutdown failed: {e}")
-                self._renamer_engine = None
             self._stop_poll_timer()
             self._stop_skills_refresh_timer()
             # Stop the token-display debounce timer so a late flush
@@ -1281,27 +1266,6 @@ class RikuganPanelCore(QWidget):
         if normalized == self._ctrl._idb_path:
             return
         self._ctrl.reset_for_new_file(normalized)
-        # Stop the in-flight renamer chunk fetch (if any) so the
-        # in-progress enumeration does not keep the old IDB
-        # state alive across the database swap.
-        self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
-        # Cancel any in-flight renamer engine (if any) so background
-        # worker threads for the previous IDB exit before we rebuild
-        # the chat tabs and tools panel.
-        engine = getattr(self, "_renamer_engine", None)
-        if engine is not None:
-            try:
-                engine.cancel()
-            except Exception as e:  # defensive
-                log_debug(f"renamer engine cancel on db change failed: {e}")
-            self._renamer_engine = None
-        if hasattr(self, "_bulk_renamer"):
-            # Clear the renamer table; the new IDB has a different
-            # function list and the old rows would be misleading.
-            try:
-                self._bulk_renamer.clear_functions()
-            except Exception as e:  # defensive
-                log_debug(f"bulk_renamer.clear_functions on db change failed: {e}")
         # Remove all existing tabs
         for cv in self._chat_views.values():
             cv.shutdown()
@@ -1695,16 +1659,33 @@ class RikuganPanelCore(QWidget):
             current = self._mode_bar.currentIndex()
             self._mode_bar.setCurrentIndex(1 if current == 0 else 0)
 
-    def show_tools_panel(self, tab_index: int = 0) -> None:
+    def show_tools_panel(self, tab_index: int | None = None) -> None:
         """Show the tools view and switch to the given tab.
 
-        Public API used by IDA actions (Open Tools, Send to Bulk Rename).
-        Lazy-creates the ToolsPanel shell + the requested tab on first
-        invocation so the user only pays the cost of what they actually
-        open.  Subsequent calls reuse the existing widgets.
+        ``tab_index`` defaults to the Knowledge tab (the read-only
+        default that does not trigger any function enumeration).  When
+        ``None`` or an unknown index is supplied, the call also falls
+        back to Knowledge so legacy numeric callers keep working.
+
+        Public API used by the IDA Open Tools action.  Lazy-creates the
+        ToolsPanel shell + the requested tab on first invocation so the
+        user only pays the cost of what they actually open.  Subsequent
+        calls reuse the existing widgets.
         """
         if self._is_shutdown:
             return
+        # ``ToolsPanel.TAB_KNOWLEDGE`` is the default.  Import locally
+        # so the constant is read fresh — the panel class is part of
+        # the public UI surface and may be subclassed by tests.
+        from .tools_panel import ToolsPanel
+
+        default_tab = ToolsPanel.TAB_KNOWLEDGE
+        if tab_index is None or tab_index not in (
+            ToolsPanel.TAB_AGENTS,
+            ToolsPanel.TAB_A2A,
+            ToolsPanel.TAB_KNOWLEDGE,
+        ):
+            tab_index = default_tab
         _t0 = time.monotonic()
         self._ensure_tools_panel_created()
         if self._tools_panel is None:
@@ -1726,24 +1707,6 @@ class RikuganPanelCore(QWidget):
         _early_log(
             f"panel_core:show_tools_panel:done:tab={tab_index}:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
         )
-
-    def show_tools_with_renamer(self, address: int | None = None) -> None:
-        """Show the tools panel on the Renamer tab.
-
-        If *address* is given, filter and check that function.
-        Called from the IDA "Send to Bulk Rename" right-click action.
-
-        The address-based select/filter is deferred if the Renamer tab
-        is still loading functions — the desired address is stored on
-        the panel and applied once ``finish_function_load`` fires.
-        """
-        # If the caller hands us an address, stash it BEFORE we ask the
-        # shell to be created so the lazy Renamer initializer can pick
-        # it up and route it to the right place.  The flag is consumed
-        # by ``_ensure_renamer_tab_initialized``.
-        if address is not None:
-            self._renamer_pending_select_address = address
-        self.show_tools_panel(tab_index=0)
 
     def _ensure_tools_initialized(self) -> None:
         """Backward-compat: ensure shell + every tab.
@@ -1806,7 +1769,8 @@ class RikuganPanelCore(QWidget):
                     self._tools_placeholder = None
                 self._mode_stack.insertWidget(placeholder_idx, self._tools_panel)
             # Shared tools-event poll timer.  Cheap (100ms idle) and
-            # only used by SubagentManager / BulkRenamerEngine events.
+            # only used by SubagentManager events now that the Renamer
+            # tab is hidden.
             self._tools_poll_timer = QTimer(self)
             self._tools_poll_timer.setInterval(100)
             self._tools_poll_timer.timeout.connect(self._poll_tools_events)
@@ -1831,12 +1795,12 @@ class RikuganPanelCore(QWidget):
         self._ensure_tab_initialized(index)
 
     # Per-tab index → initializer name.  Tab order must remain stable:
-    # 0 = Renamer, 1 = Agents, 2 = A2A, 3 = Knowledge.
+    # 0 = Agents, 1 = A2A, 2 = Knowledge.  Indices intentionally mirror
+    # ``ToolsPanel.TAB_AGENTS``/``TAB_A2A``/``TAB_KNOWLEDGE``.
     _TAB_INITIALIZERS: ClassVar[dict[int, str]] = {
-        0: "_ensure_renamer_tab_initialized",
-        1: "_ensure_agents_tab_initialized",
-        2: "_ensure_a2a_tab_initialized",
-        3: "_ensure_knowledge_tab_initialized",
+        0: "_ensure_agents_tab_initialized",
+        1: "_ensure_a2a_tab_initialized",
+        2: "_ensure_knowledge_tab_initialized",
     }
 
     def _ensure_tab_initialized(self, index: int) -> None:
@@ -1865,35 +1829,6 @@ class RikuganPanelCore(QWidget):
         _early_log(f"panel_core:tab_init:index={index}:elapsed_ms={int((time.monotonic() - _t0) * 1000)}")
 
     # -- Per-tab initializers -----------------------------------------------
-
-    def _ensure_renamer_tab_initialized(self) -> None:
-        """Build the bulk renamer widget and wire its signals.
-
-        Function loading is deferred to :meth:`_start_renamer_load`
-        which is called by the tab-activation hook (or by
-        ``show_tools_with_renamer`` before row data is available).
-        """
-        if self._tools_panel is None:
-            return
-        from .bulk_renamer import BulkRenamerWidget
-
-        _t0 = time.monotonic()
-        self._bulk_renamer = BulkRenamerWidget()
-        _early_log(
-            f"panel_core:_ensure_renamer_tab_initialized:built:elapsed_ms={int((time.monotonic() - _t0) * 1000)}"
-        )
-        self._bulk_renamer.start_requested.connect(self._on_renamer_start)
-        self._bulk_renamer.pause_requested.connect(self._on_renamer_pause)
-        self._bulk_renamer.cancel_requested.connect(self._on_renamer_cancel)
-        self._bulk_renamer.undo_requested.connect(self._on_renamer_undo)
-        self._bulk_renamer.seek_requested.connect(lambda addr: self._on_renamer_seek(addr))
-        self._bulk_renamer.refresh_requested.connect(self._start_renamer_load)
-        self._tools_panel.set_renamer_widget(self._bulk_renamer)
-        # The activation callback may have fired before this method
-        # completed (the user clicked a tab while we were building
-        # the widget); in that case ``currentChanged`` will not fire
-        # again, so kick the load here.
-        self._start_renamer_load()
 
     def _ensure_agents_tab_initialized(self) -> None:
         """Build the agents tab widget."""
@@ -2006,259 +1941,6 @@ class RikuganPanelCore(QWidget):
         )
         return self._subagent_manager
 
-    def _get_or_create_renamer_engine(self, batch_size: int, max_workers: int):
-        """Create a BulkRenamerEngine for the current session.
-
-        The engine talks to the decompiler through ``decompile_function``,
-        which lives in the *advanced* tool group (registered lazily by
-        the host controller).  We must run the preflight before
-        constructing the engine, otherwise the engine will enqueue jobs
-        and then fail every one of them with "tool not registered".
-        """
-        # Preflight: ensure the advanced tool set (which includes
-        # ``decompile_function``) is registered before we hand the
-        # engine the tool registry.  ``ensure_advanced_tools_ready``
-        # is idempotent and never raises; it just schedules a retry
-        # on failure.
-        ensure_fn = getattr(self._ctrl, "ensure_advanced_tools_ready", None)
-        if callable(ensure_fn):
-            try:
-                ready = ensure_fn()
-            except Exception as e:  # defensive — never crash the click
-                log_error(f"ensure_advanced_tools_ready raised: {e}")
-                ready = False
-        else:
-            ready = True
-        if not ready:
-            log_error(
-                "Cannot start renamer: advanced tool registration did not complete. "
-                "Check the Rikugan output window for decompiler errors."
-            )
-            return None
-
-        # Verify the decompiler tool actually made it into the
-        # registry — a no-op preflight would otherwise let the
-        # engine start and then fail every job silently.
-        tool_registry = self._ctrl.get_tool_registry()
-        if tool_registry.get("decompile_function") is None:
-            log_error(
-                "Cannot start renamer: decompile_function is not registered. "
-                "Open the Tools menu and re-run ensure_advanced_tools_ready."
-            )
-            return None
-
-        from ..agent.bulk_renamer import BulkRenamerEngine
-
-        provider = self._ctrl.get_provider()
-        if provider is None:
-            return None
-        return BulkRenamerEngine(
-            provider=provider,
-            tool_registry=tool_registry,
-            config=self._config,
-            host_name=self._ctrl.host_name,
-            skill_registry=getattr(self._ctrl, "_skill_registry", None),
-            batch_size=batch_size,
-            max_workers=max_workers,
-            subagent_manager=self._get_or_create_subagent_manager(),
-        )
-
-    def _start_renamer_load(self) -> None:
-        """Begin renamer function loading and apply any pending address.
-
-        Triggered by:
-          - the user selecting the Renamer tab (via the
-            ``_activate_tools_tab`` callback path),
-          - the user clicking the Refresh button (wired to
-            ``refresh_requested`` -> ``_start_renamer_load``),
-          - ``show_tools_with_renamer`` calling us indirectly through
-            ``_ensure_renamer_tab_initialized`` -> ``_start_renamer_load``.
-
-        If the caller stashed a ``_renamer_pending_select_address``
-        before the widget was ready (e.g. an IDA ``Send to Bulk
-        Rename`` action fired while the shell was still being built),
-        we forward it to the widget after the load completes via the
-        ``finish_function_load`` hook below.
-        """
-        if self._is_shutdown:
-            return
-        if not hasattr(self, "_bulk_renamer"):
-            return
-        if getattr(self, "_renamer_loaded", False):
-            # Already loaded — re-running is cheap via Refresh; let the
-            # existing path do its thing, and apply any pending
-            # select-after-load immediately.
-            self._apply_pending_renamer_select()
-            self._load_renamer_functions()
-            return
-        if getattr(self, "_renamer_loading", False):
-            # A load is already in flight; the deferred address will
-            # be applied when ``_renamer_chunk_step`` finishes.
-            return
-        self._renamer_loading = True
-        self._load_renamer_functions()
-
-    def _apply_pending_renamer_select(self) -> None:
-        """If ``show_tools_with_renamer`` was called before load finished,
-        forward the stored address to the widget now that the table is
-        ready.  Consumes the flag so it doesn't fire twice.
-        """
-        addr = getattr(self, "_renamer_pending_select_address", None)
-        if addr is None:
-            return
-        widget = getattr(self, "_bulk_renamer", None)
-        if widget is None:
-            return
-        self._renamer_pending_select_address = None
-        try:
-            widget.select_and_filter_address(addr)
-        except Exception as e:  # defensive — never crash Tools open
-            log_debug(f"pending renamer select failed: {e}")
-
-    def _load_renamer_functions(self) -> None:
-        """Populate the bulk renamer widget with functions from the binary.
-
-        Uses the host controller's structured function-enumeration
-        pump (``begin_function_enumeration`` / ``next_function_chunk``)
-        so the widget gets accurate ``is_import`` and ``size_bytes``
-        metadata.  Each chunk is delivered through a zero-interval
-        QTimer so the UI thread stays responsive between pages.
-
-        This method does NOT touch any pending select-address state —
-        callers use :meth:`_start_renamer_load` instead so the
-        deferred select-after-load path is centralized.
-        """
-
-        # Cancel any in-flight load before starting a new one
-        # (the refresh button can be clicked multiple times in a row).
-        self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
-
-        begin = getattr(self._ctrl, "begin_function_enumeration", None)
-        if not callable(begin):
-            log_info("Controller has no begin_function_enumeration — renamer table will be empty")
-            return
-        try:
-            begin()
-        except Exception as e:
-            log_error(f"begin_function_enumeration failed: {e}")
-            return
-
-        # Tell the widget we're starting a fresh load so it can
-        # show its "Loading functions..." state.
-        begin_load = getattr(self._bulk_renamer, "begin_function_load", None)
-        if callable(begin_load):
-            try:
-                begin_load()
-            except Exception as e:
-                log_debug(f"bulk_renamer.begin_function_load failed: {e}")
-
-        # Zero-interval timer: pump one chunk per tick, return
-        # control to the Qt event loop between chunks.
-        self._renamer_fetch_timer = QTimer(self)
-        self._renamer_fetch_timer.setInterval(0)
-        self._renamer_fetch_timer.timeout.connect(self._renamer_chunk_step)
-        self._renamer_fetch_timer.start()
-
-    def _renamer_chunk_step(self) -> None:
-        """Drain one chunk from the controller into the widget."""
-        next_chunk = getattr(self._ctrl, "next_function_chunk", None)
-        append_chunk = getattr(self._bulk_renamer, "append_function_chunk", None)
-        try:
-            if not callable(next_chunk) or not callable(append_chunk):
-                # Defensive — should not happen because
-                # ``_load_renamer_functions`` checked for
-                # ``begin_function_enumeration`` already, but a
-                # custom controller might omit the chunk getter.
-                self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
-                return
-            chunk, more = next_chunk(limit=500)
-        except Exception as e:
-            log_error(f"next_function_chunk failed: {e}")
-            fail = getattr(self._bulk_renamer, "fail_function_load", None)
-            if callable(fail):
-                fail(str(e))
-            self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
-            return
-
-        if chunk:
-            try:
-                append_chunk(chunk)
-            except Exception as e:
-                log_error(f"append_function_chunk failed: {e}")
-                fail = getattr(self._bulk_renamer, "fail_function_load", None)
-                if callable(fail):
-                    fail(str(e))
-                self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
-                return
-
-        if more:
-            return
-
-        # Last chunk — stop the timer and finalize the widget.
-        finish = getattr(self._bulk_renamer, "finish_function_load", None)
-        if callable(finish):
-            try:
-                finish()
-            except Exception as e:
-                log_debug(f"bulk_renamer.finish_function_load failed: {e}")
-        self._cleanup_renamer_chunk(cancel_controller=True, cancel_widget=True)
-        # Mark the renamer as fully loaded and apply any pending
-        # address that ``show_tools_with_renamer`` stashed before the
-        # widget was ready.
-        self._renamer_loading = False
-        self._renamer_loaded = True
-        self._apply_pending_renamer_select()
-        log_info("Bulk renamer function load complete")
-
-    def _cleanup_renamer_chunk(
-        self,
-        cancel_controller: bool = True,
-        cancel_widget: bool = True,
-    ) -> None:
-        """Stop the chunk-fetch timer and (optionally) the controller.
-
-        Called from ``_load_renamer_functions`` (to reset before a new
-        load), ``_renamer_chunk_step`` (on completion or failure),
-        and from the panel-level shutdown / database-change paths
-        (so an in-flight load cannot survive a teardown).
-
-        Also clears the in-progress / loaded flags so a subsequent
-        ``_start_renamer_load`` call doesn't short-circuit thinking
-        the previous load is still healthy.
-        """
-        timer = getattr(self, "_renamer_fetch_timer", None)
-        if timer is not None:
-            try:
-                timer.stop()
-                timer.deleteLater()
-            except Exception as e:  # defensive
-                log_debug(f"renamer fetch timer cleanup failed: {e}")
-            self._renamer_fetch_timer = None
-        if cancel_controller:
-            cancel = getattr(self._ctrl, "cancel_function_enumeration", None)
-            if callable(cancel):
-                try:
-                    cancel()
-                except Exception as e:  # defensive
-                    log_debug(f"cancel_function_enumeration failed: {e}")
-        if cancel_widget:
-            widget = getattr(self, "_bulk_renamer", None)
-            cancel_fn = getattr(widget, "cancel_function_load", None)
-            if callable(cancel_fn):
-                try:
-                    cancel_fn()
-                except Exception as e:  # defensive
-                    log_debug(f"bulk_renamer.cancel_function_load failed: {e}")
-        # A failure path here means the load did not complete
-        # successfully — clear the cached "loaded" flag so the next
-        # ``_start_renamer_load`` actually re-runs the chunk pump.
-        # Successful completion paths set ``_renamer_loaded = True``
-        # after calling this; failures do not.
-        self._renamer_loading = False
-        self._renamer_loaded = False
-
-    # --- Tools panel event handlers ---
-
     def _on_cancel_agent(self, agent_id: str) -> None:
         """Handle agent cancel request from AgentTreeWidget."""
         mgr = self._get_or_create_subagent_manager()
@@ -2278,61 +1960,6 @@ class RikuganPanelCore(QWidget):
             f"[Subagent \u201c{info.name}\u201d completed ({info.turn_count} turns, {elapsed:.0f}s)]\n\n{info.summary}"
         )
         self._start_agent(text)
-
-    def _on_renamer_start(self, jobs, mode, batch_size, max_concurrent) -> None:
-        """Handle bulk renamer start request."""
-        from ..agent.bulk_renamer import RenameJob
-
-        engine = self._get_or_create_renamer_engine(batch_size, max_concurrent)
-        if engine is None:
-            log_error("Cannot start renamer: LLM provider not available")
-            # Reset the widget's running state so the Start button
-            # re-enables and the user can retry once the upstream
-            # issue (provider / decompiler registration) is fixed.
-            if hasattr(self, "_bulk_renamer"):
-                self._bulk_renamer.set_running_state(False)
-            return
-        rename_jobs = [RenameJob(address=j["address"], current_name=j["current_name"]) for j in jobs]
-        engine.enqueue(rename_jobs)
-        self._renamer_engine = engine
-
-        # Preload decompilation on the main thread (IDA requires API
-        # calls on the main thread), then start the worker. Wrapped in
-        # QTimer.singleShot(0, ...) so the click handler returns
-        # immediately and the panel can repaint before the blocking
-        # decompile loop runs.
-        def _preload_and_start() -> None:
-            engine.preload_decompilation()
-            engine.start(deep=(mode == "deep"), preload_on_main_thread=True)
-
-        QTimer.singleShot(0, _preload_and_start)
-
-    def _on_renamer_pause(self) -> None:
-        engine = getattr(self, "_renamer_engine", None)
-        if engine is not None:
-            if engine._paused.is_set():
-                engine.pause()
-            else:
-                engine.resume()
-
-    def _on_renamer_cancel(self) -> None:
-        engine = getattr(self, "_renamer_engine", None)
-        if engine is not None:
-            engine.cancel()
-
-    def _on_renamer_undo(self) -> None:
-        engine = getattr(self, "_renamer_engine", None)
-        if engine is None:
-            return
-        # undo_all calls tool_registry.execute which goes through
-        # TPE + idasync — must run off the main thread to avoid deadlock.
-        threading.Thread(target=engine.undo_all, daemon=True, name="rikugan-undo-renames").start()
-
-    def _on_renamer_seek(self, address: int) -> None:
-        """Navigate the host disassembly view to the given address."""
-        from ..core.host import navigate_to
-
-        navigate_to(address)
 
     def _poll_tools_events(self) -> None:
         """Poll all tools subsystems for events."""
@@ -2401,41 +2028,6 @@ class RikuganPanelCore(QWidget):
                                 summary=info.summary,
                                 category=info.category,
                             )
-                        )
-
-        # Poll bulk renamer events
-        engine = getattr(self, "_renamer_engine", None)
-        if engine is not None:
-            from ..agent.bulk_renamer import RenameEventType
-
-            for _ in range(20):
-                rename_event = engine.poll_event()
-                if rename_event is None:
-                    break
-                if hasattr(self, "_bulk_renamer"):
-                    _RENAME_STATUS_MAP = {
-                        RenameEventType.JOB_STARTED: "analyzing",
-                        RenameEventType.JOB_COMPLETED: "renamed",
-                        RenameEventType.JOB_ERROR: "error",
-                    }
-                    if rename_event.type in _RENAME_STATUS_MAP:
-                        status = _RENAME_STATUS_MAP[rename_event.type]
-                        # Undo: JOB_COMPLETED with empty new_name means reverted
-                        if rename_event.type == RenameEventType.JOB_COMPLETED and not rename_event.new_name:
-                            status = "reverted"
-                        self._bulk_renamer.update_job(
-                            rename_event.address,
-                            rename_event.new_name,
-                            status,
-                            rename_event.error,
-                        )
-                    if rename_event.type in (
-                        RenameEventType.BATCH_PROGRESS,
-                        RenameEventType.ALL_DONE,
-                    ):
-                        self._bulk_renamer.set_progress(
-                            rename_event.completed,
-                            rename_event.total,
                         )
 
     def _on_undo_requested(self, count: int) -> None:
