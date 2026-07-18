@@ -322,6 +322,11 @@ class _FakeTabWidget:
             if self._current >= len(self._tabs):
                 self._current = len(self._tabs) - 1
 
+    def insertTab(self, index, widget, label):
+        self._tabs.insert(index, widget)
+        self._current = index
+        return index
+
     def setCurrentIndex(self, index):
         self._current = index
 
@@ -687,15 +692,18 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
         )
 
     def test_open_creates_one_tab_then_focus_no_duplicate(self):
-        """Spec 10.2: open creates one tab; selecting again focuses it."""
+        """Spec 10.2: open reuses the empty active draft, so the tab count
+        does not grow; selecting again focuses it.
+        """
         self.assertEqual(self.facade.tab_count(), 1)
         self.facade.open_history()
         self.facade.open_history_session(self.a1_id)
-        self.assertEqual(self.facade.tab_count(), 2)
+        # Active tab was an empty draft -> reused in place, no new tab.
+        self.assertEqual(self.facade.tab_count(), 1)
         # Selecting the SAME persisted id again must focus the existing
         # tab, not open a duplicate (pre- or post-load dedupe).
         self.facade.open_history_session(self.a1_id)
-        self.assertEqual(self.facade.tab_count(), 2)
+        self.assertEqual(self.facade.tab_count(), 1)
 
     def test_idb_switch_resets_one_empty_new_chat(self):
         """Spec 7.2: switching IDBs leaves exactly one empty New Chat
@@ -754,13 +762,14 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
             {self.a1_id, self.a2_id},
         )
 
-        # Step 3: open a1 -> one additional tab.
+        # Step 3: open a1 -> reuses the empty active draft (REUSED), so
+        # the tab count stays 1 but the session is now a1.
         self.facade.open_history_session(self.a1_id)
-        self.assertEqual(self.facade.tab_count(), 2)
+        self.assertEqual(self.facade.tab_count(), 1)
 
-        # Step 4: open a1 again -> focus, no duplicate.
+        # Step 4: open a1 again -> focus, no duplicate (ALREADY_OPEN).
         self.facade.open_history_session(self.a1_id)
-        self.assertEqual(self.facade.tab_count(), 2)
+        self.assertEqual(self.facade.tab_count(), 1)
 
         # Step 5: switch to IDB-B -> exactly one empty New Chat.
         self.facade.on_database_changed(self.idb_b)

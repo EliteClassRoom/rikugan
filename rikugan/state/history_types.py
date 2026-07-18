@@ -79,6 +79,7 @@ class HistoryAttachStatus(str, Enum):
 
     OPENED = "opened"
     ALREADY_OPEN = "already_open"
+    REUSED = "reused"
     STALE_SCOPE = "stale_scope"
 
 

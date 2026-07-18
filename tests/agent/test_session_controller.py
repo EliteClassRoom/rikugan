@@ -133,8 +133,10 @@ class TestIdaSessionController(unittest.TestCase):
         assert loaded.status is HistoryRequestStatus.LOADED  # type: ignore[union-attr]
         before = len(self.ctrl.tab_ids)
         attached = self.ctrl.attach_history_session(loaded)
-        self.assertIs(attached.status, HistoryAttachStatus.OPENED)
-        self.assertEqual(len(self.ctrl.tab_ids), before + 1)
+        # new_chat() left the active tab as an empty draft, so attach
+        # reuses it (REUSED) instead of creating a new tab.
+        self.assertIs(attached.status, HistoryAttachStatus.REUSED)
+        self.assertEqual(len(self.ctrl.tab_ids), before)
         self.assertEqual(self.ctrl._sessions[attached.tab_id].id, saved_id)
         self.assertEqual(len(self.ctrl._sessions[attached.tab_id].messages), 1)
         self.assertEqual(self.ctrl._sessions[attached.tab_id].messages[0].content, "persisted")
@@ -160,7 +162,8 @@ class TestIdaSessionController(unittest.TestCase):
             loaded = ctrl2.load_history_session(saved_id, scope)
             assert loaded.status is HistoryRequestStatus.LOADED  # type: ignore[union-attr]
             attached = ctrl2.attach_history_session(loaded)
-            self.assertIs(attached.status, HistoryAttachStatus.OPENED)
+            # Fresh controller's active tab is an empty draft -> REUSED.
+            self.assertIs(attached.status, HistoryAttachStatus.REUSED)
             self.assertIsNotNone(attached.session)
             self.assertEqual(attached.session.id, saved_id)  # type: ignore[union-attr]
             self.assertEqual(len(attached.session.messages), 2)  # type: ignore[union-attr]
@@ -191,7 +194,8 @@ class TestIdaSessionController(unittest.TestCase):
             loaded = ctrl2.load_history_session(saved_id, scope)
             assert loaded.status is HistoryRequestStatus.LOADED  # type: ignore[union-attr]
             attached = ctrl2.attach_history_session(loaded)
-            self.assertIs(attached.status, HistoryAttachStatus.OPENED)
+            # Fresh controller's active tab is an empty draft -> REUSED.
+            self.assertIs(attached.status, HistoryAttachStatus.REUSED)
             self.assertIsNotNone(attached.session)
             self.assertEqual(len(attached.session.messages), 3)  # type: ignore[union-attr]
             self.assertEqual(
@@ -263,9 +267,37 @@ class TestIdaSessionController(unittest.TestCase):
 
         second = self.ctrl.attach_history_session(loaded)
 
-        self.assertIs(first.status, HistoryAttachStatus.OPENED)
+        # First attach reuses the empty active tab (REUSED), second sees
+        # the persisted id already open (ALREADY_OPEN).
+        self.assertIs(first.status, HistoryAttachStatus.REUSED)
         self.assertIs(second.status, HistoryAttachStatus.ALREADY_OPEN)
         self.assertEqual(second.tab_id, first.tab_id)
+
+    def test_attach_reuses_empty_active_tab(self) -> None:
+        """Loading a session into an empty active draft reuses its tab."""
+        saved_id = self._save_history_session(self.ctrl._db_instance_id)
+        active_tab_id = self.ctrl.active_tab_id
+        scope = self.ctrl.capture_history_scope(generation=3)
+        loaded = self.ctrl.load_history_session(saved_id, scope)
+
+        result = self.ctrl.attach_history_session(loaded)
+
+        self.assertIs(result.status, HistoryAttachStatus.REUSED)
+        self.assertEqual(result.tab_id, active_tab_id)
+        self.assertEqual(self.ctrl.session.id, saved_id)
+
+    def test_attach_creates_new_tab_when_active_has_messages(self) -> None:
+        """A non-empty active tab keeps the historical 'new tab' behaviour."""
+        saved_id = self._save_history_session(self.ctrl._db_instance_id)
+        # Make the active draft non-empty so it cannot be reused.
+        self.ctrl.session.add_message(Message(role=Role.USER, content="in-progress"))
+        scope = self.ctrl.capture_history_scope(generation=3)
+        loaded = self.ctrl.load_history_session(saved_id, scope)
+
+        result = self.ctrl.attach_history_session(loaded)
+
+        self.assertIs(result.status, HistoryAttachStatus.OPENED)
+        self.assertNotEqual(result.tab_id, self.ctrl.active_tab_id)
 
     def test_attach_rejects_stale_live_scope(self) -> None:
         loaded = self._loaded_result_for_current_idb(generation=4)

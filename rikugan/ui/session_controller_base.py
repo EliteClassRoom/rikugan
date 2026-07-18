@@ -795,6 +795,18 @@ class SessionControllerBase:
                 tab_id=existing_tab_id,
                 session=session,
             )
+        # Reuse path: if the active tab is an untouched empty draft,
+        # load the historical session INTO it instead of spawning a new
+        # tab. This matches the user mental model of "open a chat into
+        # the blank New Chat I'm looking at". A non-empty active tab (a
+        # real conversation in progress) keeps the historical behaviour
+        # of creating a new tab.
+        active_tab_id = self._active_tab_id
+        active_session = self._sessions.get(active_tab_id) if active_tab_id else None
+        if active_session is not None and not active_session.messages:
+            self._sessions[active_tab_id] = session  # type: ignore[assignment]
+            log_info(f"Reused active tab {active_tab_id} for history session {session.id}")
+            return HistoryAttachResult(status=HistoryAttachStatus.REUSED, tab_id=active_tab_id, session=session)
         tab_id = uuid.uuid4().hex[:8]
         self._sessions[tab_id] = session
         log_info(f"Attached history session {session.id} as tab {tab_id}")

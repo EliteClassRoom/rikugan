@@ -2530,6 +2530,56 @@ class TestApplyHistoryLoaded(unittest.TestCase):
         panel._focus_tab.assert_not_called()
         panel._history_panel.set_error.assert_not_called()
 
+    def test_reused_rebuilds_active_tab_in_place(self) -> None:
+        """REUSED: rebuild the active tab's ChatView instead of adding a new tab.
+
+        The controller loaded a historical session INTO the empty active
+        draft (same tab_id). PanelCore must rebuild that tab's ChatView and
+        trigger async restore over the same tab_id — never create a new tab.
+        """
+        from rikugan.state.history_types import (
+            HistoryAttachResult,
+            HistoryAttachStatus,
+            HistoryRequestStatus,
+        )
+
+        panel = self._panel()
+        # The session has messages so the rebuild path stashes them.
+        session = MagicMock(name="session")
+        session.messages = ["m1", "m2"]
+        scope = MagicMock(name="scope")
+        load_result = _make_load_result(
+            HistoryRequestStatus.LOADED,
+            scope,
+            session=session,
+        )
+        attach_result = HistoryAttachResult(
+            status=HistoryAttachStatus.REUSED,
+            tab_id="tab-active",
+            session=session,
+        )
+        panel._ctrl.attach_history_session.return_value = attach_result
+        panel._ctrl.tab_label.return_value = "Chat"
+        # ``_rebuild_history_tab`` touches the real tab widget helpers; stub
+        # the primitives the bare ``_make_history_panel`` fixture leaves as
+        # MagicMocks so they cannot raise on ``count()`` / ``indexOf``.
+        panel._tab_widget.indexOf.return_value = 0
+        panel._tab_widget.count.return_value = 1
+        # Seed an existing (empty) view so the rebuild tears it down.
+        panel._chat_views["tab-active"] = MagicMock(name="old_view")
+
+        panel._apply_history_loaded(load_result)
+
+        # Never created a brand-new tab.
+        panel._create_tab.assert_not_called()
+        # Tab label was queried for the rebuilt view.
+        panel._ctrl.tab_label.assert_called_once_with("tab-active")
+        # Pending payload stashed for the reused tab_id.
+        self.assertEqual(panel._pending_restore_messages["tab-active"], ["m1", "m2"])
+        # Async restore + focus over the reused tab.
+        panel._restore_messages_if_needed.assert_called_once_with("tab-active")
+        panel._focus_tab.assert_called_once_with("tab-active")
+
     def test_not_found_refreshes_list_once(self) -> None:
         """NOT_FOUND shows exact copy then triggers exactly one list refresh
         (spec §13).  Reviewer MEDIUM #1: ``_apply_history_loaded`` no longer

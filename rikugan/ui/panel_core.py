@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from ..agent.mutation import MutationRecord
 from ..agent.turn import TurnEvent, TurnEventType
@@ -25,6 +25,10 @@ from ..state.history_types import (
     HistoryRequestStatus,
     HistoryScope,
 )
+
+if TYPE_CHECKING:
+    from ..state.session import SessionState
+
 from .chat_view import ChatView
 from .context_bar import ContextBar
 from .export_formatting import (
@@ -873,6 +877,55 @@ class RikuganPanelCore(QWidget):
         self._tab_widget.setCurrentIndex(index)
         self._update_tab_bar_visibility()
         return chat_view
+
+    def _rebuild_history_tab(self, tab_id: str, session: SessionState | None) -> None:
+        """Replace the ChatView of an existing tab with a fresh one.
+
+        Used by the History ``REUSED`` path (spec §10.3): the active tab was
+        an empty New Chat draft and the loaded session replaced it in place.
+        The old ChatView (an empty ``New Chat`` surface) is torn down and a
+        new one is inserted at the same splitter index, then the historical
+        messages are restored asynchronously.  ``tab_id`` does not change, so
+        ``_pending_restore_messages`` and ``_chat_views`` stay consistent.
+        """
+        old_view = self._chat_views.get(tab_id)
+        index = -1
+        if old_view is not None:
+            index = self._tab_widget.indexOf(old_view)
+        # Stash the pending payload first so the freshly built ChatView
+        # renders it on the deferred restore path.
+        messages = list(session.messages) if session and session.messages else []
+        self._pending_restore_messages[tab_id] = messages
+        # Tear down the old (empty) ChatView if it exists.  ``shutdown``
+        # bumps its restore generation so any late restore signal drops.
+        if old_view is not None:
+            try:
+                old_view.shutdown()
+            except (RuntimeError, TypeError) as exc:  # defensive — never block restore
+                log_debug(f"history rebuild old view shutdown failed: {exc}")
+            if index >= 0:
+                self._tab_widget.removeTab(index)
+            del self._chat_views[tab_id]
+            try:
+                old_view.deleteLater()
+            except (RuntimeError, TypeError):
+                pass
+        new_view = ChatView()
+        new_view.setProperty("tab_id", tab_id)
+        new_view.tool_approval_submitted.connect(self._on_tool_approval)
+        new_view.user_answer_submitted.connect(self._on_user_answer_submitted)
+        new_view.orchestra_approval_decided.connect(self._on_orchestra_approval)
+        self._chat_views[tab_id] = new_view
+        label = self._ctrl.tab_label(tab_id)
+        if index >= 0:
+            self._tab_widget.insertTab(index, new_view, label)
+        else:
+            index = self._tab_widget.addTab(new_view, label)
+        self._tab_widget.setCurrentIndex(index)
+        self._update_tab_bar_visibility()
+        self._restore_messages_if_needed(tab_id)
+        self._focus_tab(tab_id)
+        return
 
     def _on_orchestra_approval(self, tool_call_id: str, decision: str) -> None:
         """Forward orchestra delegation approval to the agent loop.
@@ -2171,6 +2224,13 @@ class RikuganPanelCore(QWidget):
                 self._create_tab(tab_id, "Chat")
                 self._restore_messages_if_needed(tab_id)
                 self._focus_tab(tab_id)
+            elif attach.status is HistoryAttachStatus.REUSED:
+                # The active tab was an empty New Chat draft; the
+                # loaded session replaced it in place (same tab_id).
+                # Rebuild the ChatView over that tab slot and render the
+                # historical messages so the user sees the chat they
+                # opened instead of a blank tab + a duplicate tab.
+                self._rebuild_history_tab(attach.tab_id, attach.session)
             elif attach.status is HistoryAttachStatus.ALREADY_OPEN:
                 self._focus_tab(attach.tab_id)
             # Any successful attach resolution clears a retained
