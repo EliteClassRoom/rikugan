@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Central memory subsystem (`BinaryMemoryService`) now the sole persistent
   memory path — SQLite structured facts + `MEMORY.md` managed region.
 
+### Changed
+- Chat history is now on demand. Opening Rikugan or switching IDBs starts with one empty `New Chat`; use History to reopen chats for the current IDB.
+
 ### Removed
+- Removed `startup_restore_sessions`. Older config files may retain the key, but Rikugan ignores it and omits it on the next save.
 - Legacy `RIKUGAN.md` runtime read/write. **Legacy `RIKUGAN.md` data is
   not migrated — the old file is ignored.**
 - `rikugan/memory/legacy.py` importer (clean break, no migration tool).

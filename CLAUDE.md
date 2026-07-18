@@ -176,6 +176,10 @@ Mọi tool call mutate database đều capture pre-state + build reverse operati
 
 Auto-compaction khi vượt 80% token window. Tóm tắt đi qua `strip_injection_markers()` trước khi lưu. Persistent memory chạy trên **central memory subsystem** (`BinaryMemoryService` — SQLite structured facts + `MEMORY.md` manual notes) luôn-on; agent ghi qua `save_memory` tool, load vào system prompt mỗi session.
 
+### Chat history (on demand)
+
+HistoryPanel owns presentation only. RikuganPanelCore owns the dedicated history executor, bounded queue, main-thread poll timer, and generation. History never auto-restores and never uses `_SAVE_EXECUTOR`.
+
 ---
 
 ## Cảnh báo quan trọng (đọc trước khi sửa code)

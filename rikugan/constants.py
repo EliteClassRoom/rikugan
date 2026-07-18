@@ -46,3 +46,12 @@ MEMORY_REGISTRY_SCHEMA_VERSION = 2
 MEMORY_WORKSPACE_SCHEMA_VERSION = 1
 MEMORY_LOCK_TIMEOUT_SECONDS = 5.0
 MEMORY_MARKDOWN_MAX_BYTES = 16 * 1024 * 1024
+
+# ---------------------------------------------------------------------------
+# On-demand chat history
+# ---------------------------------------------------------------------------
+# Maximum length (characters) of a derived history title. Titles originate
+# from untrusted user/LLM message content, are truncated by the shared
+# ``derive_history_title`` helper (spec section 9.1), and rendered as plain
+# text in the History panel and as a shorter tab label.
+HISTORY_TITLE_MAX_CHARS = 80

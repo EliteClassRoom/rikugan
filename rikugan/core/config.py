@@ -146,12 +146,6 @@ class RikuganConfig:
     # system prompt's token budget.
     knowledge_max_context_chars: int = 12_000
 
-    # Startup behavior
-    # "all"    — restore every saved session for this database (default, preserves existing behavior)
-    # "latest" — restore only the most recent session (opt-in, faster)
-    # "none"   — never restore sessions on startup
-    startup_restore_sessions: str = "all"
-
     # API key encryption
     encrypt_api_keys: bool = False
     _encryption_block: dict = field(default_factory=dict, repr=False)
@@ -207,8 +201,6 @@ class RikuganConfig:
             for k, v in self.custom_profiles.items():
                 if not isinstance(v, dict):
                     errors.append(f"custom_profiles['{k}'] must be a dict")
-        if self.startup_restore_sessions not in ("latest", "all", "none"):
-            errors.append(f"startup_restore_sessions '{self.startup_restore_sessions}' must be latest|all|none")
         if self.ida_output_log_level not in ("debug", "info", "warning", "error", "critical", "off"):
             errors.append(
                 f"ida_output_log_level '{self.ida_output_log_level}' must be debug|info|warning|error|critical|off"
@@ -233,9 +225,6 @@ class RikuganConfig:
             self.provider.max_tokens = max(1, self.provider.max_tokens)
             self.provider.context_window = max(1024, self.provider.context_window)
             self.max_retries = max(1, min(10, self.max_retries))
-            # Normalize invalid startup_restore_sessions to "all"
-            if self.startup_restore_sessions not in ("latest", "all", "none"):
-                self.startup_restore_sessions = "all"
             # Normalize invalid log verbosity to "warning"
             if self.ida_output_log_level not in ("debug", "info", "warning", "error", "critical", "off"):
                 self.ida_output_log_level = "warning"
@@ -333,7 +322,6 @@ class RikuganConfig:
             "a2a_agents",
             "bulk_renamer_batch_size",
             "bulk_renamer_max_concurrent",
-            "startup_restore_sessions",
             "oauth_consent_accepted",
             "encrypt_api_keys",
             "ida_output_log_level",
@@ -351,9 +339,6 @@ class RikuganConfig:
                 # new theme system.
                 if k == "theme" and val not in {"ida", "dark", "light", "auto"}:
                     val = "auto"
-                # Normalize invalid startup_restore_sessions to "all"
-                if k == "startup_restore_sessions" and val not in ("latest", "all", "none"):
-                    val = "all"
                 # Normalize invalid log verbosity to "warning"
                 if k == "ida_output_log_level" and val not in (
                     "debug",

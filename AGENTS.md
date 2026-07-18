@@ -113,16 +113,18 @@ rikugan/
 │
 ├── state/                    # Session persistence (host-agnostic)
 │   ├── session.py            # SessionState — message history, token tracking
-│   └── history.py            # SessionHistory — auto-save/restore per file
+│   ├── history.py            # SessionHistory — auto-save/restore per file
+│   └── history_types.py      # Frozen DTOs (SessionHistoryEntry, HistoryScope, list/load/attach results)
 │
 └── ui/                       # Shared UI widgets (Qt, host-agnostic)
-    ├── panel_core.py         # PanelCore — multi-tab chat, export, mutation log, event routing
-    ├── session_controller_base.py  # SessionControllerBase — multi-session, fork support
+    ├── panel_core.py         # PanelCore — multi-tab chat, export, mutation log, event routing, history coordinator
+    ├── session_controller_base.py  # SessionControllerBase — multi-session, fork support, history list/load/attach
     ├── chat_view.py          # Chat message display widget (queued message support)
     ├── input_area.py         # User input text area with skill autocomplete
     ├── context_bar.py        # Binary context status bar
     ├── message_widgets.py    # Message bubble widgets (tool calls, exploration, approval)
     ├── mutation_log_view.py  # MutationLogPanel — mutation history with undo
+    ├── history_panel.py      # HistoryPanel — current-IDB metadata-only side panel (presentation only)
     ├── markdown.py           # Markdown rendering for assistant messages
     ├── plan_view.py          # Plan-mode UI
     ├── settings_dialog.py    # Settings dialog (screen-aware sizing)
@@ -253,8 +255,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full technical details on all modes, 
 - `SessionControllerBase` manages a dict of `_sessions: Dict[str, SessionState]` keyed by tab ID
 - `PanelCore` uses a `QTabWidget` with closable tabs and a "+" button for new tabs
 - **Session fork**: right-click a tab → "Fork Session" to deep copy the conversation into a new tab (branch from a checkpoint)
-- Sessions are auto-saved per IDB file and restored when re-opening the same file
-- Opening a different file resets all tabs and attempts to restore that file's saved sessions
+- Sessions are auto-saved per IDB file. **History is on demand**: opening Rikugan or switching IDBs starts with one empty `New Chat`; opening the right-side History panel lists chats for the current IDB only, and selecting one opens it as a normal continuable tab.
+- Opening a different file resets the panel to one empty `New Chat` for the new IDB (previous chats remain on disk)
+- HistoryPanel owns presentation only. RikuganPanelCore owns the dedicated history executor, bounded queue, main-thread poll timer, and generation. History never auto-restores and never uses `_SAVE_EXECUTOR`.
 
 ## Approval Gates
 
@@ -393,8 +396,10 @@ rikugan/agent/prompts/
 | `rikugan/agent/loop.py` | Core agent loop — generator-based turn cycle |
 | `rikugan/tools/base.py` | `@tool` decorator, `ToolDefinition`, JSON schema generation |
 | `rikugan/tools/registry.py` | `ToolRegistry` — registration, dispatch, argument coercion |
-| `rikugan/ui/session_controller_base.py` | `SessionControllerBase` — multi-session orchestration |
-| `rikugan/ui/panel_core.py` | `PanelCore` — multi-tab chat, export, event routing |
+| `rikugan/ui/session_controller_base.py` | `SessionControllerBase` — multi-session orchestration, history list/load/attach |
+| `rikugan/ui/panel_core.py` | `PanelCore` — multi-tab chat, export, event routing, history coordinator (dedicated executor + queue + timer) |
+| `rikugan/ui/history_panel.py` | `HistoryPanel` — current-IDB metadata-only side panel (presentation only; no threads, no I/O) |
+| `rikugan/state/history_types.py` | Frozen history DTOs (`SessionHistoryEntry`, `HistoryScope`, list/load/attach results) |
 | `rikugan/ui/chat_view.py` | `ChatView` — message display, queued messages |
 | `rikugan/ui/message_widgets.py` | Message widgets including approval dialog |
 | `rikugan/core/config.py` | `RikuganConfig` — all settings, provider config, host paths |

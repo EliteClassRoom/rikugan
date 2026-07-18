@@ -13,10 +13,10 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult
-from rikugan.state.history import SessionHistory
-from rikugan.state.session import SessionState
+from rikugan.core.config import RikuganConfig  # noqa: E402
+from rikugan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult  # noqa: E402
+from rikugan.state.history import SessionHistory  # noqa: E402
+from rikugan.state.session import SessionState  # noqa: E402
 
 
 class TestSessionState(unittest.TestCase):
@@ -284,24 +284,6 @@ class TestSessionHistory(unittest.TestCase):
         ids = {s["id"] for s in sessions}
         self.assertEqual(ids, {"sess0", "sess1", "sess2"})
 
-    def test_get_latest_session(self):
-        history = SessionHistory(self.config)
-        s1 = SessionState(id="old", created_at=1000.0)
-        s1.add_message(Message(role=Role.USER, content="old"))
-        history.save_session(s1)
-
-        s2 = SessionState(id="new", created_at=2000.0)
-        s2.add_message(Message(role=Role.USER, content="new"))
-        history.save_session(s2)
-
-        latest = history.get_latest_session()
-        self.assertIsNotNone(latest)
-        self.assertEqual(latest.id, "new")
-
-    def test_get_latest_empty(self):
-        history = SessionHistory(self.config)
-        self.assertIsNone(history.get_latest_session())
-
     def test_delete_session(self):
         history = SessionHistory(self.config)
         s = SessionState(id="todelete")
@@ -366,6 +348,155 @@ class TestSessionHistory(unittest.TestCase):
         self.assertIn("xyz789", ids)
         self.assertNotIn("xyz789.summary", ids)
 
+
+class TestManifestV2AndTitleDerivation(unittest.TestCase):
+    """Spec §14.1 — title derivation, manifest v2, current-IDB filter reuse.
+
+    Task 3 of the on-demand history feature. These tests live in
+    ``tests/agent/test_state.py`` because the persistence layer is the
+    shared substrate between the controller and the UI; they pin the
+    behavior that downstream tasks (controller list/open, History panel
+    row rendering) build on top of.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.config = RikuganConfig(_config_dir=self.tmpdir)
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _make_session(
+        self,
+        session_id: str,
+        instance_id: str = "",
+        idb_path: str = "C:/sample.i64",
+        user_content: str = "analyze parser",
+    ) -> SessionState:
+        """Build a session with one user message — survives empty-row exclusion."""
+        session = SessionState(
+            id=session_id,
+            idb_path=idb_path,
+            db_instance_id=instance_id,
+            provider_name="anthropic",
+            model_name="claude",
+        )
+        session.add_message(Message(role=Role.USER, content=user_content))
+        return session
+
+    def test_save_derives_description_from_first_user_message(self):
+        """Spec §14.1 — first user message becomes the manifest description."""
+        history = SessionHistory(self.config)
+        session = self._make_session("derive0001id", user_content="  hello world  ")
+        history.save_session(session)
+
+        # Default ``list_sessions`` (no filter) returns all current-IDB rows.
+        rows = history.list_sessions()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["description"], "hello world")
+
+    def test_explicit_description_overrides_derivation(self):
+        """Spec §14.1 — explicit description wins over derivation."""
+        history = SessionHistory(self.config)
+        session = self._make_session("override001", user_content="ignored message")
+        history.save_session(session, description="explicit title")
+
+        rows = history.list_sessions()
+        self.assertEqual(rows[0]["description"], "explicit title")
+
+    def test_v1_manifest_triggers_rebuild_to_v2(self):
+        """Spec §14.1 — pre-v2 manifest triggers one-time rebuild without rewriting sessions."""
+        history = SessionHistory(self.config)
+        session = self._make_session("legacy01id01", user_content="legacy hello")
+        session_path = os.path.join(self.config.checkpoints_dir, "sessions", f"{session.id}.json")
+        history.save_session(session)
+        before = open(session_path, "rb").read()
+
+        manifest_path = os.path.join(self.config.checkpoints_dir, "sessions", "_session_manifest.json")
+        manifest = json.loads(open(manifest_path, encoding="utf-8").read())
+        manifest["version"] = 1
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f)
+
+        rows = history.list_sessions()
+        rebuilt = json.loads(open(manifest_path, encoding="utf-8").read())
+        self.assertEqual(rebuilt["version"], 2)
+        self.assertEqual(rows[0]["description"], "legacy hello")
+        self.assertIsInstance(rows[0]["updated_at"], int)
+        # Session JSON byte-identical (spec §9.2 — "never rewrites").
+        self.assertEqual(open(session_path, "rb").read(), before)
+
+    def test_rebuild_derives_updated_at_from_file_mtime(self):
+        """Spec §14.1 — ``updated_at`` is ``int(st_mtime)`` for display/sort."""
+        history = SessionHistory(self.config)
+        session = self._make_session("mtime001id0", user_content="mtime")
+        session_path = history.save_session(session)
+        expected_mtime = int(os.stat(session_path).st_mtime)
+
+        rows = history.list_sessions()
+        self.assertEqual(rows[0]["updated_at"], expected_mtime)
+
+    def test_empty_session_excluded_from_listing(self):
+        """Spec §14.1 + §7.3 — zero-message sessions never appear in History."""
+        history = SessionHistory(self.config)
+        # An empty session has no messages — must be excluded.
+        empty_session = SessionState(id="empty001002", idb_path="C:/sample.i64")
+        history.save_session(empty_session)
+
+        rows = history.list_sessions()
+        self.assertEqual(rows, [])
+
+    def test_current_idb_match_by_equal_instance_id(self):
+        """Spec §14.1 — same ``db_instance_id`` matches even with different paths."""
+        history = SessionHistory(self.config)
+        session = self._make_session(
+            "match001id01",
+            instance_id="abcdef0123456789abcdef0123456789",
+            idb_path="C:/other-path.i64",
+        )
+        history.save_session(session)
+
+        rows = history.list_sessions(
+            idb_path="C:/sample.i64",
+            db_instance_id="abcdef0123456789abcdef0123456789",
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], "match001id01")
+
+    def test_current_idb_rejects_different_instance_even_with_same_path(self):
+        """Spec §14.1 — different ``db_instance_id`` rejects even matching path."""
+        history = SessionHistory(self.config)
+        session = self._make_session(
+            "reject00001id",
+            instance_id="00000000000000000000000000000001",
+            idb_path="C:/sample.i64",
+        )
+        history.save_session(session)
+
+        rows = history.list_sessions(
+            idb_path="C:/sample.i64",
+            db_instance_id="00000000000000000000000000000002",
+        )
+        self.assertEqual(rows, [])
+
+    def test_legacy_entry_without_instance_matches_by_path(self):
+        """Spec §14.1 — entries without instance id fall back to path match."""
+        history = SessionHistory(self.config)
+        session = SessionState(
+            id="legacy00001",
+            idb_path="C:/sample.i64",
+            db_instance_id="",
+            provider_name="anthropic",
+            model_name="claude",
+        )
+        session.add_message(Message(role=Role.USER, content="legacy"))
+        history.save_session(session)
+
+        rows = history.list_sessions(idb_path="C:/sample.i64")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], "legacy00001")
 
 
 if __name__ == "__main__":

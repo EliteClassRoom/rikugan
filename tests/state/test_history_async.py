@@ -15,15 +15,24 @@ with conversation size.
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 import time
 import unittest
 from concurrent.futures import Future
 
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role
-from rikugan.state.history import SessionHistory
-from rikugan.state.session import SessionState
+# ``core.host`` snapshots the host at first import. Install IDA mocks before
+# importing Rikugan so collection order cannot freeze it in standalone mode.
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from tests.mocks.ida_mock import install_ida_mocks
+
+install_ida_mocks()
+
+from rikugan.core.config import RikuganConfig  # noqa: E402
+from rikugan.core.types import Message, Role  # noqa: E402
+from rikugan.state.history import SessionHistory  # noqa: E402
+from rikugan.state.session import SessionState  # noqa: E402
 
 
 def _make_session(message_count: int = 3) -> SessionState:

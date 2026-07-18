@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,10 @@ from rikugan.core.config import RikuganConfig  # noqa: E402
 from rikugan.core.types import Message, Role, TokenUsage, ToolCall, ToolResult  # noqa: E402
 from rikugan.ida.ui.session_controller import IdaSessionController  # noqa: E402
 from rikugan.state.history import SessionHistory  # noqa: E402
+from rikugan.state.history_types import (  # noqa: E402
+    HistoryAttachStatus,
+    HistoryRequestStatus,
+)
 
 
 class TestIdaSessionController(unittest.TestCase):
@@ -26,7 +31,13 @@ class TestIdaSessionController(unittest.TestCase):
         self.ctrl = IdaSessionController(self.cfg)
 
     def tearDown(self):
+        # Flush any pending async saves BEFORE shutting down so the
+        # background ``_SAVE_EXECUTOR`` finishes touching the tempdir.
+        SessionHistory.flush_saves()
         self.ctrl.shutdown()
+        # ``_config_dir`` is a per-test tempdir — clean up so we don't
+        # leak hundreds of them across the cumulative test run.
+        shutil.rmtree(self.cfg._config_dir, ignore_errors=True)
 
     def test_initial_session_state(self):
         self.assertIsNotNone(self.ctrl.session)
@@ -102,7 +113,7 @@ class TestIdaSessionController(unittest.TestCase):
         self.assertTrue(any(s["id"] == self.ctrl.session.id for s in sessions))
 
     def test_restore_session(self):
-        # Save a session first
+        # Persist a session through the on-agent-finished auto-save path.
         self.ctrl.session.add_message(Message(role=Role.USER, content="persisted"))
         self.cfg.checkpoint_auto_save = True
         self.ctrl.on_agent_finished()
@@ -112,19 +123,24 @@ class TestIdaSessionController(unittest.TestCase):
         # before reading the session back from disk.
         SessionHistory.flush_saves()
 
-        # New chat, then restore
+        # New chat, then load -> attach through the new history API.
         self.ctrl.new_chat()
         SessionHistory.flush_saves()
         self.assertNotEqual(self.ctrl.session.id, saved_id)
 
-        restored = self.ctrl.restore_session()
-        self.assertIsNotNone(restored)
-        self.assertEqual(self.ctrl.session.id, saved_id)
-        self.assertEqual(len(self.ctrl.session.messages), 1)
-        self.assertEqual(self.ctrl.session.messages[0].content, "persisted")
+        scope = self.ctrl.capture_history_scope(generation=1)
+        loaded = self.ctrl.load_history_session(saved_id, scope)
+        assert loaded.status is HistoryRequestStatus.LOADED  # type: ignore[union-attr]
+        before = len(self.ctrl.tab_ids)
+        attached = self.ctrl.attach_history_session(loaded)
+        self.assertIs(attached.status, HistoryAttachStatus.OPENED)
+        self.assertEqual(len(self.ctrl.tab_ids), before + 1)
+        self.assertEqual(self.ctrl._sessions[attached.tab_id].id, saved_id)
+        self.assertEqual(len(self.ctrl._sessions[attached.tab_id].messages), 1)
+        self.assertEqual(self.ctrl._sessions[attached.tab_id].messages[0].content, "persisted")
 
     def test_restore_preserves_token_usage(self):
-        """Full round-trip: save with token usage -> restore -> verify preserved."""
+        """Full round-trip: save with token usage -> load+attach -> verify preserved."""
         usage = TokenUsage(prompt_tokens=100, completion_tokens=50, total_tokens=150)
         self.ctrl.session.add_message(Message(role=Role.USER, content="question"))
         self.ctrl.session.add_message(
@@ -137,17 +153,26 @@ class TestIdaSessionController(unittest.TestCase):
         # Flush the off-main-thread save before a fresh controller reads it.
         SessionHistory.flush_saves()
 
-        # Create fresh controller to avoid in-memory state
+        # Create fresh controller and load+attach through the new path.
         ctrl2 = IdaSessionController(self.cfg)
-        restored = ctrl2.restore_session()
-        self.assertIsNotNone(restored)
-        self.assertEqual(restored.id, saved_id)
-        self.assertEqual(len(restored.messages), 2)
-        self.assertEqual(restored.messages[1].content, "answer")
-        ctrl2.shutdown()
+        try:
+            scope = ctrl2.capture_history_scope(generation=1)
+            loaded = ctrl2.load_history_session(saved_id, scope)
+            assert loaded.status is HistoryRequestStatus.LOADED  # type: ignore[union-attr]
+            attached = ctrl2.attach_history_session(loaded)
+            self.assertIs(attached.status, HistoryAttachStatus.OPENED)
+            self.assertIsNotNone(attached.session)
+            self.assertEqual(attached.session.id, saved_id)  # type: ignore[union-attr]
+            self.assertEqual(len(attached.session.messages), 2)  # type: ignore[union-attr]
+            self.assertEqual(
+                attached.session.messages[1].content,
+                "answer",  # type: ignore[union-attr]
+            )
+        finally:
+            ctrl2.shutdown()
 
     def test_restore_preserves_tool_calls(self):
-        """Full round-trip: save with tool calls -> restore -> verify preserved."""
+        """Full round-trip: save with tool calls -> load+attach -> verify preserved."""
         tc = ToolCall(id="tc_1", name="get_info", arguments={"addr": "0x1000"})
         tr = ToolResult(tool_call_id="tc_1", name="get_info", content="data here")
         self.ctrl.session.add_message(Message(role=Role.USER, content="analyze"))
@@ -157,16 +182,132 @@ class TestIdaSessionController(unittest.TestCase):
         self.ctrl.session.add_message(Message(role=Role.TOOL, tool_results=[tr]))
         self.cfg.checkpoint_auto_save = True
         self.ctrl.on_agent_finished()
+        saved_id = self.ctrl.session.id
         SessionHistory.flush_saves()
 
         ctrl2 = IdaSessionController(self.cfg)
-        restored = ctrl2.restore_session()
-        self.assertIsNotNone(restored)
-        self.assertEqual(len(restored.messages), 3)
-        self.assertEqual(len(restored.messages[1].tool_calls), 1)
-        self.assertEqual(restored.messages[1].tool_calls[0].name, "get_info")
-        self.assertEqual(restored.messages[2].tool_results[0].content, "data here")
-        ctrl2.shutdown()
+        try:
+            scope = ctrl2.capture_history_scope(generation=1)
+            loaded = ctrl2.load_history_session(saved_id, scope)
+            assert loaded.status is HistoryRequestStatus.LOADED  # type: ignore[union-attr]
+            attached = ctrl2.attach_history_session(loaded)
+            self.assertIs(attached.status, HistoryAttachStatus.OPENED)
+            self.assertIsNotNone(attached.session)
+            self.assertEqual(len(attached.session.messages), 3)  # type: ignore[union-attr]
+            self.assertEqual(
+                len(attached.session.messages[1].tool_calls),
+                1,  # type: ignore[union-attr]
+            )
+            self.assertEqual(
+                attached.session.messages[1].tool_calls[0].name,
+                "get_info",  # type: ignore[union-attr]
+            )
+            self.assertEqual(
+                attached.session.messages[2].tool_results[0].content,
+                "data here",  # type: ignore[union-attr]
+            )
+        finally:
+            ctrl2.shutdown()
+
+    # ------------------------------------------------------------------
+    # Task 5 — Controller History APIs (capture / list / load / attach)
+    # ------------------------------------------------------------------
+
+    def _save_history_session(self, instance_id: str) -> str:
+        """Persist a session directly through SessionHistory (no auto-save path)."""
+        from rikugan.state.session import SessionState
+
+        session = SessionState(
+            id="saved-history",
+            idb_path=self.ctrl._idb_path,
+            db_instance_id=instance_id,
+        )
+        session.add_message(Message(role=Role.USER, content="Analyze parser"))
+        SessionHistory(self.cfg).save_session(session)
+        return session.id
+
+    def _loaded_result_for_current_idb(self, generation: int):
+        """Save a session for the live IDB, then load it through the new API."""
+        saved_id = self._save_history_session(self.ctrl._db_instance_id)
+        scope = self.ctrl.capture_history_scope(generation)
+        return self.ctrl.load_history_session(saved_id, scope)
+
+    def _load_result_for_instance(self, *, saved_instance: str, live_instance: str):
+        """Set the live IDB, save a session for ``saved_instance``, then load it."""
+        self.ctrl._db_instance_id = live_instance
+        saved_id = self._save_history_session(saved_instance)
+        scope = self.ctrl.capture_history_scope(generation=1)
+        return self.ctrl.load_history_session(saved_id, scope)
+
+    def test_capture_history_scope_carries_live_identity(self) -> None:
+        scope = self.ctrl.capture_history_scope(generation=7)
+        self.assertEqual(scope.idb_path, self.ctrl._idb_path)
+        self.assertEqual(scope.db_instance_id, self.ctrl._db_instance_id)
+        self.assertEqual(scope.generation, 7)
+
+    def test_load_does_not_mutate_sessions(self) -> None:
+        saved_id = self._save_history_session(self.ctrl._db_instance_id)
+        scope = self.ctrl.capture_history_scope(generation=3)
+        before = dict(self.ctrl._sessions)
+
+        result = self.ctrl.load_history_session(saved_id, scope)
+
+        self.assertIs(result.status, HistoryRequestStatus.LOADED)
+        self.assertEqual(self.ctrl._sessions, before)
+
+    def test_attach_returns_already_open_for_persisted_id(self) -> None:
+        saved_id = self._save_history_session(self.ctrl._db_instance_id)
+        scope = self.ctrl.capture_history_scope(generation=3)
+        loaded = self.ctrl.load_history_session(saved_id, scope)
+        first = self.ctrl.attach_history_session(loaded)
+
+        second = self.ctrl.attach_history_session(loaded)
+
+        self.assertIs(first.status, HistoryAttachStatus.OPENED)
+        self.assertIs(second.status, HistoryAttachStatus.ALREADY_OPEN)
+        self.assertEqual(second.tab_id, first.tab_id)
+
+    def test_attach_rejects_stale_live_scope(self) -> None:
+        loaded = self._loaded_result_for_current_idb(generation=4)
+        # Simulate an IDB switch on the Qt main thread between load and attach.
+        self.ctrl._db_instance_id = "b" * 32
+
+        result = self.ctrl.attach_history_session(loaded)
+
+        self.assertIs(result.status, HistoryAttachStatus.STALE_SCOPE)
+
+    def test_wrong_idb_payload_is_not_loaded(self) -> None:
+        result = self._load_result_for_instance(saved_instance="a" * 32, live_instance="b" * 32)
+        self.assertIs(result.status, HistoryRequestStatus.WRONG_IDB)
+        self.assertIsNone(result.session)
+
+    def test_find_tab_matches_session_id_not_tab_id(self) -> None:
+        tab_id = self.ctrl.active_tab_id
+        persisted_id = self.ctrl.session.id
+        self.assertEqual(self.ctrl.find_tab_for_session(persisted_id), tab_id)
+        self.assertIsNone(self.ctrl.find_tab_for_session(tab_id))
+
+    def test_list_history_sessions_returns_entries_without_loading_payload(self) -> None:
+        saved_id = self._save_history_session(self.ctrl._db_instance_id)
+        scope = self.ctrl.capture_history_scope(generation=2)
+
+        entries = self.ctrl.list_history_sessions(scope)
+
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry.session_id, saved_id)
+        self.assertEqual(entry.message_count, 1)
+        self.assertEqual(entry.title, "Analyze parser")
+
+    def test_tab_label_uses_shared_helper(self) -> None:
+        """tab_label must derive from the shared helper at max_chars=20."""
+        self.ctrl.session.add_message(Message(role=Role.USER, content="A" * 50))
+        label = self.ctrl.tab_label(self.ctrl.active_tab_id)
+        self.assertEqual(len(label), 20)
+        self.assertTrue(label.startswith("A"))
+
+    def test_tab_label_empty_session_is_new_chat(self) -> None:
+        self.assertEqual(self.ctrl.tab_label(self.ctrl.active_tab_id), "New Chat")
 
     def test_shutdown_is_idempotent(self):
         self.ctrl.shutdown()
@@ -243,6 +384,10 @@ class TestEnsureAdvancedToolsReady(unittest.TestCase):
         # We don't want to construct a real registry here, so we
         # bypass the property and attach a stub directly.
         ctrl._tool_registry = _StubToolRegistry()
+        # ``_make_controller`` does not go through ``setUp/tearDown``
+        # (each test method builds its own controller), so register
+        # the tempdir cleanup on the test case explicitly.
+        self.addCleanup(shutil.rmtree, cfg._config_dir, ignore_errors=True)
         return ctrl
 
     def test_returns_false_without_raising_when_callback_raises(self):
@@ -350,20 +495,27 @@ class TestEnsureAdvancedToolsReady(unittest.TestCase):
 # enumeration methods raise ``ImportError``.
 
 
-@unittest.expectedFailure
 class TestIdaFunctionEnumerationImportFailures(unittest.TestCase):
     """A failed IDA import must not leave a stale enumeration iterator.
 
-    Marked expectedFailure: these tests assert that ``idautils``,
-    ``ida_funcs``, ``ida_name`` raise ImportError when IDA's mock
-    layer is absent. They pass in isolation but fail in the full
-    suite because earlier test files import those modules for real,
-    leaving them in :data:`sys.modules` when this class runs.
+    Pinning contract: when ``idautils`` / ``ida_funcs`` / ``ida_name``
+    cannot be imported during ``begin_function_enumeration`` or
+    ``next_function_chunk``, ``_funcs_iter`` MUST be cleared and the
+    ``ImportError`` MUST propagate so callers can recover.
 
-    The right fix is per-test isolation: re-exec the module under
-    a controlled ``sys.modules`` that excludes the target import.
-    This requires deep IDA test-infrastructure knowledge and is
-    tracked in PROJECT_MODIFICATION_PLAN.md as D.3 remaining work.
+    These tests pass reliably in isolation, in the full suite, and
+    under repeat runs (verified 20/20) because they patch
+    ``importlib.import_module`` to raise ``ImportError`` for the
+    target module name only — earlier test files loading the real
+    ``idautils``/``ida_funcs``/``ida_name`` modules into
+    :data:`sys.modules` is irrelevant: the patched import path is
+    taken regardless of whether the real module is already cached.
+
+    The earlier ``@unittest.expectedFailure`` marker was stale —
+    it was added before the production-side fix landed
+    (``begin_function_enumeration`` / ``next_function_chunk`` now
+    clear ``_funcs_iter`` on import failure) and was retained as a
+    stale flag.  Re-evaluated: removed.
     """
 
     def _make_controller(self):
@@ -371,6 +523,13 @@ class TestIdaFunctionEnumerationImportFailures(unittest.TestCase):
 
         cfg = RikuganConfig()
         cfg._config_dir = tempfile.mkdtemp()
+        # Each test builds its own controller — register the tempdir
+        # cleanup on the test case so the per-test tempdir is reclaimed.
+        # ``addCleanup`` is LIFO: shutdown runs first (closer in time to
+        # the test body), rmtree runs last so any pending async save
+        # finishes touching the tempdir before we delete it.
+        self.addCleanup(shutil.rmtree, cfg._config_dir, ignore_errors=True)
+        self.addCleanup(SessionHistory.flush_saves)
         return IdaSessionController(cfg)
 
     def test_begin_function_enumeration_clears_state_on_idautils_import_error(self) -> None:
@@ -481,7 +640,10 @@ class TestUpdateSettingsSkillReload(unittest.TestCase):
         self.ctrl._runtime_init_done.wait(timeout=10)
 
     def tearDown(self):
+        # Flush any pending async saves before tearing the tempdir.
+        SessionHistory.flush_saves()
         self.ctrl.shutdown()
+        shutil.rmtree(self.cfg._config_dir, ignore_errors=True)
 
     def test_provider_only_change_does_not_reload_skills(self):
         # Changing only provider/model/theme must NOT trigger a skill

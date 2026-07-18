@@ -9,17 +9,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 import time
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
-from ..constants import SESSION_SCHEMA_VERSION
+from ..constants import HISTORY_TITLE_MAX_CHARS, SESSION_SCHEMA_VERSION
 from ..core.config import RikuganConfig
 from ..core.logging import log_debug, log_warning
 from ..core.types import (
     Message,
+    Role,
     _safe_persisted_identifier,
     _safe_persisted_text,
 )
@@ -32,7 +35,38 @@ from .session import SessionState
 
 
 MANIFEST_FILE = "_session_manifest.json"
-MANIFEST_SCHEMA_VERSION = 1
+#: Title-aware manifest shape (spec §9.2). The bump from 1 → 2 introduces
+#: ``updated_at`` (whole-seconds mtime) on each entry and forces a one-time
+#: rebuild that derives titles from existing session JSON without rewriting
+#: any session file.
+MANIFEST_SCHEMA_VERSION = 2
+
+#: Fallback used by :func:`derive_history_title` when no usable user
+#: message survives sanitization. Rendered as plain text in History rows
+#: and shorter tab labels — never interpolated into QSS or sent to the
+#: LLM (spec §11.3).
+UNTITLED_HISTORY_TITLE = "Untitled chat"
+
+#: Conservative session-id rule (spec §11.1). The current generator emits
+#: 12 lowercase hex characters, so the existing ID space is a strict
+#: subset of this rule. ``-`` and ``_`` allow human-readable IDs without
+#: permitting any path separator, NUL, or control character.
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+
+def _validate_session_id(session_id: object) -> bool:
+    """Return True iff *session_id* is a safe filesystem identifier.
+
+    Rejects non-strings, empty strings, the ``.``/``..`` specials, and
+    anything outside ``[A-Za-z0-9_-]{1,32}``. Used as the single guard
+    at every SessionHistory boundary that accepts a session id.
+    """
+    if not isinstance(session_id, str):
+        return False
+    if not session_id or session_id in {".", ".."}:
+        return False
+    return _SESSION_ID_RE.fullmatch(session_id) is not None
+
 
 #: Fork writes a ``{id}.summary.json`` beside each session with ``messages``
 #: as an int count (not a list) for fast listing. MAIN never writes these,
@@ -58,6 +92,103 @@ def _normalize_db_path(path: str) -> str:
         return path
 
 
+_HEX_INSTANCE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _canonical_instance_id(value: object) -> str:
+    """Return the canonical 32-hex ``db_instance_id`` or empty string.
+
+    Spec section 8.3 mandates that persisted instance IDs are sanitized
+    and compared as canonical lowercase hex after trimming surrounding
+    whitespace. Malformed values (wrong length, non-hex, ``None``) are
+    treated as absent so the caller falls back to the legacy path-based
+    match rather than silently rejecting a valid same-path row.
+    """
+    if value is None:
+        return ""
+    text = _safe_persisted_identifier(value).strip().lower()
+    if not text or _HEX_INSTANCE_ID_RE.fullmatch(text) is None:
+        return ""
+    return text
+
+
+def derive_history_title(
+    messages: Sequence[Message],
+    max_chars: int = HISTORY_TITLE_MAX_CHARS,
+) -> str:
+    """Derive a safe, plain-text title for a chat history row.
+
+    Pipeline (spec §9.1):
+      1. Find the first message whose role is ``Role.USER`` and whose
+         content survives sanitization and whitespace trimming.
+      2. Strip injection-marker patterns via :func:`_safe_persisted_identifier`
+         (the strict helper also scrubs ``<``/``>`` — titles are not
+         rendered into rich text or sent back to the LLM as instructions).
+      3. Collapse all whitespace and line breaks to single spaces.
+      4. Truncate to exactly ``max_chars`` characters with **no** ellipsis
+         appended (the caller's UI may elide for tab labels; the stored
+         value stays exact-length so list rendering does not double-ellipsize).
+      5. Fall back to :data:`UNTITLED_HISTORY_TITLE` when no usable user
+         message exists, so History rows always have a non-empty title.
+
+    This helper is the single shared derivation point for the manifest
+    entry description, the History panel row title, and the tab label.
+    """
+    if max_chars < 0:
+        max_chars = 0
+    for message in messages:
+        if message.role is not Role.USER:
+            continue
+        text = _safe_persisted_identifier(message.content)
+        text = " ".join(text.split())
+        if text:
+            return text[:max_chars]
+    return UNTITLED_HISTORY_TITLE
+
+
+def _matches_current_idb(
+    *,
+    entry_idb_path: object,
+    entry_db_instance_id: object,
+    target_idb_path: str,
+    target_db_instance_id: str,
+) -> bool:
+    """Single source of truth for "does this entry belong to the target IDB".
+
+    Spec §8.3 requires one pure helper over a normalized target record so
+    list-time and post-load authorization cannot drift. Manifest entries
+    and loaded ``SessionState`` objects are adapted to that same record
+    before matching.
+
+    Matching rules:
+      * If the entry has a canonical 32-hex ``db_instance_id``, that must
+        equal the target's canonical instance id (path is display only).
+      * Otherwise, fall back to a normalized non-empty path match.
+      * A row with neither a valid instance id nor a non-empty path
+        never matches — it must be excluded by the caller.
+    """
+    entry_instance = _canonical_instance_id(entry_db_instance_id)
+    target_instance = _canonical_instance_id(target_db_instance_id)
+    if entry_instance:
+        return bool(target_instance) and entry_instance == target_instance
+    entry_path = _normalize_db_path(str(entry_idb_path or ""))
+    return bool(entry_path) and entry_path == _normalize_db_path(target_idb_path)
+
+
+def _entry_matches_current_idb(
+    entry: dict[str, Any],
+    target_idb_path: str,
+    target_db_instance_id: str,
+) -> bool:
+    """Adapter from a manifest entry dict to :func:`_matches_current_idb`."""
+    return _matches_current_idb(
+        entry_idb_path=entry.get("idb_path", ""),
+        entry_db_instance_id=entry.get("db_instance_id", ""),
+        target_idb_path=target_idb_path,
+        target_db_instance_id=target_db_instance_id,
+    )
+
+
 class SessionHistory:
     """Manages saved sessions on disk.
 
@@ -81,6 +212,25 @@ class SessionHistory:
 
     def _manifest_path(self) -> str:
         return os.path.join(self._dir, MANIFEST_FILE)
+
+    def _session_path(self, session_id: str) -> str | None:
+        """Resolve a safe absolute path for *session_id* inside ``self._dir``.
+
+        Returns ``None`` when the id fails validation or when the resolved
+        path would escape ``self._dir``. Every public boundary that touches
+        a session file must call this first (spec §11.1).
+        """
+        if not _validate_session_id(session_id):
+            return None
+        root = os.path.normcase(os.path.realpath(self._dir))
+        candidate = os.path.normcase(os.path.realpath(os.path.join(root, f"{session_id}.json")))
+        try:
+            if os.path.commonpath((root, candidate)) != root:
+                return None
+        except ValueError:
+            # Different drives on Windows, or otherwise incomparable paths.
+            return None
+        return candidate
 
     def _read_manifest(self) -> dict[str, Any]:
         """Read the session manifest.
@@ -142,7 +292,9 @@ class SessionHistory:
 
         Uses ``st_mtime_ns`` (nanosecond precision) for reliable
         validation, falling back to ``int(st_mtime * 1e9)`` on older
-        Python where ``st_mtime_ns`` is unavailable.
+        Python where ``st_mtime_ns`` is unavailable. ``updated_at`` is the
+        whole-seconds mtime used for newest-first sorting and display only;
+        ``file_mtime_ns`` stays the validation anchor (spec §9.2).
         """
         db_path = _normalize_db_path(session.idb_path)
         file_path = os.path.join(self._dir, f"{session.id}.json")
@@ -150,11 +302,14 @@ class SessionHistory:
             st = os.stat(file_path)
             file_mtime = getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))
             file_size = st.st_size
+            updated_at = int(st.st_mtime)
         except OSError:
             file_mtime = 0
             file_size = 0
+            updated_at = 0
         return {
             "created_at": session.created_at,
+            "updated_at": updated_at,
             "provider": session.provider_name,
             "model": session.model_name,
             "idb_path": db_path,
@@ -207,8 +362,14 @@ class SessionHistory:
         Returns True if the file exists and its mtime_ns/size match.
         Uses ``st_mtime_ns`` for nanosecond precision; falls back to
         ``int(st_mtime * 1e9)``.
+
+        Invalid session ids (tampered or hostile manifest) are rejected
+        without any filesystem operation.
         """
-        file_path = os.path.join(self._dir, f"{session_id}.json")
+        file_path = self._session_path(session_id)
+        if file_path is None:
+            log_warning(f"Skipping invalid session id in manifest: {session_id!r}")
+            return False
         try:
             st = os.stat(file_path)
         except OSError:
@@ -224,6 +385,21 @@ class SessionHistory:
         Called on first run (no manifest) or when the manifest is stale/corrupt.
         Writes the manifest under the class-level lock; write failure is
         non-fatal — entries are always returned.
+
+        Spec §9.2 requires:
+          * Validate each JSON/filename session id before admitting it.
+          * Hydrate messages through :func:`Message.from_dict` so corrupt
+            individual rows are skipped without crashing the rebuild
+            (spec §9.2 — "reads existing session JSON files once").
+          * Derive a title via :func:`derive_history_title` when the
+            legacy JSON lacks ``description``; an explicit stored
+            description is preserved verbatim (still sanitized through
+            :func:`_safe_persisted_identifier`).
+          * Record ``updated_at`` as ``int(st_mtime)`` for display/sort
+            while ``file_mtime_ns`` stays the validation anchor.
+          * Never rewrite the session JSON files.
+          * Exclude zero-message legacy rows from the rebuilt manifest
+            (spec §7.3).
         """
         entries: dict[str, dict[str, Any]] = {}
         try:
@@ -245,23 +421,47 @@ class SessionHistory:
                 log_debug(f"Skipping corrupt session JSON {fname}: {exc}")
                 continue
             sid = data.get("id", fname[:-5])
+            if not _validate_session_id(sid):
+                log_warning(f"Skipping session file with invalid id: {fname}")
+                continue
             try:
                 st = os.stat(path)
                 file_mtime = getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))
                 file_size = st.st_size
+                updated_at = int(st.st_mtime)
             except OSError:
                 file_mtime = 0
                 file_size = 0
+                updated_at = 0
+            # Hydrate messages one at a time so a single bad row does
+            # not poison the rebuild (spec §9.2 — "resiliently").
+            hydrated_messages: list[Message] = []
+            for md in data.get("messages", []) or []:
+                if not isinstance(md, dict):
+                    continue
+                try:
+                    hydrated_messages.append(Message.from_dict(md))
+                except (KeyError, TypeError, ValueError) as exc:
+                    log_warning(f"Skipping corrupt message during rebuild of {fname}: {exc}")
+                    continue
+            # Spec §7.3 — exclude zero-message legacy rows so History
+            # never surfaces an empty draft.
+            if not hydrated_messages:
+                log_debug(f"Skipping zero-message session during rebuild: {fname}")
+                continue
+            explicit = _safe_persisted_identifier(data.get("description", ""))
+            description = explicit or derive_history_title(hydrated_messages)
             entries[sid] = {
                 "created_at": data.get("created_at", 0),
+                "updated_at": updated_at,
                 "provider": data.get("provider_name", ""),
                 "model": data.get("model_name", ""),
                 "idb_path": _normalize_db_path(data.get("idb_path", "")),
                 "db_instance_id": data.get("db_instance_id", ""),
                 "binary_memory_id": data.get("binary_memory_id", ""),
                 "active_case_id": data.get("active_case_id", ""),
-                "messages": len(data.get("messages", [])),
-                "description": data.get("description", ""),
+                "messages": len(hydrated_messages),
+                "description": description,
                 "file_mtime_ns": file_mtime,
                 "file_size": file_size,
             }
@@ -281,7 +481,14 @@ class SessionHistory:
     # ------------------------------------------------------------------
 
     def save_session(self, session: SessionState, description: str = "") -> str:
-        """Save a session atomically and return the file path."""
+        """Save a session atomically and return the file path.
+
+        The persisted ``description`` (manifest title) is either an
+        explicit value supplied by the caller — sanitized through
+        :func:`_safe_persisted_identifier` — or derived from the first
+        user message via :func:`derive_history_title` so legacy callers
+        and new saves agree on a single derivation pipeline (spec §9.1).
+        """
         path = os.path.join(self._dir, f"{session.id}.json")
         db_path = _normalize_db_path(session.idb_path)
         data = {
@@ -300,8 +507,13 @@ class SessionHistory:
         }
         if session.subagent_logs:
             data["subagent_logs"] = {key: [m.to_dict() for m in msgs] for key, msgs in session.subagent_logs.items()}
-        if description:
-            data["description"] = description
+        # Resolve the description once: explicit (sanitized) wins, else
+        # derive from the message stream. Reused by both the persisted
+        # payload and the manifest entry so the two cannot drift.
+        explicit = _safe_persisted_identifier(description)
+        resolved_description = explicit or derive_history_title(session.messages)
+        if resolved_description and resolved_description != UNTITLED_HISTORY_TITLE:
+            data["description"] = resolved_description
         # Write to temp file first, then atomically rename to final path.
         tmp_path = ""
         try:
@@ -325,7 +537,7 @@ class SessionHistory:
         # already been saved atomically and the manifest can be rebuilt
         # from the directory on next startup.
         try:
-            self._update_manifest_entry(session, description=description)
+            self._update_manifest_entry(session, description=resolved_description)
         except Exception as manifest_err:
             log_warning(f"Failed to update session manifest for {session.id}: {manifest_err}")
         return path
@@ -371,8 +583,14 @@ class SessionHistory:
           * Sanitizes ``metadata`` string values (including ``active_goal``)
             before constructing the ``SessionState``.
           * Sanitizes subagent log keys.
+          * Validates ``session_id`` at the storage boundary (spec §11.1):
+            rejects empty, ``.``, ``..``, path separators, NUL, or any
+            string outside ``[A-Za-z0-9_-]{1,32}`` before constructing
+            a path. Returns ``None`` without touching the filesystem.
         """
-        path = os.path.join(self._dir, f"{session_id}.json")
+        path = self._session_path(session_id)
+        if path is None:
+            return None
         if not os.path.exists(path):
             return None
         try:
@@ -456,7 +674,16 @@ class SessionHistory:
 
         Uses the session manifest for fast filtering when available.
         Falls back to scanning JSON files if the manifest is missing,
-        corrupt, or stale.
+        corrupt, or stale. The current-IDB filter is applied through one
+        shared helper (:func:`_entry_matches_current_idb`) before *and*
+        after a rebuild so list-time and post-rebuild authorization
+        cannot drift (spec §8.3).
+
+        Zero-message rows are excluded from the listing (spec §7.3 — an
+        empty draft is an in-memory tab, not history). The returned
+        ``description`` is sanitized again through
+        :func:`_safe_persisted_identifier` before being returned, and
+        falls back to ``Untitled chat`` if sanitization empties the value.
         """
         normalized_target = _normalize_db_path(idb_path)
 
@@ -495,32 +722,88 @@ class SessionHistory:
             if not entries:
                 return []
 
-        sessions: list[dict[str, Any]] = []
+        sessions, manifest_misses = self._filter_manifest_entries(
+            entries,
+            idb_path=normalized_target,
+            db_instance_id=db_instance_id,
+            binary_memory_id=binary_memory_id,
+        )
+
+        # If many entries are stale, rebuild once and re-filter
+        # in this same call — no recursion. The same predicate is reused
+        # so the post-rebuild path cannot broaden or narrow the filter.
+        if manifest_misses:
+            log_debug(f"Manifest had {manifest_misses} stale entries, rebuilding")
+            entries = self._rebuild_manifest()
+            if not entries:
+                return []
+            sessions, _ = self._filter_manifest_entries(
+                entries,
+                idb_path=normalized_target,
+                db_instance_id=db_instance_id,
+                binary_memory_id=binary_memory_id,
+            )
+
+        if sessions:
+            sessions.sort(key=lambda s: s.get("created_at", 0))
+        return sessions
+
+    def _filter_manifest_entries(
+        self,
+        entries: dict[str, dict[str, Any]],
+        *,
+        idb_path: str,
+        db_instance_id: str,
+        binary_memory_id: str,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Apply the single current-IDB predicate plus zero-row exclusion.
+
+        Used by both the initial :meth:`list_sessions` loop and the
+        post-rebuild re-filter loop so they cannot drift (spec §8.3).
+
+        Returns ``(rows, manifest_misses)``. ``manifest_misses`` counts
+        rows whose on-disk file is missing or whose mtime/size drifted
+        from the cached entry — those drive the post-rebuild retry in
+        :meth:`list_sessions`.
+        """
+        rows: list[dict[str, Any]] = []
         manifest_misses = 0
         for sid, entry in entries.items():
-            # binary_memory_id is the authoritative filter when supplied
+            if not _validate_session_id(sid):
+                log_warning(f"Skipping invalid session id in manifest: {sid!r}")
+                continue
+            # ``binary_memory_id`` is the authoritative filter when supplied.
+            # History v1 itself never requests workspace-wide scope (spec §8.3).
             if binary_memory_id:
                 if entry.get("binary_memory_id", "") != binary_memory_id:
                     continue
-            elif db_instance_id:
-                if entry.get("db_instance_id", "") != db_instance_id:
-                    continue
-            elif normalized_target:
-                if _normalize_db_path(entry.get("idb_path", "")) != normalized_target:
+            elif db_instance_id or idb_path:
+                if not _entry_matches_current_idb(
+                    entry,
+                    target_idb_path=idb_path,
+                    target_db_instance_id=db_instance_id,
+                ):
                     continue
             else:
-                if entry.get("idb_path", ""):
-                    continue
-
-            # Validate against actual file on disk
+                # No filter was requested — surface every non-empty row.
+                pass
+            # Zero-message rows are never history (spec §7.3).
+            if entry.get("messages", 0) <= 0:
+                continue
+            # Validate against actual file on disk.
             if not self._validate_manifest_entry(sid, entry):
                 manifest_misses += 1
                 continue
-
-            sessions.append(
+            # Re-sanitize description before returning — covers rows
+            # written before the v2 schema or tampered since.
+            description = _safe_persisted_identifier(entry.get("description", ""))
+            if not description:
+                description = UNTITLED_HISTORY_TITLE
+            rows.append(
                 {
                     "id": sid,
                     "created_at": entry.get("created_at", 0),
+                    "updated_at": entry.get("updated_at", 0),
                     "provider": entry.get("provider", ""),
                     "model": entry.get("model", ""),
                     "idb_path": entry.get("idb_path", ""),
@@ -528,58 +811,15 @@ class SessionHistory:
                     "binary_memory_id": entry.get("binary_memory_id", ""),
                     "active_case_id": entry.get("active_case_id", ""),
                     "messages": entry.get("messages", 0),
-                    "description": entry.get("description", ""),
+                    "description": description,
                 }
             )
-
-        # If many entries are stale, rebuild once and re-filter
-        # in this same call — no recursion.
-        if manifest_misses:
-            log_debug(f"Manifest had {manifest_misses} stale entries, rebuilding")
-            entries = self._rebuild_manifest()
-            if not entries:
-                return []
-            # Re-filter with freshly rebuilt entries
-            sessions.clear()
-            for sid, entry in entries.items():
-                if db_instance_id:
-                    if entry.get("db_instance_id", "") != db_instance_id:
-                        continue
-                elif normalized_target:
-                    if _normalize_db_path(entry.get("idb_path", "")) != normalized_target:
-                        continue
-                else:
-                    if entry.get("idb_path", ""):
-                        continue
-                if not self._validate_manifest_entry(sid, entry):
-                    continue
-                sessions.append(
-                    {
-                        "id": sid,
-                        "created_at": entry.get("created_at", 0),
-                        "provider": entry.get("provider", ""),
-                        "model": entry.get("model", ""),
-                        "idb_path": entry.get("idb_path", ""),
-                        "db_instance_id": entry.get("db_instance_id", ""),
-                        "messages": entry.get("messages", 0),
-                        "description": entry.get("description", ""),
-                    }
-                )
-
-        if sessions:
-            sessions.sort(key=lambda s: s.get("created_at", 0))
-        return sessions
-
-    def get_latest_session(self, idb_path: str = "", db_instance_id: str = "") -> SessionState | None:
-        """Load the most recently saved session for this IDB."""
-        sessions = self.list_sessions(idb_path=idb_path, db_instance_id=db_instance_id)
-        if not sessions:
-            return None
-        sessions.sort(key=lambda s: s.get("created_at", 0), reverse=True)
-        return self.load_session(sessions[0]["id"])
+        return rows, manifest_misses
 
     def delete_session(self, session_id: str) -> bool:
-        path = os.path.join(self._dir, f"{session_id}.json")
+        path = self._session_path(session_id)
+        if path is None:
+            return False
         if os.path.exists(path):
             os.remove(path)
             self._remove_manifest_entry(session_id)

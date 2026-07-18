@@ -212,6 +212,7 @@ sys.modules.pop("rikugan.ui.panel_core", None)
 # after a panel-core test in the same pytest invocation.
 import pytest  # noqa: E402
 
+from rikugan.ui import panel_core as _pc_module  # noqa: E402
 from rikugan.ui.export_formatting import (  # noqa: E402
     _TOOL_RESULT_TRUNCATE_CHARS,
     _export_detect_lang,
@@ -412,6 +413,22 @@ def _make_panel():
     panel._send_btn = MagicMock()
     panel._cancel_btn = MagicMock()
     panel._mutations_btn = MagicMock()
+    # Task-8 history coordinator fields.  The legacy helpers do not
+    # exercise history behavior, but ``shutdown`` / ``on_database_changed``
+    # now call ``_invalidate_history`` which expects these attributes to
+    # exist (or be lazily defaulted via ``getattr``).  Seeding them
+    # explicitly keeps the fixture deterministic.
+    panel._history_panel = None
+    panel._history_btn = MagicMock()
+    panel._history_generation = 0
+    panel._history_executor = None
+    panel._history_poll_timer = None
+    panel._history_pending = False
+    import queue as _queue
+    import threading as _threading
+
+    panel._history_result_queue = _queue.Queue()
+    panel._history_closing = _threading.Event()
     panel._count_label = MagicMock()
     panel._tab_widget = MagicMock()
     panel._tab_bar = MagicMock()
@@ -1140,6 +1157,2420 @@ class TestRenamerStartResetsWidget(unittest.TestCase):
                 max_concurrent=3,
             )
         panel._bulk_renamer.set_running_state.assert_called_with(False)
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — fresh-by-default startup and IDB-change behavior
+# (spec §7.1, §7.2).  ``_build_ui`` and ``on_database_changed`` must never
+# restore history or read the saved-session manifest, and IDB switches must
+# always end with exactly one ``New Chat`` tab and an empty pending restore
+# map.  The legacy ``_try_restore_session`` path is removed; these tests
+# pin the no-restore contract going forward.
+# ---------------------------------------------------------------------------
+
+
+class TestStartupNoRestore(unittest.TestCase):
+    """``_build_ui`` must not touch the legacy startup-restore path.
+
+    Source-level assertions cover the contract because the production
+    method depends on real Qt construction (mode bar, mode stack, main
+    splitter, history/chat widgets, context bar, …) that the panel-stub
+    fixture does not model.  Reading the source is enough to detect any
+    reintroduction of ``_try_restore_session()``,
+    ``restore_sessions(...)``, or ``restore_session()``.
+    """
+
+    def test_build_ui_source_has_no_try_restore_session_call(self) -> None:
+        import inspect
+
+        from rikugan.ui.panel_core import RikuganPanelCore
+
+        source = inspect.getsource(RikuganPanelCore._build_ui)
+        self.assertNotIn(
+            "_try_restore_session",
+            source,
+            msg="_build_ui() must not call _try_restore_session(); startup must be fresh.",
+        )
+
+    def test_build_ui_source_has_no_legacy_restore_api_call(self) -> None:
+        import inspect
+
+        from rikugan.ui.panel_core import RikuganPanelCore
+
+        source = inspect.getsource(RikuganPanelCore._build_ui)
+        # ``restore_sessions`` (bulk) and ``restore_session`` (legacy
+        # single-tab) are removed together in Task 7.  Reject any
+        # reintroduction from a future refactor.
+        self.assertNotIn(
+            "restore_sessions",
+            source,
+            msg="_build_ui() must not invoke the legacy bulk restore path.",
+        )
+        self.assertNotIn(
+            "self._ctrl.restore_session(",
+            source,
+            msg="_build_ui() must not invoke the legacy single-session restore path.",
+        )
+
+    def test_build_ui_source_does_not_seed_pending_restore_messages(self) -> None:
+        """``_build_ui`` must leave ``_pending_restore_messages`` empty.
+
+        The map is only written by explicit ``History attach`` flow
+        after a user selects an entry from the History panel.  A
+        fresh startup must never populate it.
+        """
+        import inspect
+
+        from rikugan.ui.panel_core import RikuganPanelCore
+
+        source = inspect.getsource(RikuganPanelCore._build_ui)
+        self.assertNotIn(
+            "_pending_restore_messages[",
+            source,
+            msg="_build_ui() must not seed _pending_restore_messages on startup.",
+        )
+
+
+class TestOnDatabaseChangedNoRestore(unittest.TestCase):
+    """``on_database_changed`` must not restore history (spec §7.2).
+
+    Behavior-level: invoke the production method with a fully stubbed
+    panel and assert the legacy restore spy is untouched, exactly one
+    new ``New Chat`` tab is created, and the pending restore map is
+    empty.  This pins both "no restore" and "fresh-by-default" on every
+    IDB switch — a key acceptance criterion (spec §17 #3).
+    """
+
+    def _make_panel(self):
+        panel = RikuganPanelCore.__new__(RikuganPanelCore)
+        panel._is_shutdown = False
+        panel._polling = False
+        panel._pending_answer = False
+        panel._chat_views = {}
+        panel._pending_restore_messages = {}
+        panel._context_bar = None
+        panel._mutation_panel = None
+        panel._skills_refresh_timer = None
+        panel._poll_timer = None
+        panel._pending_token_display = None
+        panel._token_display_timer = None
+        panel._last_token_display_value = -1
+        panel._input_area = MagicMock()
+        panel._send_btn = MagicMock()
+        panel._cancel_btn = MagicMock()
+        panel._mutations_btn = MagicMock()
+        # Task-8 history coordinator fields — seeded so
+        # ``on_database_changed``'s call to ``_invalidate_history`` does
+        # not raise on a fixture that bypassed ``__init__``.
+        panel._history_panel = None
+        panel._history_btn = MagicMock()
+        panel._history_generation = 0
+        panel._history_executor = None
+        panel._history_poll_timer = None
+        panel._history_pending = False
+        import queue as _queue
+        import threading as _threading
+
+        panel._history_result_queue = _queue.Queue()
+        panel._history_closing = _threading.Event()
+        panel._count_label = MagicMock()
+        panel._tab_widget = MagicMock()
+        # ``while self._tab_widget.count():`` loop in on_database_changed
+        # must terminate.  A bare MagicMock returns truthy; pin it to 0.
+        panel._tab_widget.count.return_value = 0
+        panel._tab_bar = MagicMock()
+        panel._ctrl = MagicMock()
+        panel._ctrl._idb_path = "/old/path.i64"
+        panel._ctrl.active_tab_id = "tab-new"
+        panel._ctrl.reset_for_new_file = MagicMock()
+        panel._config = MagicMock()
+        panel._ui_hooks = None
+        panel._awaiting_button_approval = False
+        # Spies / collaborators — replacing the methods with mocks lets
+        # us assert exact call counts without running the real
+        # restore / tab construction logic.
+        panel._cleanup_renamer_chunk = MagicMock()
+        panel._bulk_renamer = MagicMock()
+        panel._try_restore_session = MagicMock()
+        panel._create_tab = MagicMock()
+        return panel
+
+    def test_does_not_call_try_restore_session(self) -> None:
+        panel = self._make_panel()
+        panel.on_database_changed("/new/path.i64")
+        panel._try_restore_session.assert_not_called()
+
+    def test_creates_exactly_one_new_chat_tab(self) -> None:
+        panel = self._make_panel()
+        panel.on_database_changed("/new/path.i64")
+        # Exactly one New Chat tab, keyed by the controller's
+        # active_tab_id at the time of the IDB switch.
+        panel._create_tab.assert_called_once_with("tab-new", "New Chat")
+
+    def test_pending_restore_messages_stays_empty(self) -> None:
+        panel = self._make_panel()
+        panel.on_database_changed("/new/path.i64")
+        self.assertEqual(panel._pending_restore_messages, {})
+
+    def test_old_chat_views_are_torn_down_before_new_tab(self) -> None:
+        """A populated panel must drain existing ``ChatView``s and the
+        ``_pending_restore_messages`` map before recreating the
+        empty ``New Chat`` tab.  This pins the spec §7.2 teardown
+        order so late-restore signals from old tabs cannot survive
+        the IDB swap.
+        """
+        panel = self._make_panel()
+        old_cv_a = MagicMock()
+        old_cv_b = MagicMock()
+        panel._chat_views = {"a": old_cv_a, "b": old_cv_b}
+        panel._pending_restore_messages = {"a": ["stale"], "b": ["stale"]}
+        # ``while self._tab_widget.count()`` — pin to 0 so the inner
+        # removeTab loop never enters; the chat_views.clear() and
+        # _pending_restore_messages.clear() in production run
+        # unconditionally and are what we want to verify.
+        panel._tab_widget.count.return_value = 0
+
+        panel.on_database_changed("/new/path.i64")
+
+        # All old chat views were shut down before fresh state.
+        old_cv_a.shutdown.assert_called_once()
+        old_cv_b.shutdown.assert_called_once()
+        # Stale pending restores were dropped.
+        self.assertEqual(panel._pending_restore_messages, {})
+        self.assertEqual(panel._chat_views, {})
+
+
+# ---------------------------------------------------------------------------
+# Task 8: right-panel coordinator + history listing worker (spec §6.4, §8, §11.4)
+# ---------------------------------------------------------------------------
+
+
+def _make_history_panel():
+    """Build a bare ``RikuganPanelCore`` with the Task-8 history fields.
+
+    Mirrors ``_make_panel`` but also seeds the new history-coordinator
+    fields listed in the brief so ``_show_right_panel`` /
+    ``_start_history_list_request`` / ``_drain_history_results`` can be
+    exercised without running ``__init__``.
+    """
+    import queue
+    import threading
+
+    panel = RikuganPanelCore.__new__(RikuganPanelCore)
+    panel._is_shutdown = False
+    panel._polling = False
+    panel._pending_answer = False
+    panel._chat_views = {}
+    panel._pending_restore_messages = {}
+    panel._context_bar = None
+    panel._mutation_panel = MagicMock()
+    panel._skills_refresh_timer = None
+    panel._poll_timer = None
+    panel._pending_token_display = None
+    panel._token_display_timer = None
+    panel._last_token_display_value = -1
+    panel._input_area = MagicMock()
+    panel._send_btn = MagicMock()
+    panel._cancel_btn = MagicMock()
+    panel._mutations_btn = MagicMock()
+    panel._history_btn = MagicMock()
+    panel._count_label = MagicMock()
+    panel._tab_widget = MagicMock()
+    panel._tab_bar = MagicMock()
+    panel._ctrl = MagicMock()
+    panel._config = MagicMock()
+    panel._ui_hooks = None
+    panel._awaiting_button_approval = False
+    # Task-8 history coordinator fields (spec §8.1, §11.4).
+    panel._history_panel = MagicMock()
+    panel._history_generation = 0
+    panel._history_executor = None
+    panel._history_result_queue = queue.Queue(maxsize=2)
+    panel._history_poll_timer = None
+    panel._history_pending = False
+    panel._history_closing = threading.Event()
+    # Task-9 post-review fix: retry-load session-id state.
+    panel._history_retry_load_session_id = None
+    panel._history_last_load_session_id = None
+    return panel
+
+
+class TestShowRightPanelMutuallyExclusive(unittest.TestCase):
+    """``_show_right_panel`` is the single right-panel coordinator.
+
+    Spec §6.4: only one right-side auxiliary panel is visible at a time.
+    History and Mutation toggle through one entry point; closing hides
+    both panels and unchecks both buttons.
+    """
+
+    def _assert_transition(self, name, history_visible, mutation_visible) -> None:
+        panel = _make_history_panel()
+        panel._show_right_panel(name)
+        panel._history_panel.setVisible.assert_any_call(False)
+        panel._mutation_panel.setVisible.assert_any_call(False)
+        panel._history_btn.setChecked.assert_any_call(False)
+        panel._mutations_btn.setChecked.assert_any_call(False)
+        # The final visible/checked state matches the requested panel.
+        panel._history_panel.setVisible.assert_called_with(history_visible)
+        panel._mutation_panel.setVisible.assert_called_with(mutation_visible)
+        panel._history_btn.setChecked.assert_called_with(history_visible)
+        panel._mutations_btn.setChecked.assert_called_with(mutation_visible)
+
+    def test_history_open(self) -> None:
+        self._assert_transition("history", True, False)
+
+    def test_mutation_open(self) -> None:
+        self._assert_transition("mutation", False, True)
+
+    def test_close_hides_both(self) -> None:
+        self._assert_transition(None, False, False)
+
+    def test_opening_history_starts_list_request(self) -> None:
+        """Selecting history kicks off exactly one list request (spec §8.1)."""
+        panel = _make_history_panel()
+        panel._start_history_list_request = MagicMock()
+        panel._show_right_panel("history")
+        panel._start_history_list_request.assert_called_once_with()
+
+    def test_opening_mutation_does_not_start_history_list(self) -> None:
+        """Switching to Mutation must NOT trigger a history list (spec §6.4)."""
+        panel = _make_history_panel()
+        panel._start_history_list_request = MagicMock()
+        panel._show_right_panel("mutation")
+        panel._start_history_list_request.assert_not_called()
+
+    def test_closing_does_not_start_history_list(self) -> None:
+        """Closing all side panels must not fire a new history list."""
+        panel = _make_history_panel()
+        panel._start_history_list_request = MagicMock()
+        panel._show_right_panel(None)
+        panel._start_history_list_request.assert_not_called()
+
+
+class TestHistoryStartListRequest(unittest.TestCase):
+    """``_start_history_list_request`` captures scope + submits worker.
+
+    Spec §8.1: PanelCore captures immutable HistoryScope on the main
+    thread, increments generation, submits to a dedicated single-worker
+    executor, and starts a separate QTimer.
+    """
+
+    def test_submits_exactly_one_worker_when_idle(self) -> None:
+        panel = _make_history_panel()
+        scope_stub = MagicMock(name="scope")
+        panel._ctrl.capture_history_scope = MagicMock(return_value=scope_stub)
+        captured: dict = {}
+
+        class _FakeExecutor:
+            def __init__(self) -> None:
+                self.submitted = []
+
+            def submit(self, fn, *args, **kwargs):
+                self.submitted.append((fn, args, kwargs))
+                captured["scope"] = args[0] if args else None
+                return MagicMock()
+
+        panel._history_executor = _FakeExecutor()
+        panel._start_history_list_request()
+        self.assertEqual(len(panel._history_executor.submitted), 1)
+        # Worker receives the immutable scope captured on the main thread.
+        self.assertIs(captured["scope"], scope_stub)
+
+    def test_skips_when_pending_already_in_flight(self) -> None:
+        """At most one in-flight request at a time (spec §11.4)."""
+        panel = _make_history_panel()
+        panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
+        panel._history_pending = True
+
+        class _FakeExecutor:
+            def __init__(self) -> None:
+                self.submit_calls = 0
+
+            def submit(self, *_a, **_kw):
+                self.submit_calls += 1
+                return MagicMock()
+
+        panel._history_executor = _FakeExecutor()
+        panel._start_history_list_request()
+        self.assertEqual(panel._history_executor.submit_calls, 0)
+
+    def test_starts_separate_history_qtimer(self) -> None:
+        """History uses a timer distinct from the agent poll timer (spec §7.4)."""
+        panel = _make_history_panel()
+        panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
+
+        class _FakeExecutor:
+            def submit(self, *_a, **_kw):
+                return MagicMock()
+
+        panel._history_executor = _FakeExecutor()
+        panel._start_history_list_request()
+        self.assertIsNotNone(panel._history_poll_timer)
+        # Distinct from the existing agent poll timer.
+        self.assertIsNot(panel._history_poll_timer, panel._poll_timer)
+
+    def test_starts_timer_even_when_agent_idle(self) -> None:
+        """Opening History while the agent is idle still starts the timer."""
+        panel = _make_history_panel()
+        panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
+        panel._ctrl.is_agent_running = False
+
+        class _FakeExecutor:
+            def submit(self, *_a, **_kw):
+                return MagicMock()
+
+        panel._history_executor = _FakeExecutor()
+        panel._start_history_list_request()
+        self.assertIsNotNone(panel._history_poll_timer)
+
+    def test_creates_executor_lazily_when_none(self) -> None:
+        """Executor is created on first open, not at panel construction."""
+        panel = _make_history_panel()
+        panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
+        self.assertIsNone(panel._history_executor)
+        panel._start_history_list_request()
+        self.assertIsNotNone(panel._history_executor)
+
+    def test_clears_closing_flag_on_new_request(self) -> None:
+        """Task 10 race fix: the closing flag is NEVER cleared on the
+        same Event instance.  ``_invalidate_history`` replaces the panel's
+        Event with a fresh, unset instance; the next
+        ``_start_history_list_request`` captures the new unset Event.
+        Verify the invariant by simulating the real sequence: invalidate
+        sets the OLD event and swaps in a new one, then a fresh request
+        observes ``is_set()==False``.
+        """
+        panel = _make_history_panel()
+        panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
+
+        class _FakeExecutor:
+            def submit(self, *_a, **_kw):
+                return MagicMock()
+
+            def shutdown(self, **_kw):
+                pass
+
+        panel._history_executor = _FakeExecutor()
+        # Real sequence: invalidate sets the OLD event and installs a
+        # fresh, unset one.
+        panel._invalidate_history(clear_panel=False)
+        panel._history_executor = _FakeExecutor()  # post-invalidate None
+        panel._start_history_list_request()
+        # The current (new) event is unset, so the next worker is allowed
+        # to enqueue.
+        self.assertFalse(panel._history_closing.is_set())
+
+
+class TestHistoryListWorker(unittest.TestCase):
+    """Worker performs flush + list, catches TimeoutError/Exception (spec §8.1, §13)."""
+
+    def _make_panel_for_worker(self):
+        panel = _make_history_panel()
+        panel._ctrl.config = MagicMock()
+        panel._ctrl.list_history_sessions = MagicMock(return_value=[])
+        return panel
+
+    def test_worker_enqueues_listed_result(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = self._make_panel_for_worker()
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
+        entries = [MagicMock(session_id="s1"), MagicMock(session_id="s2")]
+        panel._ctrl.list_history_sessions = MagicMock(return_value=entries)
+        # ``SessionHistory(self._ctrl.config).flush_saves(...)`` — patch
+        # the return_value (the constructed instance) so the call goes
+        # through the mock the production code actually makes.
+        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+            hist_instance = hist_cls.return_value
+            hist_instance.flush_saves = MagicMock()
+            # Task 10: pass a captured, unset closing_event so the worker
+            # observes ``open`` and enqueues.
+            panel._history_list_worker(scope, panel._history_closing)
+        result = panel._history_result_queue.get_nowait()
+        self.assertEqual(result.status, HistoryRequestStatus.LISTED)
+        self.assertEqual(result.scope, scope)
+        self.assertEqual(tuple(result.entries), tuple(entries))
+
+    def test_worker_enqueues_save_flush_timeout(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = self._make_panel_for_worker()
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
+        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+            hist_instance = hist_cls.return_value
+            hist_instance.flush_saves.side_effect = TimeoutError()
+            panel._history_list_worker(scope, panel._history_closing)
+        result = panel._history_result_queue.get_nowait()
+        self.assertEqual(result.status, HistoryRequestStatus.SAVE_FLUSH_TIMEOUT)
+        self.assertEqual(result.scope, scope)
+        # Timeout must NOT return a potentially incomplete entries list.
+        self.assertEqual(tuple(result.entries), ())
+
+    def test_worker_enqueues_failed_on_exception(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = self._make_panel_for_worker()
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
+        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+            hist_instance = hist_cls.return_value
+            hist_instance.flush_saves.side_effect = RuntimeError("disk on fire")
+            panel._history_list_worker(scope, panel._history_closing)
+        result = panel._history_result_queue.get_nowait()
+        self.assertEqual(result.status, HistoryRequestStatus.FAILED)
+        self.assertEqual(result.scope, scope)
+        # Spec §11.3 / reviewer point #3: the raw exception message is
+        # NOT surfaced to the UI.  It is logged via ``log_warning`` for
+        # diagnostics; ``result.error`` stays empty so the UI produces
+        # a generic safe copy through ``_apply_history_list_result``.
+        self.assertEqual(result.error, "")
+        self.assertEqual(tuple(result.entries), ())
+
+    def test_worker_does_not_enqueue_when_closing(self) -> None:
+        """Closing flag drops the result instead of retaining it in the queue.
+
+        Task 10: the worker now receives a captured ``closing_event``
+        argument; setting it before the call simulates an
+        ``_invalidate_history`` that fired while the worker was still
+        in flight.
+        """
+        import threading
+
+        from rikugan.state.history_types import HistoryScope
+
+        panel = self._make_panel_for_worker()
+        closing_event = threading.Event()
+        closing_event.set()
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
+        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+            hist_instance = hist_cls.return_value
+            hist_instance.flush_saves = MagicMock()
+            panel._history_list_worker(scope, closing_event)
+        self.assertTrue(panel._history_result_queue.empty())
+
+
+class TestHistoryDrain(unittest.TestCase):
+    """Drain is the only method calling ``set_entries``/``set_error`` (spec §8.1)."""
+
+    def test_drain_applies_listed_result(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+            SessionHistoryEntry,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 7
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=7)
+        e1 = SessionHistoryEntry(
+            session_id="s1",
+            title="older",
+            created_at=1.0,
+            updated_at=10.0,
+            provider="p",
+            model="m",
+            message_count=5,
+        )
+        e2 = SessionHistoryEntry(
+            session_id="s2",
+            title="newer",
+            created_at=1.0,
+            updated_at=20.0,
+            provider="p",
+            model="m",
+            message_count=3,
+        )
+        # Worker returns oldest-first; drain must sort newest-first before
+        # calling set_entries (spec §8.1 "sort updated_at descending").
+        result = HistoryListResult(
+            HistoryRequestStatus.LISTED,
+            scope,
+            (e1, e2),
+        )
+        panel._history_result_queue.put(result)
+        panel._history_pending = True
+        panel._drain_history_results()
+        # Sort happened before set_entries: newer (e2) first.
+        args, _ = panel._history_panel.set_entries.call_args
+        self.assertEqual(args[0][0].session_id, "s2")
+        self.assertEqual(args[0][1].session_id, "s1")
+        self.assertFalse(panel._history_pending)
+
+    def test_drain_drops_stale_generation(self) -> None:
+        """A result whose scope generation differs is silently dropped."""
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+            SessionHistoryEntry,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 99
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
+        result = HistoryListResult(
+            HistoryRequestStatus.LISTED,
+            scope,
+            (SessionHistoryEntry("s", "t", 0.0, 0.0, "", "", 0),),
+        )
+        panel._history_result_queue.put(result)
+        panel._drain_history_results()
+        panel._history_panel.set_entries.assert_not_called()
+        panel._history_panel.set_error.assert_not_called()
+
+    def test_drain_reports_save_flush_timeout(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 3
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=3)
+        panel._history_result_queue.put(
+            HistoryListResult(HistoryRequestStatus.SAVE_FLUSH_TIMEOUT, scope),
+        )
+        panel._history_pending = True
+        panel._drain_history_results()
+        panel._history_panel.set_error.assert_called_once()
+        _, kwargs = panel._history_panel.set_error.call_args
+        self.assertTrue(kwargs.get("retry_visible", True))
+        self.assertFalse(panel._history_pending)
+
+    def test_drain_reports_failed(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 3
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=3)
+        # Even if the worker somehow populated ``error`` with a raw
+        # exception message, the drain must surface the generic UI
+        # copy only — untrusted persistence-layer strings must never
+        # reach the widget text (spec §11.3, reviewer point #3).
+        panel._history_result_queue.put(
+            HistoryListResult(
+                HistoryRequestStatus.FAILED,
+                scope,
+                error="ValueError: /untrusted/path leaked",
+            ),
+        )
+        panel._history_pending = True
+        panel._drain_history_results()
+        panel._history_panel.set_error.assert_called_once()
+        args, kwargs = panel._history_panel.set_error.call_args
+        # ``result.error`` is ignored; the UI copy is generic.
+        self.assertEqual(args[0], "Could not load chat history.")
+        self.assertNotIn("/untrusted/path", args[0])
+        self.assertTrue(kwargs.get("retry_visible", True))
+        self.assertFalse(panel._history_pending)
+
+    def test_drain_failed_with_empty_error_uses_generic_copy(self) -> None:
+        """Reviewer point #3: empty error string still renders generic copy."""
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 3
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=3)
+        panel._history_result_queue.put(
+            HistoryListResult(HistoryRequestStatus.FAILED, scope, error=""),
+        )
+        panel._history_pending = True
+        panel._drain_history_results()
+        args, _ = panel._history_panel.set_error.call_args
+        self.assertEqual(args[0], "Could not load chat history.")
+
+    def test_drain_noop_when_empty(self) -> None:
+        panel = _make_history_panel()
+        panel._drain_history_results()
+        panel._history_panel.set_entries.assert_not_called()
+        panel._history_panel.set_error.assert_not_called()
+
+    def test_drain_noop_when_shutdown(self) -> None:
+        """Drain must return immediately when ``_is_shutdown`` is true (spec §7.4)."""
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = _make_history_panel()
+        panel._is_shutdown = True
+        panel._history_generation = 3
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=3)
+        panel._history_result_queue.put(
+            HistoryListResult(HistoryRequestStatus.LISTED, scope),
+        )
+        panel._drain_history_results()
+        panel._history_panel.set_entries.assert_not_called()
+
+    def test_drain_stops_timer_when_apply_then_hide(self) -> None:
+        """Reviewer point #1 regression: a successful apply followed by a
+        hidden panel must stop the timer on the SAME drain tick.
+
+        Previously the timer-stop check was inside ``if applied:`` AND
+        also gated on ``not self._history_pending`` which had just been
+        cleared — so this case happened to work.  The explicit test
+        pins the behavior so a future refactor cannot re-introduce
+        the busy-loop.
+        """
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 7
+        # History hidden (user closed the panel between submit and
+        # drain) but the result is current-generation.
+        panel._history_panel.isVisible.return_value = False
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=7)
+        panel._history_result_queue.put(HistoryListResult(HistoryRequestStatus.LISTED, scope))
+        panel._history_pending = True
+        timer = MagicMock()
+        panel._history_poll_timer = timer
+        panel._drain_history_results()
+        # The terminal result was applied…
+        panel._history_panel.set_entries.assert_called_once()
+        # …and the timer was stopped on the same tick (no busy-loop).
+        # Reference captured before the drain nulls the field.
+        timer.stop.assert_called_once_with()
+        self.assertIsNone(panel._history_poll_timer)
+        self.assertFalse(panel._history_pending)
+
+    def test_drain_stops_timer_on_empty_drain_when_hidden_and_not_pending(self) -> None:
+        """Reviewer point #1 CRITICAL regression: empty drain on a hidden
+        panel with no pending work must stop the timer.
+
+        The original bug: the timer-stop check lived inside
+        ``if applied:``, so a drain that pulled nothing (or only stale
+        results) left the timer spinning forever on an idle, hidden
+        panel.  This deterministic test pins the fix — it would fail
+        against the pre-fix code path.
+        """
+        panel = _make_history_panel()
+        panel._history_pending = False
+        # Panel hidden, nothing pending.
+        panel._history_panel.isVisible.return_value = False
+        timer = MagicMock()
+        panel._history_poll_timer = timer
+        # Empty queue → ``applied`` stays False.
+        panel._drain_history_results()
+        # Timer must still be torn down despite no apply path running.
+        # ``_stop_history_poll_timer`` nulls ``_history_poll_timer``;
+        # capture the reference before the drain to assert on it.
+        timer.stop.assert_called_once_with()
+        self.assertIsNone(panel._history_poll_timer)
+        panel._history_panel.set_entries.assert_not_called()
+        panel._history_panel.set_error.assert_not_called()
+
+    def test_drain_stops_timer_when_only_stale_results_in_queue(self) -> None:
+        """Reviewer point #1: a queue containing only stale-generation
+        results must still trigger the timer-stop on a hidden panel."""
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 99  # live generation
+        panel._history_pending = False
+        panel._history_panel.isVisible.return_value = False
+        # Stale result from generation 1 — discarded by generation check.
+        stale_scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
+        panel._history_result_queue.put(
+            HistoryListResult(HistoryRequestStatus.LISTED, stale_scope),
+        )
+        timer = MagicMock()
+        panel._history_poll_timer = timer
+        panel._drain_history_results()
+        timer.stop.assert_called_once_with()
+        self.assertIsNone(panel._history_poll_timer)
+        # Stale result did not touch the widget.
+        panel._history_panel.set_entries.assert_not_called()
+
+    def test_drain_keeps_timer_when_history_visible(self) -> None:
+        """If the panel is visible, the timer keeps running between ticks.
+
+        Spec §7.4: "the timer is active while History is visible or a
+        history request remains in flight."  Only hidden + no pending
+        work stops the timer.
+        """
+        panel = _make_history_panel()
+        panel._history_pending = False
+        panel._history_panel.isVisible.return_value = True
+        timer = MagicMock()
+        panel._history_poll_timer = timer
+        panel._drain_history_results()
+        timer.stop.assert_not_called()
+        self.assertIs(panel._history_poll_timer, timer)
+
+    def test_drain_keeps_timer_when_request_pending_and_hidden(self) -> None:
+        """If a request is still in flight (pending) and the panel is
+        hidden, the timer keeps polling — the result will land later
+        and must be drained."""
+        panel = _make_history_panel()
+        panel._history_pending = True
+        panel._history_panel.isVisible.return_value = False
+        timer = MagicMock()
+        panel._history_poll_timer = timer
+        panel._drain_history_results()
+        timer.stop.assert_not_called()
+        self.assertIs(panel._history_poll_timer, timer)
+
+
+class TestStopHistoryPollTimer(unittest.TestCase):
+    """Timer lifecycle mirrors ``_stop_poll_timer`` (spec §7.4)."""
+
+    def test_noop_when_none(self) -> None:
+        panel = _make_history_panel()
+        panel._history_poll_timer = None
+        panel._stop_history_poll_timer()  # must not raise
+        self.assertIsNone(panel._history_poll_timer)
+
+    def test_stops_disconnects_deletes(self) -> None:
+        panel = _make_history_panel()
+        timer = MagicMock()
+        panel._history_poll_timer = timer
+        panel._stop_history_poll_timer()
+        timer.stop.assert_called_once_with()
+        timer.timeout.disconnect.assert_called_once_with(panel._drain_history_results)
+        timer.deleteLater.assert_called_once_with()
+        self.assertIsNone(panel._history_poll_timer)
+
+    def test_swallows_disconnect_runtime_error(self) -> None:
+        panel = _make_history_panel()
+        timer = MagicMock()
+        timer.timeout.disconnect.side_effect = RuntimeError("not connected")
+        panel._history_poll_timer = timer
+        panel._stop_history_poll_timer()  # must not raise
+        self.assertIsNone(panel._history_poll_timer)
+
+
+class TestInvalidateHistory(unittest.TestCase):
+    """IDB change / shutdown invalidation (spec §7.2, §11.4).
+
+    Task 10 refined the helper to ``_invalidate_history(*,
+    clear_panel: bool)``.  Tests below pin both the new keyword-only
+    signature and the per-call-site bool: shutdown uses
+    ``clear_panel=False``, IDB-change uses ``clear_panel=True``.
+    """
+
+    def test_increments_generation(self) -> None:
+        panel = _make_history_panel()
+        panel._history_generation = 5
+        panel._invalidate_history(clear_panel=False)
+        self.assertGreater(panel._history_generation, 5)
+
+    def test_stops_history_poll_timer(self) -> None:
+        panel = _make_history_panel()
+        panel._stop_history_poll_timer = MagicMock()
+        panel._invalidate_history(clear_panel=False)
+        panel._stop_history_poll_timer.assert_called_once_with()
+
+    def test_drains_and_discards_queue(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = _make_history_panel()
+        panel._history_result_queue.put(
+            HistoryListResult(
+                HistoryRequestStatus.LISTED,
+                HistoryScope("/old", "abc", 1),
+            ),
+        )
+        panel._invalidate_history(clear_panel=False)
+        self.assertTrue(panel._history_result_queue.empty())
+
+    def test_sets_old_closing_event_so_stale_workers_drop_results(self) -> None:
+        """Task 10 race fix: the OLD closing Event is set so any worker
+        that captured it at submit time observes ``is_set()==True`` and
+        drops its result.  The panel installs a fresh, unset Event
+        afterward (verified in TestTask10InvalidateHistoryOrdering)."""
+        panel = _make_history_panel()
+        old_event = panel._history_closing
+        panel._invalidate_history(clear_panel=False)
+        self.assertTrue(old_event.is_set())
+
+    def test_clears_pending_flag(self) -> None:
+        panel = _make_history_panel()
+        panel._history_pending = True
+        panel._invalidate_history(clear_panel=False)
+        self.assertFalse(panel._history_pending)
+
+    def test_clears_panel_rows_and_cached_search(self) -> None:
+        """Spec §7.2 step 5: clear HistoryPanel rows + cached search.
+
+        Only invoked when ``clear_panel=True`` (IDB-change path).
+        ``shutdown`` skips it to avoid mutating widgets after teardown
+        starts."""
+        panel = _make_history_panel()
+        panel._invalidate_history(clear_panel=True)
+        panel._history_panel.clear.assert_called_once_with()
+
+    def test_clear_panel_false_skips_panel_clear(self) -> None:
+        """``shutdown`` path: no widget mutation."""
+        panel = _make_history_panel()
+        panel._invalidate_history(clear_panel=False)
+        panel._history_panel.clear.assert_not_called()
+
+    def test_requests_executor_shutdown_without_blocking(self) -> None:
+        """Non-blocking shutdown with cancel_futures=True (spec §7.2, §11.4)."""
+        panel = _make_history_panel()
+
+        class _FakeExecutor:
+            def __init__(self) -> None:
+                self.shutdown_calls: list = []
+
+            def shutdown(self, **kwargs):
+                self.shutdown_calls.append(kwargs)
+
+        executor = _FakeExecutor()
+        panel._history_executor = executor
+        panel._invalidate_history(clear_panel=False)
+        self.assertTrue(any(c.get("wait") is False for c in executor.shutdown_calls))
+        self.assertTrue(
+            any(c.get("cancel_futures") is True for c in executor.shutdown_calls),
+            f"expected cancel_futures=True in {executor.shutdown_calls}",
+        )
+
+    def test_drops_executor_reference(self) -> None:
+        """Spec §7.2: next open creates a fresh executor lazily."""
+        panel = _make_history_panel()
+
+        class _FakeExecutor:
+            def shutdown(self, **_kw):
+                pass
+
+        panel._history_executor = _FakeExecutor()
+        panel._invalidate_history(clear_panel=False)
+        self.assertIsNone(panel._history_executor)
+
+
+class TestHistoryExecutorDistinctFromSaveExecutor(unittest.TestCase):
+    """Deadlock guard: history executor must be distinct from ``_SAVE_EXECUTOR``.
+
+    Spec §6.1, §11.4: history listing calls ``flush_saves()`` which would
+    deadlock waiting on a sentinel queued behind itself if it ran on
+    ``_SAVE_EXECUTOR``. The history executor is a dedicated single-worker
+    pool with a distinct ``thread_name_prefix``.
+    """
+
+    def test_history_executor_is_not_save_executor(self) -> None:
+        panel = _make_history_panel()
+        panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
+        panel._start_history_list_request()
+        from rikugan.state.history import _SAVE_EXECUTOR
+
+        self.assertIsNot(panel._history_executor, _SAVE_EXECUTOR)
+
+    def test_history_executor_thread_name_prefix_is_distinct(self) -> None:
+        """The prefix must be ``rikugan-history`` so thread dumps are debuggable."""
+        panel = _make_history_panel()
+        panel._ctrl.capture_history_scope = MagicMock(return_value=("scope-stub",))
+        panel._start_history_list_request()
+        # ThreadPoolExecutor exposes the prefix via ``_thread_name_prefix``.
+        prefix = getattr(panel._history_executor, "_thread_name_prefix", "")
+        self.assertEqual(prefix, "rikugan-history")
+
+    def test_queued_save_then_list_completes_without_self_deadlock(self) -> None:
+        """Submitting a save to ``_SAVE_EXECUTOR`` then opening History must
+        not self-deadlock (spec §6.1, acceptance §14.6).
+
+        This is a deterministic functional check: queue a sentinel save,
+        then run the list worker inline (no real QTimer) and assert the
+        list result arrives. If the history executor were the save
+        executor, ``flush_saves`` would block forever waiting on its own
+        sentinel.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        from rikugan.state.history import _SAVE_EXECUTOR
+        from rikugan.state.history_types import (
+            HistoryRequestStatus,
+            HistoryScope,
+        )
+
+        panel = _make_history_panel()
+        panel._ctrl.config = MagicMock()
+        panel._ctrl.list_history_sessions = MagicMock(return_value=[])
+        # Queue a sentinel save so flush_saves has real work to drain.
+        save_future = _SAVE_EXECUTOR.submit(lambda: None)
+        save_future.result(timeout=5.0)
+        scope = HistoryScope(idb_path="/x.i64", db_instance_id="abc", generation=1)
+        # Bypass the timer + worker submit path and invoke the worker
+        # directly on the panel's dedicated executor so we exercise the
+        # real submit/queue path.
+        panel._start_history_list_request()
+        executor: ThreadPoolExecutor = panel._history_executor
+        # Wait for the submitted worker to produce a result.
+        with patch.object(_pc_module, "SessionHistory") as hist_cls:
+            hist_instance = hist_cls.return_value
+            hist_instance.flush_saves = MagicMock()
+            # Re-submit through the dedicated executor to be certain
+            # flush_saves runs on the history thread, not save thread.
+            # Task 10: pass a captured closing_event (unset).
+            executor.submit(
+                panel._history_list_worker,
+                scope,
+                panel._history_closing,
+            ).result(timeout=5.0)
+        result = panel._history_result_queue.get(timeout=5.0)
+        self.assertEqual(result.status, HistoryRequestStatus.LISTED)
+
+
+class TestHistoryButtonAlwaysVisible(unittest.TestCase):
+    """The History button is always visible (spec §6.3, §6.4)."""
+
+    def test_history_button_is_visible_after_build_action_buttons(self) -> None:
+        """Source-level guard: ``_build_action_buttons`` does not gate the
+        History button behind a ``setVisible(False)`` call. We inspect the
+        source so the test does not depend on Qt stubs honoring visibility.
+        """
+        import inspect
+
+        src = inspect.getsource(RikuganPanelCore._build_action_buttons)
+        # ``_history_btn`` must be created and must NOT carry a
+        # ``setVisible(False)`` call (unlike Mutations which hides until
+        # the first mutation lands).
+        self.assertIn("_history_btn", src)
+        # The pattern "self._history_btn.setVisible(False)" must NOT appear.
+        self.assertNotIn("self._history_btn.setVisible(False)", src)
+
+    def test_history_panel_is_added_to_splitter(self) -> None:
+        """Source-level guard: ``_build_main_splitter`` adds HistoryPanel as
+        the third hidden widget (spec §6.4: chat, Mutation Log, History).
+        """
+        import inspect
+
+        src = inspect.getsource(RikuganPanelCore._build_main_splitter)
+        self.assertIn("HistoryPanel", src)
+        # Must start hidden (third hidden widget).
+        self.assertIn("setVisible(False)", src)
+
+
+# ---------------------------------------------------------------------------
+# Task 9: Open Historical Sessions, Dedupe, and Deferred Async Restore
+# ---------------------------------------------------------------------------
+
+
+def _make_load_result(
+    status,
+    scope,
+    session=None,
+    error="",
+):
+    """Build a ``HistoryLoadResult`` without forcing every test to import it."""
+    from rikugan.state.history_types import HistoryLoadResult
+
+    return HistoryLoadResult(status=status, scope=scope, session=session, error=error)
+
+
+class TestHistoryOpenDedupe(unittest.TestCase):
+    """Pre-load dedupe: if the persisted session is already open, focus it
+    without submitting a worker (spec §10.2, §14.4)."""
+
+    def test_history_open_focuses_existing_tab_without_worker(self) -> None:
+        panel = _make_history_panel()
+        panel._ctrl.find_tab_for_session.return_value = "tab-a"
+        panel._ctrl.capture_history_scope = MagicMock(
+            return_value=MagicMock(name="scope"),
+        )
+        # Spies on submission + tab helpers.
+        panel._history_executor = MagicMock()
+        panel._focus_tab = MagicMock()
+        panel._start_history_load = MagicMock()
+
+        panel._on_history_open_requested("persisted-a")
+
+        # Pre-load dedupe: NO worker submit, NO scope capture.
+        panel._ctrl.load_history_session.assert_not_called()
+        panel._history_executor.submit.assert_not_called()
+        panel._start_history_load.assert_not_called()
+        # Controller-side dedupe helper was consulted exactly once.
+        panel._ctrl.find_tab_for_session.assert_called_once_with("persisted-a")
+        # Existing tab was focused.
+        panel._focus_tab.assert_called_once_with("tab-a")
+
+    def test_history_open_when_not_open_starts_load_worker(self) -> None:
+        """When no open tab matches, capture scope + submit a load worker."""
+        panel = _make_history_panel()
+        panel._ctrl.find_tab_for_session.return_value = None
+        scope_stub = MagicMock(name="scope")
+        panel._ctrl.capture_history_scope = MagicMock(return_value=scope_stub)
+        submitted: list = []
+
+        class _FakeExecutor:
+            def submit(self, fn, *args, **kwargs):
+                submitted.append((fn, args, kwargs))
+                return MagicMock()
+
+        panel._history_executor = _FakeExecutor()
+        panel._ensure_history_poll_timer = MagicMock()
+
+        panel._on_history_open_requested("persisted-b")
+
+        # Scope captured on main thread before I/O.
+        panel._ctrl.capture_history_scope.assert_called_once()
+        # Exactly one worker submitted, receiving (session_id, scope).
+        self.assertEqual(len(submitted), 1)
+        fn, args, _kwargs = submitted[0]
+        # Bound methods are fresh objects per attribute access, so compare
+        # the underlying function + instance instead of ``assertIs``.
+        self.assertEqual(fn.__func__, panel._history_load_worker.__func__)
+        self.assertIs(fn.__self__, panel)
+        self.assertEqual(args[0], "persisted-b")
+        self.assertIs(args[1], scope_stub)
+        # Timer started so the result will drain.
+        panel._ensure_history_poll_timer.assert_called_once_with()
+        # Pending flag set so a concurrent click cannot double-submit.
+        self.assertTrue(panel._history_pending)
+
+    def test_history_open_skipped_when_pending_in_flight(self) -> None:
+        """A second click while a load is pending must not submit again."""
+        panel = _make_history_panel()
+        panel._ctrl.find_tab_for_session.return_value = None
+        panel._history_pending = True
+
+        class _FakeExecutor:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def submit(self, *_a, **_kw):
+                self.calls += 1
+                return MagicMock()
+
+        panel._history_executor = _FakeExecutor()
+        panel._on_history_open_requested("persisted-c")
+        self.assertEqual(panel._history_executor.calls, 0)
+
+    def test_history_open_skipped_when_shutdown(self) -> None:
+        panel = _make_history_panel()
+        panel._is_shutdown = True
+        panel._ctrl.find_tab_for_session.return_value = None
+        panel._history_executor = MagicMock()
+        panel._on_history_open_requested("persisted-d")
+        panel._history_executor.submit.assert_not_called()
+
+
+class TestHistoryLoadWorker(unittest.TestCase):
+    """``_history_load_worker`` runs on the dedicated executor; it only
+    calls ``load_history_session`` and enqueues a typed result (spec §10.1,
+    §10.3, §11.4)."""
+
+    def test_worker_enqueues_loaded_result(self) -> None:
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        scope = MagicMock(name="scope")
+        session = MagicMock(name="session")
+        panel = _make_history_panel()
+        panel._ctrl.load_history_session.return_value = _make_load_result(
+            HistoryRequestStatus.LOADED,
+            scope,
+            session=session,
+        )
+        # Task 10: pass a captured, unset closing_event so the worker
+        # observes ``open`` and enqueues.
+        panel._history_load_worker("persisted-x", scope, panel._history_closing)
+        result = panel._history_result_queue.get_nowait()
+        self.assertEqual(result.status, HistoryRequestStatus.LOADED)
+        self.assertIs(result.session, session)
+        self.assertIs(result.scope, scope)
+
+    def test_worker_enqueues_not_found_result(self) -> None:
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        scope = MagicMock(name="scope")
+        panel = _make_history_panel()
+        panel._ctrl.load_history_session.return_value = _make_load_result(
+            HistoryRequestStatus.NOT_FOUND,
+            scope,
+        )
+        panel._history_load_worker("persisted-x", scope, panel._history_closing)
+        result = panel._history_result_queue.get_nowait()
+        self.assertEqual(result.status, HistoryRequestStatus.NOT_FOUND)
+
+    def test_worker_catches_exception_enqueues_failed_with_empty_error(self) -> None:
+        """Spec §11.4 + §11.3: outer boundary catch, no exception used as
+        control flow, and the raw exception string never reaches the UI."""
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        scope = MagicMock(name="scope")
+        panel = _make_history_panel()
+        panel._ctrl.load_history_session.side_effect = RuntimeError("disk leaked /untrusted/path")
+        panel._history_load_worker("persisted-x", scope, panel._history_closing)
+        result = panel._history_result_queue.get_nowait()
+        self.assertEqual(result.status, HistoryRequestStatus.FAILED)
+        # Raw exception string is NOT surfaced through ``error``.
+        self.assertEqual(result.error, "")
+
+    def test_worker_does_not_enqueue_when_closing(self) -> None:
+        """Closing flag set by ``_invalidate_history`` drops the result.
+
+        Task 10: the worker receives a captured ``closing_event``;
+        setting it before the call simulates an invalidate that fired
+        while the worker was still in flight.
+        """
+        import threading
+
+        panel = _make_history_panel()
+        closing_event = threading.Event()
+        closing_event.set()
+        panel._ctrl.load_history_session.return_value = _make_load_result(
+            MagicMock(name="status"),
+            MagicMock(name="scope"),
+        )
+        panel._history_load_worker(
+            "persisted-x",
+            MagicMock(name="scope"),
+            closing_event,
+        )
+        self.assertTrue(panel._history_result_queue.empty())
+
+
+class TestHistoryDrainHandlesLoad(unittest.TestCase):
+    """The drain must handle BOTH ``HistoryListResult`` and
+    ``HistoryLoadResult`` safely (spec §10.1, §11.4)."""
+
+    def _panel_with_running_timer(self):
+        panel = _make_history_panel()
+        panel._history_generation = 1
+        panel._history_poll_timer = MagicMock()
+        panel._history_panel.isVisible.return_value = True
+        panel._apply_history_loaded = MagicMock()
+        panel._apply_history_list_result = MagicMock()
+        panel._focus_tab = MagicMock()
+        return panel
+
+    def test_drain_routes_load_result_to_apply_history_loaded(self) -> None:
+        from rikugan.state.history_types import HistoryLoadResult
+
+        panel = self._panel_with_running_timer()
+        scope = MagicMock(name="scope")
+        scope.generation = 1
+        load_result = HistoryLoadResult(
+            status=MagicMock(name="status"),
+            scope=scope,
+            session=MagicMock(name="session"),
+        )
+        panel._history_result_queue.put(load_result)
+
+        panel._drain_history_results()
+
+        panel._apply_history_loaded.assert_called_once_with(load_result)
+        panel._apply_history_list_result.assert_not_called()
+        # Pending flag cleared once the terminal result lands.
+        self.assertFalse(panel._history_pending)
+
+    def test_drain_drops_stale_generation_load_result(self) -> None:
+        """A load result whose generation differs from live is dropped
+        silently — no attach, no UI mutation (spec §10.3 step 7)."""
+        from rikugan.state.history_types import HistoryLoadResult
+
+        panel = self._panel_with_running_timer()
+        panel._history_pending = True  # a load is conceptually in flight
+        stale_scope = MagicMock(name="scope")
+        stale_scope.generation = 0  # live generation is 1
+        load_result = HistoryLoadResult(
+            status=MagicMock(name="status"),
+            scope=stale_scope,
+            session=MagicMock(name="session"),
+        )
+        panel._history_result_queue.put(load_result)
+
+        panel._drain_history_results()
+
+        panel._apply_history_loaded.assert_not_called()
+        # Pending flag NOT cleared (no terminal result applied); a real
+        # next-gen result will eventually arrive.
+        self.assertTrue(panel._history_pending)
+        # Timer lifecycle did not leak — still alive because pending + visible.
+        panel._history_poll_timer.stop.assert_not_called()
+
+    def test_drain_stops_timer_when_hidden_and_no_pending_after_load(self) -> None:
+        from rikugan.state.history_types import HistoryLoadResult
+
+        panel = self._panel_with_running_timer()
+        scope = MagicMock(name="scope")
+        scope.generation = 1
+        panel._history_pending = True
+        panel._history_panel.isVisible.return_value = False
+        # Capture the timer reference BEFORE the drain nulls the field.
+        timer_ref = panel._history_poll_timer
+        load_result = HistoryLoadResult(
+            status=MagicMock(name="status"),
+            scope=scope,
+        )
+        panel._history_result_queue.put(load_result)
+
+        panel._drain_history_results()
+
+        panel._apply_history_loaded.assert_called_once_with(load_result)
+        # Terminal result applied → pending cleared → timer stopped.
+        self.assertFalse(panel._history_pending)
+        timer_ref.stop.assert_called_once_with()
+
+
+class TestApplyHistoryLoaded(unittest.TestCase):
+    """``_apply_history_loaded`` routes every status to the correct UI +
+    controller action (spec §10.3, §13)."""
+
+    def _panel(self):
+        panel = _make_history_panel()
+        panel._create_tab = MagicMock()
+        panel._focus_tab = MagicMock()
+        panel._restore_messages_if_needed = MagicMock()
+        panel._ctrl.attach_history_session = MagicMock()
+        panel._history_panel.isVisible.return_value = True
+        return panel
+
+    def test_opened_creates_one_tab_and_uses_async_restore(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryAttachResult,
+            HistoryAttachStatus,
+            HistoryRequestStatus,
+        )
+
+        panel = self._panel()
+        session = MagicMock(name="session")
+        session.id = "persisted-opened"
+        session.messages = ["m1", "m2"]
+        scope = MagicMock(name="scope")
+        # Use the real DTO so ``status is HistoryRequestStatus.LOADED``
+        # matches; a bare MagicMock for ``status`` would never match.
+        load_result = _make_load_result(
+            HistoryRequestStatus.LOADED,
+            scope,
+            session=session,
+        )
+        attach_result = HistoryAttachResult(
+            status=HistoryAttachStatus.OPENED,
+            tab_id="tab-new",
+            session=session,
+        )
+        panel._ctrl.attach_history_session.return_value = attach_result
+
+        panel._apply_history_loaded(load_result)
+
+        # Attach called once on the main thread.
+        panel._ctrl.attach_history_session.assert_called_once_with(load_result)
+        # Exactly one tab created.
+        panel._create_tab.assert_called_once()
+        created_tab_id = panel._create_tab.call_args.args[0]
+        self.assertEqual(created_tab_id, "tab-new")
+        # Pending restore payload was written BEFORE the tab was created.
+        self.assertEqual(panel._pending_restore_messages["tab-new"], ["m1", "m2"])
+        # Async restore path triggered.
+        panel._restore_messages_if_needed.assert_called_once_with("tab-new")
+        # Tab was focused.
+        panel._focus_tab.assert_called_once_with("tab-new")
+
+    def test_already_open_focuses_existing_tab_no_create(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryAttachResult,
+            HistoryAttachStatus,
+            HistoryRequestStatus,
+        )
+
+        panel = self._panel()
+        session = MagicMock(name="session")
+        scope = MagicMock(name="scope")
+        load_result = _make_load_result(
+            HistoryRequestStatus.LOADED,
+            scope,
+            session=session,
+        )
+        attach_result = HistoryAttachResult(
+            status=HistoryAttachStatus.ALREADY_OPEN,
+            tab_id="tab-existing",
+            session=session,
+        )
+        panel._ctrl.attach_history_session.return_value = attach_result
+
+        panel._apply_history_loaded(load_result)
+
+        panel._create_tab.assert_not_called()
+        panel._restore_messages_if_needed.assert_not_called()
+        panel._focus_tab.assert_called_once_with("tab-existing")
+        # No pending payload written.
+        self.assertEqual(panel._pending_restore_messages, {})
+
+    def test_stale_scope_silently_dropped_no_ui(self) -> None:
+        """STALE_SCOPE: do nothing — no tab, no UI message."""
+        from rikugan.state.history_types import (
+            HistoryAttachResult,
+            HistoryAttachStatus,
+            HistoryRequestStatus,
+        )
+
+        panel = self._panel()
+        session = MagicMock(name="session")
+        scope = MagicMock(name="scope")
+        load_result = _make_load_result(
+            HistoryRequestStatus.LOADED,
+            scope,
+            session=session,
+        )
+        attach_result = HistoryAttachResult(status=HistoryAttachStatus.STALE_SCOPE)
+        panel._ctrl.attach_history_session.return_value = attach_result
+
+        panel._apply_history_loaded(load_result)
+
+        panel._create_tab.assert_not_called()
+        panel._restore_messages_if_needed.assert_not_called()
+        panel._focus_tab.assert_not_called()
+        panel._history_panel.set_error.assert_not_called()
+
+    def test_not_found_refreshes_list_once(self) -> None:
+        """NOT_FOUND shows exact copy then triggers exactly one list refresh
+        (spec §13).  Reviewer MEDIUM #1: ``_apply_history_loaded`` no longer
+        touches ``_history_pending`` — the generation-aware drain epilogue
+        owns that flag.  When this helper is invoked through the real
+        drain, the rebump performed by ``_start_history_list_request``
+        causes the drain to leave pending=True (the new list worker owns
+        its own terminal-result lifecycle).  Here we stub the refresh so
+        no rebump happens and pending is left as the caller set it."""
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        scope = MagicMock(name="scope")
+        scope.generation = 1
+        panel = self._panel()
+        panel._history_generation = 1
+        panel._history_pending = True  # pending flag still set from the load
+        # Refresh helper will be called directly.  Stubbed, so no real
+        # rebump happens; the generation-aware drain fix is exercised
+        # end-to-end in ``TestDrainGenerationAwarePendingClear``.
+        panel._start_history_list_request = MagicMock()
+
+        load_result = _make_load_result(HistoryRequestStatus.NOT_FOUND, scope)
+        panel._apply_history_loaded(load_result)
+
+        # Exact user-visible copy.
+        panel._history_panel.set_error.assert_called_once_with(
+            "This chat is no longer available.",
+            retry_visible=False,
+        )
+        # No tab created, no attach.
+        panel._ctrl.attach_history_session.assert_not_called()
+        panel._create_tab.assert_not_called()
+        # ``_apply_history_loaded`` no longer clears pending itself;
+        # the drain's generation-aware epilogue owns that.  When invoked
+        # through the real drain, the rebump causes pending to stay True
+        # (verified in TestDrainGenerationAwarePendingClear).
+        panel._start_history_list_request.assert_called_once_with()
+
+    def test_wrong_idb_shows_exact_copy_no_attach(self) -> None:
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        scope = MagicMock(name="scope")
+        panel = self._panel()
+        load_result = _make_load_result(HistoryRequestStatus.WRONG_IDB, scope)
+        panel._apply_history_loaded(load_result)
+        panel._history_panel.set_error.assert_called_once_with(
+            "This chat belongs to a different IDB.",
+            retry_visible=False,
+        )
+        panel._ctrl.attach_history_session.assert_not_called()
+        panel._create_tab.assert_not_called()
+
+    def test_empty_shows_exact_copy_no_attach(self) -> None:
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        scope = MagicMock(name="scope")
+        panel = self._panel()
+        load_result = _make_load_result(HistoryRequestStatus.EMPTY, scope)
+        panel._apply_history_loaded(load_result)
+        panel._history_panel.set_error.assert_called_once_with(
+            "This chat is empty and cannot be opened.",
+            retry_visible=False,
+        )
+        panel._ctrl.attach_history_session.assert_not_called()
+        panel._create_tab.assert_not_called()
+
+    def test_failed_shows_generic_copy_no_attach_no_leak(self) -> None:
+        """Spec §11.3: generic FAILED copy; raw ``error`` never forwarded.
+
+        Reviewer MEDIUM #2: FAILED load now exposes Retry so the user
+        can re-dispatch the LOAD (not the list).  The raw ``error`` is
+        still never surfaced — generic copy only.
+        """
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        scope = MagicMock(name="scope")
+        panel = self._panel()
+        load_result = _make_load_result(
+            HistoryRequestStatus.FAILED,
+            scope,
+            error="ValueError: /untrusted/path leaked",
+        )
+        panel._apply_history_loaded(load_result)
+        panel._history_panel.set_error.assert_called_once_with(
+            "Could not open this chat.",
+            retry_visible=True,
+        )
+        panel._ctrl.attach_history_session.assert_not_called()
+        panel._create_tab.assert_not_called()
+
+
+class TestFocusTab(unittest.TestCase):
+    """``_focus_tab`` switches the QTabWidget to the tab owning ``tab_id``."""
+
+    def test_focus_tab_sets_current_index_for_known_tab(self) -> None:
+        panel = _make_history_panel()
+        mock_view = MagicMock()
+        panel._chat_views["tab-x"] = mock_view
+        panel._tab_widget.indexOf.return_value = 3
+        panel._focus_tab("tab-x")
+        panel._tab_widget.indexOf.assert_called_once_with(mock_view)
+        panel._tab_widget.setCurrentIndex.assert_called_once_with(3)
+
+    def test_focus_tab_silent_when_tab_id_unknown(self) -> None:
+        panel = _make_history_panel()
+        panel._focus_tab("ghost")
+        panel._tab_widget.setCurrentIndex.assert_not_called()
+
+
+class TestCloseTabClearsPendingRestore(unittest.TestCase):
+    """Closing a tab must pop its pending restore payload BEFORE
+    ChatView.shutdown (spec §10.3 step 6, §14.4)."""
+
+    def test_close_tab_pops_pending_restore_before_shutdown(self) -> None:
+        panel = _make_history_panel()
+        panel._tab_widget.count.return_value = 2
+        mock_widget = MagicMock()
+        mock_widget.property.return_value = "tid"
+        panel._chat_views["tid"] = mock_widget
+        panel._tab_widget.widget.return_value = mock_widget
+        panel._pending_restore_messages["tid"] = ["m1", "m2"]
+
+        panel._on_close_tab(0)
+
+        # Payload removed.
+        self.assertNotIn("tid", panel._pending_restore_messages)
+        # Shutdown was called.
+        mock_widget.shutdown.assert_called_once_with()
+
+    def test_close_tab_with_no_pending_payload_still_works(self) -> None:
+        panel = _make_history_panel()
+        panel._tab_widget.count.return_value = 2
+        mock_widget = MagicMock()
+        mock_widget.property.return_value = "tid"
+        panel._chat_views["tid"] = mock_widget
+        panel._tab_widget.widget.return_value = mock_widget
+
+        # Must not raise even when there was nothing to pop.
+        panel._on_close_tab(0)
+        mock_widget.shutdown.assert_called_once_with()
+
+
+# ---------------------------------------------------------------------------
+# Task 9 post-review fixes
+# ---------------------------------------------------------------------------
+
+
+class TestDrainGenerationAwarePendingClear(unittest.TestCase):
+    """The drain must NOT clear ``_history_pending`` if the apply step
+    submitted a new generation (e.g. NOT_FOUND auto-refresh).  Reviewer
+    MEDIUM #1: the previous unconditional ``self._history_pending = False``
+    after ``applied = True`` clobbered the pending flag of the
+    auto-refresh list worker."""
+
+    def test_not_found_drain_keeps_pending_when_refresh_submitted(self) -> None:
+        """End-to-end (drain → apply → real ``_start_history_list_request``
+        with a fake executor): NOT_FOUND leaves ``_history_pending=True``
+        and submits exactly one list worker at generation+1."""
+        from rikugan.state.history_types import (
+            HistoryLoadResult,
+            HistoryRequestStatus,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 1
+        panel._history_pending = True
+        # Real ``_start_history_list_request`` will use this scope capture.
+        next_scope = MagicMock(name="next_scope")
+        panel._ctrl.capture_history_scope = MagicMock(return_value=next_scope)
+        panel._history_panel.isVisible.return_value = True
+        # Fake executor that records every submit (list + load share it).
+        submitted: list = []
+
+        class _FakeExecutor:
+            def submit(self, fn, *args, **kwargs):
+                submitted.append((fn, args, kwargs))
+                return MagicMock()
+
+        panel._history_executor = _FakeExecutor()
+        panel._ensure_history_poll_timer = MagicMock()
+        # The NOT_FOUND load result feeding the drain.
+        not_found_scope = MagicMock(name="scope")
+        not_found_scope.generation = 1
+        load_result = HistoryLoadResult(
+            status=HistoryRequestStatus.NOT_FOUND,
+            scope=not_found_scope,
+        )
+        panel._history_result_queue.put(load_result)
+
+        panel._drain_history_results()
+
+        # The list refresh submitted exactly one worker at gen 2.
+        list_submits = [(fn, args) for fn, args, _kw in submitted if fn.__func__ is panel._history_list_worker.__func__]
+        self.assertEqual(len(list_submits), 1)
+        self.assertEqual(panel._history_generation, 2)
+        # CRITICAL: pending flag MUST remain set so the list worker's
+        # terminal result eventually clears it (the pre-fix bug cleared
+        # it here, leaving the panel stuck with a phantom in-flight flag
+        # mismatch — the next list-submit guard would reject because
+        # ``_history_pending`` was already False).
+        self.assertTrue(panel._history_pending)
+
+    def test_drain_clears_pending_when_apply_does_not_rebump_generation(self) -> None:
+        """For LOADED / WRONG_IDB / EMPTY / FAILED (no refresh), the
+        pending flag is cleared as the terminal result lands (regression
+        guard for the generation-aware fix)."""
+        from rikugan.state.history_types import (
+            HistoryLoadResult,
+            HistoryRequestStatus,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 5
+        panel._history_pending = True
+        panel._history_panel.isVisible.return_value = True
+        gen_before = panel._history_generation
+        wrong_idb_scope = MagicMock(name="scope")
+        wrong_idb_scope.generation = 5
+        load_result = HistoryLoadResult(
+            status=HistoryRequestStatus.WRONG_IDB,
+            scope=wrong_idb_scope,
+        )
+        panel._history_result_queue.put(load_result)
+
+        panel._drain_history_results()
+
+        # No refresh fired → generation unchanged.
+        self.assertEqual(panel._history_generation, gen_before)
+        # Terminal result → pending cleared.
+        self.assertFalse(panel._history_pending)
+
+    def test_drain_clears_pending_per_result_when_multiple_match(self) -> None:
+        """A queue holding two same-generation results (rare, but the
+        type system allows it): each apply sees the live generation,
+        the final pending state is correct for whichever apply landed
+        last."""
+        from rikugan.state.history_types import (
+            HistoryListResult,
+            HistoryLoadResult,
+            HistoryRequestStatus,
+        )
+
+        panel = _make_history_panel()
+        panel._history_generation = 7
+        panel._history_pending = True
+        panel._history_panel.isVisible.return_value = True
+        scope_g7 = MagicMock(name="scope")
+        scope_g7.generation = 7
+        # Two results at gen 7: a list result and a load result.
+        list_result = HistoryListResult(
+            HistoryRequestStatus.LISTED,
+            scope_g7,
+            (),
+        )
+        wrong_idb_load = HistoryLoadResult(
+            HistoryRequestStatus.WRONG_IDB,
+            scope_g7,
+        )
+        panel._history_result_queue.put(list_result)
+        panel._history_result_queue.put(wrong_idb_load)
+
+        panel._drain_history_results()
+
+        # Both applies ran; no generation rebump happened; pending
+        # cleared exactly once by the drain epilogue.
+        self.assertFalse(panel._history_pending)
+
+
+class TestLoadRetryPath(unittest.TestCase):
+    """Reviewer MEDIUM #2: a FAILED load must expose Retry and the Retry
+    button must re-dispatch the LOAD (not the list).  The retry-load
+    state remembers only the persisted session id (never the full
+    SessionState) so a stale scope is recaptured on retry."""
+
+    def _panel(self):
+        panel = _make_history_panel()
+        panel._create_tab = MagicMock()
+        panel._focus_tab = MagicMock()
+        panel._restore_messages_if_needed = MagicMock()
+        panel._ctrl.attach_history_session = MagicMock()
+        panel._ctrl.find_tab_for_session.return_value = None
+        panel._history_panel.isVisible.return_value = True
+        return panel
+
+    def test_failed_load_shows_retry_visible_true(self) -> None:
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        panel = self._panel()
+        scope = MagicMock(name="scope")
+        scope.generation = panel._history_generation
+        load_result = _make_load_result(
+            HistoryRequestStatus.FAILED,
+            scope,
+            error="ValueError: /untrusted/path",
+        )
+        panel._apply_history_loaded(load_result)
+        # Generic copy, but Retry IS visible.
+        panel._history_panel.set_error.assert_called_once_with(
+            "Could not open this chat.",
+            retry_visible=True,
+        )
+
+    def test_failed_load_remembered_for_retry(self) -> None:
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        panel = self._panel()
+        # Simulate the load-submit path having stashed the in-flight id.
+        # ``_start_history_load`` writes ``_history_last_load_session_id``
+        # before submitting the worker; ``HistoryLoadResult`` does NOT
+        # echo the id back, so the FAILED branch copies from this stash.
+        panel._history_last_load_session_id = "persisted-failed-x"
+        scope = MagicMock(name="scope")
+        scope.generation = panel._history_generation
+        load_result = _make_load_result(
+            HistoryRequestStatus.FAILED,
+            scope,
+        )
+        panel._apply_history_loaded(load_result)
+        # Only the id is retained — no full SessionState held in panel
+        # state (defends against holding a large stale payload).
+        self.assertEqual(panel._history_retry_load_session_id, "persisted-failed-x")
+
+    def test_loaded_success_clears_retry_load(self) -> None:
+        from rikugan.state.history_types import (
+            HistoryAttachResult,
+            HistoryAttachStatus,
+            HistoryRequestStatus,
+        )
+
+        panel = self._panel()
+        panel._history_retry_load_session_id = "previously-failed"
+        session = MagicMock(name="session")
+        session.messages = ["m1"]
+        scope = MagicMock(name="scope")
+        scope.generation = panel._history_generation
+        load_result = _make_load_result(
+            HistoryRequestStatus.LOADED,
+            scope,
+            session=session,
+        )
+        panel._ctrl.attach_history_session.return_value = HistoryAttachResult(
+            HistoryAttachStatus.OPENED,
+            "tab-new",
+            session,
+        )
+        panel._apply_history_loaded(load_result)
+        # Successful attach clears the retry-load id.
+        self.assertIsNone(panel._history_retry_load_session_id)
+
+    def test_not_found_does_not_set_retry_load(self) -> None:
+        """NOT_FOUND refreshes the list; it does not retain a
+        retry-load id because the session is gone for good."""
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        panel = self._panel()
+        panel._history_generation = 1
+        panel._history_pending = True
+        panel._start_history_list_request = MagicMock()
+        scope = MagicMock(name="scope")
+        scope.generation = 1
+        load_result = _make_load_result(
+            HistoryRequestStatus.NOT_FOUND,
+            scope,
+        )
+        panel._apply_history_loaded(load_result)
+        self.assertIsNone(panel._history_retry_load_session_id)
+
+    def test_wrong_idb_does_not_set_retry_load(self) -> None:
+        """WRONG_IDB is non-retryable — no retry-load id retained."""
+        from rikugan.state.history_types import HistoryRequestStatus
+
+        panel = self._panel()
+        scope = MagicMock(name="scope")
+        scope.generation = panel._history_generation
+        load_result = _make_load_result(
+            HistoryRequestStatus.WRONG_IDB,
+            scope,
+        )
+        panel._apply_history_loaded(load_result)
+        self.assertIsNone(panel._history_retry_load_session_id)
+
+    def test_retry_button_redispatches_load_not_list(self) -> None:
+        """``_on_history_retry`` with a remembered load id must submit
+        a LOAD worker, not call ``_start_history_list_request``."""
+        panel = self._panel()
+        panel._history_retry_load_session_id = "persisted-retry"
+        submitted: list = []
+
+        class _FakeExecutor:
+            def submit(self, fn, *args, **kwargs):
+                submitted.append((fn, args, kwargs))
+                return MagicMock()
+
+        panel._history_executor = _FakeExecutor()
+        panel._ensure_history_poll_timer = MagicMock()
+        next_scope = MagicMock(name="next_scope")
+        panel._ctrl.capture_history_scope = MagicMock(return_value=next_scope)
+        panel._start_history_list_request = MagicMock()
+
+        panel._on_history_retry()
+
+        # Load path taken — exactly one submit to the dedicated executor.
+        self.assertEqual(len(submitted), 1)
+        fn, args, _kw = submitted[0]
+        self.assertEqual(fn.__func__, panel._history_load_worker.__func__)
+        self.assertEqual(args[0], "persisted-retry")
+        # Fresh generation + scope captured on retry.
+        self.assertIs(args[1], next_scope)
+        # Pending flag set so the worker's terminal result can clear it.
+        self.assertTrue(panel._history_pending)
+        # List refresh NOT triggered.
+        panel._start_history_list_request.assert_not_called()
+        # Retry id cleared once retried (a new FAILED result will set it
+        # again; a success path leaves it cleared).
+        self.assertIsNone(panel._history_retry_load_session_id)
+
+    def test_retry_button_falls_back_to_list_when_no_load_pending(self) -> None:
+        """If no FAILED load is remembered, Retry falls back to the list
+        refresh (Task 8 behavior)."""
+        panel = self._panel()
+        panel._history_retry_load_session_id = None
+        panel._start_history_list_request = MagicMock()
+        panel._history_executor = MagicMock()
+        panel._on_history_retry()
+        panel._start_history_list_request.assert_called_once_with()
+        panel._history_executor.submit.assert_not_called()
+
+    def test_retry_button_pre_dedupes_existing_tab_before_load(self) -> None:
+        """If the session is already open when Retry fires, focus it and
+        skip the worker (same dedupe invariant as the initial open)."""
+        panel = self._panel()
+        panel._history_retry_load_session_id = "persisted-x"
+        panel._ctrl.find_tab_for_session.return_value = "tab-already"
+        panel._focus_tab = MagicMock()
+        panel._history_executor = MagicMock()
+        panel._on_history_retry()
+        panel._focus_tab.assert_called_once_with("tab-already")
+        panel._history_executor.submit.assert_not_called()
+        # Retry id cleared because the user's goal (open the session) is
+        # satisfied.
+        self.assertIsNone(panel._history_retry_load_session_id)
+
+    def test_invalidate_history_clears_retry_load(self) -> None:
+        """IDB change / shutdown must clear the retry-load id."""
+        panel = self._panel()
+        panel._history_retry_load_session_id = "persisted-stale"
+        panel._invalidate_history(clear_panel=False)
+        self.assertIsNone(panel._history_retry_load_session_id)
+
+    def test_close_tab_does_not_clear_retry_load(self) -> None:
+        """Closing an unrelated tab must not affect a remembered retry-load
+        (the retry is for a session that was never opened, so it has no
+        tab of its own to close)."""
+        panel = self._panel()
+        panel._history_retry_load_session_id = "persisted-retry"
+        panel._tab_widget.count.return_value = 2
+        mock_widget = MagicMock()
+        mock_widget.property.return_value = "tid"
+        panel._chat_views["tid"] = mock_widget
+        panel._tab_widget.widget.return_value = mock_widget
+        panel._on_close_tab(0)
+        self.assertEqual(panel._history_retry_load_session_id, "persisted-retry")
+
+
+# ---------------------------------------------------------------------------
+# Task 10: IDB Change and Shutdown Invalidation — exact ordering and race-free
+# Event capture (spec §7.2, §10.3, §11.4, §14.4).
+#
+# Task 8 added ``_invalidate_history`` prematurely and without the
+# ``clear_panel`` parameter.  Task 10 TDD-refines the helper to the exact
+# interface/order the spec mandates and plugs the closing-Event reuse race
+# the Task 8 implementation leaves open.
+# ---------------------------------------------------------------------------
+
+import queue as _queue_module  # noqa: E402
+
+
+class TestTask10InvalidateHistorySignature(unittest.TestCase):
+    """``_invalidate_history`` is keyword-only with ``clear_panel: bool``."""
+
+    def test_requires_clear_panel_keyword(self) -> None:
+        """The helper must accept ``clear_panel`` as a keyword-only
+        argument so every call site reads ``clear_panel=True`` /
+        ``clear_panel=False`` — the bool is load-bearing and a positional
+        pass would obscure it at the call site."""
+        import inspect
+
+        sig = inspect.signature(RikuganPanelCore._invalidate_history)
+        params = sig.parameters
+        self.assertIn("clear_panel", params)
+        # Keyword-only (comes after ``*`` or ``*args``).
+        clear_panel_param = params["clear_panel"]
+        self.assertEqual(
+            clear_panel_param.kind,
+            inspect.Parameter.KEYWORD_ONLY,
+            "clear_panel must be keyword-only",
+        )
+
+    def test_clear_panel_false_skips_panel_clear(self) -> None:
+        """``clear_panel=False`` (used by ``shutdown``) must NOT touch the
+        HistoryPanel widget — widget mutation after the C++ teardown has
+        started is unsafe.  Only ``clear_panel=True`` (the IDB-change path)
+        clears the panel rows."""
+        panel = _make_history_panel()
+        panel._history_retry_load_session_id = "stale"
+        panel._history_last_load_session_id = "stale2"
+        panel._history_panel.reset_mock()
+        panel._invalidate_history(clear_panel=False)
+        panel._history_panel.clear.assert_not_called()
+
+    def test_clear_panel_true_calls_panel_clear(self) -> None:
+        """``clear_panel=True`` (the IDB-change path) clears the panel so
+        the user does not see stale rows from the previous IDB."""
+        panel = _make_history_panel()
+        panel._invalidate_history(clear_panel=True)
+        panel._history_panel.clear.assert_called_once_with()
+
+
+class TestTask10InvalidateHistoryOrdering(unittest.TestCase):
+    """Exact ordering per spec §7.2 / §11.4:
+
+    1. ``_history_generation`` += 1 (BEFORE controller identity changes,
+       so a worker result for the old IDB is rejected by generation check).
+    2. ``_history_closing.set()`` BEFORE timer stop / executor shutdown so
+       a worker observing the closing flag mid-flight cannot enqueue into
+       a queue that is about to be drained.
+    3. Stop + delete the history poll timer.
+    4. Detach the executor reference THEN non-blocking shutdown with
+       ``cancel_futures=True`` (so any not-yet-started submit is dropped).
+    5. Drain the result queue.
+    6. ``_history_pending = False``.
+    7. Clear ``_history_retry_load_session_id`` /
+       ``_history_last_load_session_id``.
+    8. Optional ``panel.clear()`` if ``clear_panel=True``.
+    """
+
+    def _instrument_panel(self):
+        """Wire mocks that record the call order of every side-effect
+        during ``_invalidate_history``.  Returns the panel and the shared
+        recorder list."""
+        panel = _make_history_panel()
+        recorder: list = []
+
+        # Seed an executor so we can observe its shutdown.
+        real_executor = MagicMock(name="executor")
+        panel._history_executor = real_executor
+        panel._history_poll_timer = MagicMock(name="poll_timer")
+        # Wrap the closing Event so we can record when ``set`` is called
+        # and the order relative to the other side-effects.
+        original_event = panel._history_closing
+
+        class _RecordingEvent:
+            """Stand-in for ``threading.Event`` that records each call."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            def set(self):
+                recorder.append(("closing.set",))
+                self._inner.set()
+
+            def clear(self):
+                recorder.append(("closing.clear",))
+                self._inner.clear()
+
+            def is_set(self):
+                return self._inner.is_set()
+
+        panel._history_closing = _RecordingEvent(original_event)
+        # Wrap the executor/timer/queue/panel helpers so they append
+        # before delegating to the real behaviour.
+        panel._stop_history_poll_timer = MagicMock(
+            name="stop_timer",
+            side_effect=lambda: recorder.append(("stop_timer",)),
+        )
+        real_executor.shutdown = MagicMock(
+            name="exec_shutdown",
+            side_effect=lambda **kw: recorder.append(("exec_shutdown", kw)),
+        )
+
+        # Wrap queue.get_nowait to record drain activity.
+        original_queue = panel._history_result_queue
+
+        def _drained_get():
+            recorder.append(("queue.get_nowait",))
+            raise _queue_module.Empty
+
+        original_queue.get_nowait = _drained_get  # type: ignore[assignment]
+
+        # Wrap panel.clear.
+        panel._history_panel.clear = MagicMock(
+            name="panel_clear",
+            side_effect=lambda: recorder.append(("panel.clear",)),
+        )
+        return panel, recorder
+
+    def test_generation_increments_and_closing_set_is_first_recorder_entry(self) -> None:
+        """Generation bump is step 1, closing.set is step 2 (spec §7.2).
+
+        A worker that has already captured a scope with the old
+        generation must have its result discarded by the drain's
+        generation check, so the bump must happen BEFORE any other
+        side-effect that might let a late worker slip through."""
+        panel, recorder = self._instrument_panel()
+        start_gen = panel._history_generation
+        panel._invalidate_history(clear_panel=False)
+        self.assertGreater(panel._history_generation, start_gen)
+        # The very first recorder entry must be the closing-set (the
+        # generation bump happens BEFORE it but is silent).
+        self.assertEqual(recorder[0], ("closing.set",))
+
+    def test_closing_set_before_timer_stop_and_executor_shutdown(self) -> None:
+        """Closing flag is set BEFORE the timer is stopped and BEFORE the
+        executor is shut down (spec §11.4).  A worker finishing in the
+        tiny window between ``timer.stop`` and ``executor.shutdown`` must
+        see ``is_set()=True`` and drop its result."""
+        panel, recorder = self._instrument_panel()
+        panel._invalidate_history(clear_panel=False)
+        closing_idx = next(i for i, e in enumerate(recorder) if e[0] == "closing.set")
+        timer_idx = next(i for i, e in enumerate(recorder) if e[0] == "stop_timer")
+        exec_idx = next(i for i, e in enumerate(recorder) if e[0] == "exec_shutdown")
+        self.assertLess(closing_idx, timer_idx)
+        self.assertLess(closing_idx, exec_idx)
+
+    def test_executor_shutdown_is_nonblocking_with_cancel_futures(self) -> None:
+        """Spec §11.4: executor shutdown must be non-blocking with
+        ``cancel_futures=True`` so a not-yet-started submit does not run
+        against a half-torn-down panel."""
+        panel, recorder = self._instrument_panel()
+        panel._invalidate_history(clear_panel=False)
+        exec_calls = [e for e in recorder if e[0] == "exec_shutdown"]
+        self.assertEqual(len(exec_calls), 1)
+        _name, kwargs = exec_calls[0]
+        self.assertEqual(kwargs, {"wait": False, "cancel_futures": True})
+
+    def test_executor_reference_detached_before_shutdown(self) -> None:
+        """The panel must drop its reference to the executor (set it to
+        ``None``) BEFORE the non-blocking shutdown so a concurrent request
+        that reads ``self._history_executor`` cannot re-submit to an
+        executor that is being cancelled.  The brief lists
+        ``detach executor ref then nonblocking shutdown cancel``."""
+        panel = _make_history_panel()
+        events: list[str] = []
+
+        class _OrderedExecutor(MagicMock):
+            def shutdown(self, **kw):
+                events.append("shutdown")
+                # At the moment shutdown is invoked, the panel must have
+                # already detached the reference — this is the
+                # concurrency invariant.
+                assert panel._history_executor is None, "executor ref must be detached BEFORE shutdown"
+
+        panel._history_executor = _OrderedExecutor()
+        panel._invalidate_history(clear_panel=False)
+        self.assertEqual(events, ["shutdown"])
+        self.assertIsNone(panel._history_executor)
+
+    def test_queue_drained(self) -> None:
+        panel, recorder = self._instrument_panel()
+        panel._invalidate_history(clear_panel=False)
+        self.assertIn(("queue.get_nowait",), recorder)
+
+    def test_history_pending_false_after_invalidate(self) -> None:
+        panel = _make_history_panel()
+        panel._history_pending = True
+        panel._invalidate_history(clear_panel=False)
+        self.assertFalse(panel._history_pending)
+
+    def test_invalidate_clears_retry_load_and_last_load_ids(self) -> None:
+        panel = _make_history_panel()
+        panel._history_retry_load_session_id = "persisted-stale"
+        panel._history_last_load_session_id = "persisted-last"
+        panel._invalidate_history(clear_panel=False)
+        self.assertIsNone(panel._history_retry_load_session_id)
+        self.assertIsNone(panel._history_last_load_session_id)
+
+    def test_closing_event_is_replaced_with_fresh_event_after_invalidate(self) -> None:
+        """Spec §11.4 / reviewer concern: the OLD closing Event is set
+        but must NOT be reused by the next request.  A new
+        ``threading.Event`` instance must be installed so a stale worker
+        that captured the OLD event reference keeps observing ``set()``
+        even after a new request clears the NEW event.  This is the
+        load-bearing race fix: ``clear()`` on the new event does not
+        un-set the old event."""
+        import threading
+
+        panel = _make_history_panel()
+        old_event = panel._history_closing
+        panel._invalidate_history(clear_panel=False)
+        # The old event stays set (the worker that captured it keeps
+        # seeing "closing").
+        self.assertTrue(old_event.is_set())
+        # The panel now points at a fresh, unset event.
+        new_event = panel._history_closing
+        self.assertIsNot(new_event, old_event)
+        self.assertIsInstance(new_event, threading.Event)
+        self.assertFalse(new_event.is_set())
+
+    def test_invalidate_is_idempotent(self) -> None:
+        """Calling ``_invalidate_history`` twice (e.g. IDB change during
+        shutdown) must not raise and must remain in a coherent state."""
+        panel = _make_history_panel()
+        panel._invalidate_history(clear_panel=False)
+        gen_after_first = panel._history_generation
+        panel._invalidate_history(clear_panel=False)
+        self.assertGreater(panel._history_generation, gen_after_first)
+        self.assertFalse(panel._history_pending)
+        self.assertIsNone(panel._history_executor)
+
+
+class TestTask10OnDatabaseChangedOrdering(unittest.TestCase):
+    """``on_database_changed`` must invalidate BEFORE controller identity
+    is reset and with ``clear_panel=True`` (spec §7.2)."""
+
+    def _patch_panel_for_db_change(self, panel) -> None:
+        """Pin ``_tab_widget.count`` to a real int so the production
+        ``while self._tab_widget.count():`` loop terminates.  A bare
+        ``MagicMock`` returns a truthy mock forever, hanging the test."""
+        panel._tab_widget.count.return_value = 0
+        # ``_renamer_engine`` is optional; clear it so the production code
+        # does not call ``.cancel()`` on a MagicMock that swallows it
+        # (harmless but noisy).
+        panel._renamer_engine = None
+
+    def test_invalidate_runs_before_controller_reset(self) -> None:
+        panel = _make_history_panel()
+        order: list[str] = []
+
+        def _record_invalidate(**kw):
+            order.append("invalidate")
+            self.assertEqual(order, ["invalidate"])
+
+        def _record_reset(path):
+            order.append("reset")
+
+        panel._invalidate_history = MagicMock(side_effect=_record_invalidate)
+        panel._ctrl._idb_path = "/old.i64"
+        panel._ctrl.reset_for_new_file = MagicMock(side_effect=_record_reset)
+        panel._cleanup_renamer_chunk = MagicMock()
+        panel._create_tab = MagicMock()
+        self._patch_panel_for_db_change(panel)
+        panel.on_database_changed("/new.i64")
+        self.assertEqual(order, ["invalidate", "reset"])
+
+    def test_clear_panel_true_for_idb_change(self) -> None:
+        panel = _make_history_panel()
+        called_kwargs: dict = {}
+        panel._invalidate_history = MagicMock(
+            side_effect=lambda **kw: called_kwargs.update(kw),
+        )
+        panel._ctrl._idb_path = "/old.i64"
+        panel._cleanup_renamer_chunk = MagicMock()
+        panel._create_tab = MagicMock()
+        self._patch_panel_for_db_change(panel)
+        panel.on_database_changed("/new.i64")
+        self.assertEqual(called_kwargs, {"clear_panel": True})
+
+    def test_idb_change_clears_pending_restore_payloads_and_creates_one_new_tab(self) -> None:
+        """Spec §7.2: after the IDB switch, exactly one fresh ``New Chat``
+        tab exists and no prior pending restore payload survives."""
+        panel = _make_history_panel()
+        panel._ctrl._idb_path = "/old.i64"
+        panel._pending_restore_messages = {
+            "tab-a": ["msg1", "msg2"],
+            "tab-b": ["msg3"],
+        }
+        panel._chat_views = {"tab-a": MagicMock(), "tab-b": MagicMock()}
+        panel._cleanup_renamer_chunk = MagicMock()
+        panel._create_tab = MagicMock()
+        self._patch_panel_for_db_change(panel)
+        panel.on_database_changed("/new.i64")
+        # Pending restore payload fully cleared.
+        self.assertEqual(panel._pending_restore_messages, {})
+        # Exactly one tab created.
+        panel._create_tab.assert_called_once()
+        # No auto-restore — _try_restore_session must not exist / not be
+        # invoked.
+        self.assertFalse(hasattr(panel, "_try_restore_session"))
+
+
+class TestTask10ShutdownOrdering(unittest.TestCase):
+    """``shutdown`` must set ``_is_shutdown`` first, then invalidate with
+    ``clear_panel=False`` (no widget mutation after teardown starts),
+    then call ``history_panel.shutdown()`` (release theme subscriptions)
+    BEFORE continuing the existing teardown."""
+
+    def test_shutdown_sets_is_shutdown_first(self) -> None:
+        """``_is_shutdown`` is the gate that keeps late
+        ``_drain_history_results`` from touching widgets.  It must be
+        ``True`` BEFORE ``_invalidate_history`` runs."""
+        panel = _make_history_panel()
+        observed_flags: list = []
+
+        def _spy_invalidate(**kw):
+            observed_flags.append(panel._is_shutdown)
+
+        panel._invalidate_history = MagicMock(side_effect=_spy_invalidate)
+        panel._poll_timer = None
+        panel._skills_refresh_timer = None
+        panel._context_bar = None
+        panel._ui_hooks = None
+        panel._chat_views = {}
+        panel._tools_form = None
+        panel._tools_panel = None
+        panel._renamer_engine = None
+        panel.shutdown()
+        self.assertTrue(all(observed_flags))
+        self.assertTrue(panel._is_shutdown)
+
+    def test_shutdown_calls_invalidate_with_clear_panel_false(self) -> None:
+        """Widget mutations must NOT happen after teardown starts.  The
+        ``history_panel.clear()`` call is skipped on shutdown."""
+        panel = _make_history_panel()
+        captured_kwargs: dict = {}
+        panel._invalidate_history = MagicMock(
+            side_effect=lambda **kw: captured_kwargs.update(kw),
+        )
+        panel._poll_timer = None
+        panel._skills_refresh_timer = None
+        panel._context_bar = None
+        panel._ui_hooks = None
+        panel._chat_views = {}
+        panel._tools_form = None
+        panel._tools_panel = None
+        panel._renamer_engine = None
+        panel.shutdown()
+        self.assertEqual(captured_kwargs, {"clear_panel": False})
+
+    def test_shutdown_calls_history_panel_shutdown(self) -> None:
+        """``HistoryPanel.shutdown`` releases the panel's theme
+        subscriptions and is idempotent."""
+        panel = _make_history_panel()
+        panel._poll_timer = None
+        panel._skills_refresh_timer = None
+        panel._context_bar = None
+        panel._ui_hooks = None
+        panel._chat_views = {}
+        panel._tools_form = None
+        panel._tools_panel = None
+        panel._renamer_engine = None
+        panel.shutdown()
+        panel._history_panel.shutdown.assert_called_once_with()
+
+    def test_shutdown_invalidate_runs_before_history_panel_shutdown(self) -> None:
+        """The invalidation (drop executor, drain queue) must run BEFORE
+        the ``history_panel.shutdown()`` theme-subscription release — the
+        order matches ``_invalidate_history`` → ``history_panel.shutdown``."""
+        panel = _make_history_panel()
+        order: list = []
+
+        def _invalidate_spy(**kw):
+            order.append("invalidate")
+
+        def _history_shutdown_spy():
+            order.append("history_shutdown")
+
+        panel._invalidate_history = MagicMock(side_effect=_invalidate_spy)
+        panel._history_panel.shutdown = MagicMock(side_effect=_history_shutdown_spy)
+        panel._poll_timer = None
+        panel._skills_refresh_timer = None
+        panel._context_bar = None
+        panel._ui_hooks = None
+        panel._chat_views = {}
+        panel._tools_form = None
+        panel._tools_panel = None
+        panel._renamer_engine = None
+        panel.shutdown()
+        self.assertEqual(order, ["invalidate", "history_shutdown"])
+
+
+class TestTask10StaleWorkerRace(unittest.TestCase):
+    """The load-bearing race fix.
+
+    Task 8 reused ``self._history_closing`` across requests: a new
+    request called ``Event.clear()`` on the same instance, so an old
+    worker that had not yet checked ``is_set()`` would observe ``False``
+    and push its result into the new queue.  Task 10 fixes this by:
+
+    1. Replacing the closing ``Event`` with a fresh instance on every
+       invalidate.
+    2. Capturing the closing ``Event`` reference at submit time and
+       passing it into the worker.  The worker checks ITS captured event,
+       not ``self._history_closing``.
+
+    The tests below deterministically prove an old worker (submitted
+    against the previous generation) CANNOT enqueue after a new request
+    starts, even when the new request has already cleared its event.
+    """
+
+    def test_worker_receives_captured_closing_event_argument(self) -> None:
+        """The list and load workers must accept a captured closing
+        ``Event`` so an old worker keeps observing the OLD event even
+        after the panel installs a NEW one."""
+        import inspect
+
+        list_sig = inspect.signature(RikuganPanelCore._history_list_worker)
+        load_sig = inspect.signature(RikuganPanelCore._history_load_worker)
+        list_params = list(list_sig.parameters)
+        load_params = list(load_sig.parameters)
+        self.assertIn(
+            "closing_event",
+            list_params,
+            f"_history_list_worker must accept closing_event (has: {list_params})",
+        )
+        self.assertIn(
+            "closing_event",
+            load_params,
+            f"_history_load_worker must accept closing_event (has: {load_params})",
+        )
+
+    def test_submit_passes_live_closing_event_into_worker(self) -> None:
+        """``_start_history_list_request`` and ``_start_history_load``
+        must pass the CURRENT ``self._history_closing`` reference into
+        the worker call — NOT let the worker read ``self._history_closing``
+        dynamically.  Otherwise a worker that starts after a new request
+        observes the NEW event and races."""
+        panel = _make_history_panel()
+        captured_args: list = []
+        panel._ctrl.capture_history_scope = MagicMock(
+            return_value=MagicMock(name="scope"),
+        )
+        mock_executor = MagicMock(name="executor")
+        mock_executor.submit = MagicMock(
+            side_effect=lambda fn, *args, **kw: captured_args.append((fn, args, kw)),
+        )
+        panel._history_executor = mock_executor
+        live_event = panel._history_closing
+        panel._start_history_list_request()
+        self.assertEqual(len(captured_args), 1)
+        _fn, args, _kw = captured_args[0]
+        self.assertIn(live_event, args)
+
+    def test_old_worker_drops_result_after_invalidate_then_new_request(self) -> None:
+        """End-to-end race guard.
+
+        Sequence:
+          (a) Submit list request #1 — captures ``event_old``.
+          (b) IDB change fires ``_invalidate_history(clear_panel=True)``:
+              the panel installs a fresh event (``event_new``).
+          (c) Submit list request #2 — captures ``event_new``.
+          (d) The OLD worker (request #1) finally checks its captured
+              ``event_old`` — it must see ``is_set()==True`` (the old
+              event was set by invalidate and is NEVER cleared) and drop
+              the result, regardless of the new request clearing its
+              event.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        from rikugan.state.history_types import HistoryScope
+
+        panel = _make_history_panel()
+        panel._ctrl.config = MagicMock()
+        panel._ctrl.list_history_sessions = MagicMock(return_value=[])
+        panel._history_executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            captured_submits: list = []
+
+            def _spying_submit(fn, *args, **kw):
+                captured_submits.append((fn, args, kw))
+                return MagicMock(name="future")
+
+            panel._history_executor.submit = _spying_submit  # type: ignore[assignment]
+            panel._ctrl.capture_history_scope = MagicMock(
+                return_value=HistoryScope(
+                    idb_path="/old.i64",
+                    db_instance_id="old",
+                    generation=1,
+                ),
+            )
+            with patch.object(_pc_module, "SessionHistory") as hist_cls:
+                hist_cls.return_value.flush_saves = MagicMock()
+                panel._start_history_list_request()
+            self.assertEqual(len(captured_submits), 1)
+            _fn_1, args_1, _kw_1 = captured_submits[0]
+            event_old = panel._history_closing
+
+            # Step (b): invalidate replaces the event.
+            panel._invalidate_history(clear_panel=True)
+            event_after_invalidate = panel._history_closing
+            self.assertIsNot(event_after_invalidate, event_old)
+            self.assertTrue(event_old.is_set())
+
+            # Step (c): start request #2 against the new event.
+            # ``_invalidate_history`` detached the executor reference
+            # (set it to ``None``), so install a fresh mock executor
+            # before the next request.  The production lazy-init path
+            # would otherwise create a real ``ThreadPoolExecutor``; we
+            # short-circuit it so we can spy on the submit call args
+            # without needing a real thread pool.
+            mock_executor_2 = MagicMock(name="executor_2")
+            mock_executor_2.submit = MagicMock(
+                side_effect=lambda fn, *a, **kw: captured_submits.append((fn, a, kw)),
+            )
+            panel._history_executor = mock_executor_2
+            panel._ctrl.capture_history_scope = MagicMock(
+                return_value=HistoryScope(
+                    idb_path="/new.i64",
+                    db_instance_id="new",
+                    generation=2,
+                ),
+            )
+            with patch.object(_pc_module, "SessionHistory") as hist_cls2:
+                hist_cls2.return_value.flush_saves = MagicMock()
+                panel._start_history_list_request()
+            self.assertEqual(len(captured_submits), 2)
+            _fn_2, _args_2, _kw_2 = captured_submits[1]
+            event_new = panel._history_closing
+            self.assertIs(event_after_invalidate, event_new)
+            self.assertFalse(event_new.is_set())
+
+            # Step (d): run the OLD worker with its captured old event.
+            scope_1 = HistoryScope(
+                idb_path="/old.i64",
+                db_instance_id="old",
+                generation=1,
+            )
+            captured_event_arg_1 = args_1[-1]
+            self.assertIs(captured_event_arg_1, event_old)
+            with patch.object(_pc_module, "SessionHistory") as hist_cls3:
+                hist_cls3.return_value.flush_saves = MagicMock()
+                panel._history_list_worker(scope_1, captured_event_arg_1)
+            self.assertTrue(panel._history_result_queue.empty())
+        finally:
+            # ``_invalidate_history`` detaches the executor reference;
+            # shut down whatever remains (may be None after invalidate).
+            executor = panel._history_executor
+            if executor is not None:
+                executor.shutdown(wait=True)
 
 
 if __name__ == "__main__":
