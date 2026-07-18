@@ -248,6 +248,83 @@ def _history_nav_label_style() -> str:
     return f"color: {t.muted_text}; font-size: inherit; padding: 0 6px;"
 
 
+# === History side panel (Task 6) ============================================
+#
+# These styles are applied by ``HistoryPanel`` and ``HistoryRowWidget``.
+# They are deliberately scoped to ``#history_panel`` / ``#history_row``
+# object-names so the QSS does not leak into sibling panels.
+#
+# In IDA-native mode (host palette), :func:`maybe_host_stylesheet` returns
+# an empty string; the panel calls ``setStyleSheet("")`` so the host
+# palette takes over without an explicit per-widget override.
+
+
+def _history_panel_style() -> str:
+    t = _tokens()
+    return (
+        f"QFrame#history_panel {{ background: {t.window}; color: {t.text}; "
+        f"border-left: 1px solid {t.mid}; }}"
+        f"QFrame#history_header {{ background: {t.window}; "
+        f"border-bottom: 1px solid {t.mid}; }}"
+    )
+
+
+def _history_row_style() -> str:
+    t = _tokens()
+    return (
+        f"QFrame#history_row {{ background: {t.base}; border-bottom: 1px solid {t.mid}; }}"
+        f"QFrame#history_row:hover {{ background: {t.alt_base}; }}"
+    )
+
+
+def _history_title_style() -> str:
+    t = _tokens()
+    return f"color: {t.text}; font-size: inherit; font-weight: bold;"
+
+
+def _history_meta_style() -> str:
+    t = _tokens()
+    return f"color: {t.muted_text}; font-size: inherit;"
+
+
+def _history_scope_style() -> str:
+    t = _tokens()
+    return f"color: {t.muted_text}; font-size: inherit; font-style: italic;"
+
+
+def _history_status_style() -> str:
+    t = _tokens()
+    return f"color: {t.muted_text}; font-size: inherit;"
+
+
+def _history_search_style() -> str:
+    t = _tokens()
+    return (
+        f"QLineEdit#history_search {{ background: {t.base}; color: {t.text}; "
+        f"border: 1px solid {t.mid}; border-radius: 4px; padding: 4px 6px; "
+        f"selection-background-color: {t.highlight}; "
+        f"selection-color: {t.highlight_text}; }}"
+    )
+
+
+def _history_close_btn_style() -> str:
+    t = _tokens()
+    return _button_qss(t, t.alt_base, object_name="history_close_btn")
+
+
+def _history_retry_btn_style() -> str:
+    t = _tokens()
+    return (
+        f"QPushButton#history_retry_btn {{ background: {t.button}; color: {t.button_text}; "
+        f"border: 1px solid {t.accent}; border-radius: 4px; padding: 4px 12px; "
+        f"font-size: inherit; }}"
+        f"QPushButton#history_retry_btn:hover {{ background: {t.alt_base}; "
+        f"border-color: {t.accent}; }}"
+        f"QPushButton#history_retry_btn:pressed {{ background: {t.mid}; }}"
+        f"QPushButton#history_retry_btn:focus {{ border: 1px solid {t.accent}; }}"
+    )
+
+
 # Settings button (bold, accent focus)
 def _settings_btn_style() -> str:
     t = _tokens()
@@ -337,6 +414,45 @@ def get_history_nav_button_style() -> str:
 
 def get_history_nav_label_style() -> str:
     return _history_nav_label_style()
+
+
+# === History side panel (Task 6) getters ==================================
+
+
+def get_history_panel_style() -> str:
+    return _history_panel_style()
+
+
+def get_history_row_style() -> str:
+    return _history_row_style()
+
+
+def get_history_title_style() -> str:
+    return _history_title_style()
+
+
+def get_history_meta_style() -> str:
+    return _history_meta_style()
+
+
+def get_history_scope_style() -> str:
+    return _history_scope_style()
+
+
+def get_history_status_style() -> str:
+    return _history_status_style()
+
+
+def get_history_search_style() -> str:
+    return _history_search_style()
+
+
+def get_history_close_btn_style() -> str:
+    return _history_close_btn_style()
+
+
+def get_history_retry_btn_style() -> str:
+    return _history_retry_btn_style()
 
 
 def get_tool_colors() -> dict[str, str]:

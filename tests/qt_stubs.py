@@ -41,6 +41,17 @@ def _qt_class(name: str) -> type:
 
     def _text_setter(self, val):
         self._text = val
+        # Fire ``textChanged`` so listeners (search-driven widgets)
+        # observe the update — this matches PySide6's automatic emit
+        # on QLineEdit. We only fire when the value actually changes
+        # so tests that re-set the same text don't double-process.
+        signal = getattr(self, "_signal_textChanged", None)
+        if signal is not None and getattr(self, "_text_prev", None) != val:
+            self._text_prev = val
+            try:
+                signal.emit(val)
+            except Exception:
+                pass
 
     def _plain_text_getter(self):
         return getattr(self, "_plain_text", "")
@@ -81,6 +92,56 @@ def _qt_class(name: str) -> type:
 
         return _FontMetrics()
 
+    def _set_text_format(self, fmt) -> None:
+        # Track the format so tests can verify ``PlainText`` was forced
+        # on user-facing titles. Real Qt exposes this via QLabel.textFormat().
+        self._textFormat = int(fmt)
+
+    def _text_format_getter(self):
+        # Default mirrors real Qt's ``AutoText`` (2). The setter is
+        # added next to this getter so tests can assert the panel
+        # forced ``PlainText`` (0) on user-facing titles.
+        return getattr(self, "_textFormat", 2)
+
+    def _set_word_wrap(self, val) -> None:
+        self._wordWrap = bool(val)
+
+    def _word_wrap_getter(self):
+        return getattr(self, "_wordWrap", False)
+
+    def _set_maximum_width(self, val) -> None:
+        self._maximumWidth = int(val)
+
+    def _maximum_width_getter(self):
+        # 16777215 == QWIDGETSIZE_MAX in real Qt; tests assert values
+        # <= 320 once the panel constrains its content.
+        return getattr(self, "_maximumWidth", 16777215)
+
+    def _set_horizontal_scrollbar_policy(self, policy) -> None:
+        self._horizontalScrollBarPolicy = policy
+
+    def _horizontal_scrollbar_policy_getter(self):
+        # Default mirrors real Qt's default (ScrollBarAsNeeded = 0).
+        return getattr(self, "_horizontalScrollBarPolicy", 0)
+
+    def _set_clear_button_enabled(self, val) -> None:
+        self._clearButtonEnabled = bool(val)
+
+    def _clear_button_enabled_getter(self):
+        return getattr(self, "_clearButtonEnabled", False)
+
+    def _set_placeholder_text(self, text: str) -> None:
+        self._placeholderText = str(text)
+
+    def _placeholder_text_getter(self):
+        return getattr(self, "_placeholderText", "")
+
+    def _set_stylesheet(self, qss: str) -> None:
+        self._styleSheet = str(qss)
+
+    def _stylesheet_getter(self):
+        return getattr(self, "_styleSheet", "")
+
     def _layout_getter(self):
         """Return the QLayout attached via ``setLayout``.
 
@@ -99,7 +160,14 @@ def _qt_class(name: str) -> type:
             self._items = items
         items.append(w)
 
-    def _layout_add_layout(self, layout):
+    def _layout_add_widget_with_stretch(self, w, stretch=0, *a, **k):
+        # Variant of ``addWidget`` that accepts the optional ``stretch``
+        # integer. The default ``_layout_add_widget`` only consumes
+        # one positional argument; ``addWidget(widget, 1, alignment)``
+        # fails on the stub otherwise.
+        return self._layout_add_widget(w, *a, **k)
+
+    def _layout_add_layout(self, layout, *a, **k):
         items = getattr(self, "_items", None)
         if items is None:
             items = []
@@ -144,7 +212,8 @@ def _qt_class(name: str) -> type:
         "__init__": _noop,
         # QWidget common
         "setObjectName": _noop,
-        "setStyleSheet": _noop,
+        "setStyleSheet": _set_stylesheet,
+        "styleSheet": _stylesheet_getter,
         "setMinimumWidth": _noop,
         "setMinimumHeight": _min_h_setter,
         "minimumHeight": _min_h_getter,
@@ -152,11 +221,17 @@ def _qt_class(name: str) -> type:
         "setSizePolicy": _noop,
         "setFixedSize": _noop,
         "setFixedWidth": _noop,
-        "setWordWrap": _noop,
+        "setMaximumWidth": _set_maximum_width,
+        "maximumWidth": _maximum_width_getter,
+        "setHorizontalScrollBarPolicy": _set_horizontal_scrollbar_policy,
+        "horizontalScrollBarPolicy": _horizontal_scrollbar_policy_getter,
+        "setWordWrap": _set_word_wrap,
+        "wordWrap": _word_wrap_getter,
         "setSingleStep": _noop,
         "setValue": _noop,
         "setEnabled": _noop,
-        "setTextFormat": _noop,
+        "setTextFormat": _set_text_format,
+        "textFormat": _text_format_getter,
         "setTextInteractionFlags": _noop,
         "setOpenExternalLinks": _noop,
         "setContentsMargins": _noop,
@@ -185,7 +260,8 @@ def _qt_class(name: str) -> type:
         "setDisabled": _noop,
         "setHidden": _noop,
         "setIcon": _noop,
-        "setPlaceholderText": _noop,
+        "setPlaceholderText": _set_placeholder_text,
+        "placeholderText": _placeholder_text_getter,
         "setEchoMode": _noop,
         "setReadOnly": _noop,
         "fontMetrics": _font_metrics,
@@ -313,7 +389,6 @@ def _qt_class(name: str) -> type:
         "horizontalHeaderItem": lambda self, *a: None,
         "item": lambda self, *a: None,
         "clear": _noop,
-        "addItem": _noop,
         "itemData": lambda self, *a: None,
         "setSelectionBehavior": _noop,
         "setEditTriggers": _noop,
@@ -337,21 +412,21 @@ def _qt_class(name: str) -> type:
         "setLocale": _noop,
         "setInputMethodHints": _noop,
         "setGraphicsItem": _noop,
-        "clicked": _Signal(),
+        "clicked": _PerInstanceSignal(),
         "deleteLater": _noop,
-        "triggered": _Signal(),
-        "toggled": _Signal(),
-        "pressed": _Signal(),
-        "released": _Signal(),
-        "currentChanged": _Signal(),
-        "currentIndexChanged": _Signal(),
-        "currentTextChanged": _Signal(),
-        "stateChanged": _Signal(),
-        "valueChanged": _Signal(),
-        "textChanged": _Signal(),
-        "textEdited": _Signal(),
-        "editingFinished": _Signal(),
-        "returnPressed": _Signal(),
+        "triggered": _PerInstanceSignal(),
+        "toggled": _PerInstanceSignal(),
+        "pressed": _PerInstanceSignal(),
+        "released": _PerInstanceSignal(),
+        "currentChanged": _PerInstanceSignal(),
+        "currentIndexChanged": _PerInstanceSignal(),
+        "currentTextChanged": _PerInstanceSignal(),
+        "stateChanged": _PerInstanceSignal(),
+        "valueChanged": _PerInstanceSignal(),
+        "textChanged": _PerInstanceSignal(),
+        "textEdited": _PerInstanceSignal(),
+        "editingFinished": _PerInstanceSignal(),
+        "returnPressed": _PerInstanceSignal(),
         "setVisible": _visible_setter,
         "isHidden": _hidden_getter,
         "setParent": _noop,
@@ -420,6 +495,16 @@ def _make_qtimer_stub() -> type:
                 self.timeout.emit()
 
         def stop(self) -> None:
+            self._active = False
+
+        def deleteLater(self) -> None:
+            """Match the real PySide6 ``QObject.deleteLater`` API.
+
+            The stub does not schedule deferred deletion — we only need
+            the method to exist so production code like
+            ``_stop_history_poll_timer`` can call it when running under
+            tests.
+            """
             self._active = False
 
         def isActive(self) -> bool:
@@ -495,6 +580,12 @@ class _Signal:
     can verify signal-driven behavior (e.g. ``sig.connect(lambda x: ...)``
     followed by ``sig.emit(value)``). Disconnecting a slot not in the
     list is a no-op, matching PySide6 semantics.
+
+    When accessed as a class-level attribute (e.g. ``QPushButton.clicked``)
+    a fresh ``_Signal`` is materialised on the instance the first time
+    the attribute is read. This mirrors how real PySide6 binds a Signal
+    descriptor to the instance on attribute access — class-level
+    descriptors must NOT share connection state across widget instances.
     """
 
     def __init__(self, *a):
@@ -515,8 +606,50 @@ class _Signal:
         for slot in self._connections:
             slot(*a)
 
+    def __set_name__(self, owner, name: str) -> None:
+        self._attr_name = f"_signal_{name}"
+
     def __get__(self, obj, objtype=None):
-        return self
+        if obj is None:
+            return self
+        # Real PySide6 binds the descriptor on attribute access. We do
+        # the same here so two ``HistoryPanel`` instances each get a
+        # fresh connections list.
+        attr = getattr(self, "_attr_name", None)
+        if attr is None:
+            # Class-level access without __set_name__ (e.g. when a test
+            # instantiates ``Signal(str)`` directly) — fall back to a
+            # shared signal so the bare class-level use case still
+            # works.
+            return self
+        signal = getattr(obj, attr, None)
+        if signal is None:
+            signal = _Signal()
+            try:
+                setattr(obj, attr, signal)
+            except Exception:
+                # Some objects refuse attribute assignment; return the
+                # shared signal so the call still succeeds.
+                return self
+        return signal
+
+    def __set__(self, obj, value: object) -> None:
+        # Allow explicit assignment (e.g. widget subclasses that set
+        # ``self.session_open_requested = ...`` in __init__) to
+        # override the descriptor's instance binding.
+        attr = getattr(self, "_attr_name", None)
+        if attr is not None:
+            try:
+                setattr(obj, attr, value)
+            except Exception:
+                pass
+
+
+class _PerInstanceSignal(_Signal):
+    """Backward-compatible alias for the descriptor (older call sites)."""
+
+    def __init__(self) -> None:
+        super().__init__()
 
 
 _WIDGET_NAMES = [
@@ -640,6 +773,20 @@ def ensure_pyside6_stubs() -> None:
             "Open": 1024,
             "Close": 2048,
             "Apply": 33554432,
+        },
+    )()
+    # Qt.ScrollBarPolicy enum — production code (HistoryPanel, etc.)
+    # uses ScrollBarAlwaysOff to disable horizontal scrolling on a
+    # vertical-only list. Real PySide6 exposes the same numeric
+    # values; tests assert the constant so the API call is verified
+    # end-to-end.
+    _sentinel.ScrollBarPolicy = type(
+        "_ScrollBarPolicy",
+        (),
+        {
+            "ScrollBarAsNeeded": 0,
+            "ScrollBarAlwaysOff": 1,
+            "ScrollBarAlwaysOn": 2,
         },
     )()
 
@@ -1153,3 +1300,95 @@ def ensure_pyside6_stubs() -> None:
 
     sys.modules["PySide6.QtWidgets"].QTabWidget = _make_qtabwidget_stub()
     sys.modules["PySide6.QtWidgets"].QComboBox = _make_qcombobox_stub()
+
+    def _make_qstackedwidget_stub() -> type:
+        """Build a minimal QStackedWidget stub.
+
+        Real PySide6 QStackedWidget switches between stacked children
+        via ``setCurrentIndex`` / ``setCurrentWidget``. The widget has
+        addWidget / removeWidget / count semantics; tests need the
+        count + currentIndex surface so a panel-driven state machine
+        can be exercised without a real event loop.
+
+        We inherit from the regular ``_qt_class`` so the base QWidget
+        attribute set (``setObjectName``, ``setStyleSheet``,
+        ``setLayout``) is available alongside the stack semantics.
+        """
+        _Base = _qt_class("QStackedWidgetBase")
+
+        class _QStackedWidget(_Base):
+            def __init__(self, parent=None):
+                super().__init__()
+                self._pages: list = []
+                self._current = -1
+                self.currentChanged = _Signal()
+
+            def addWidget(self, widget):
+                self._pages.append(widget)
+                idx = len(self._pages) - 1
+                if self._current < 0:
+                    self._current = idx
+                return idx
+
+            def removeWidget(self, widget):
+                if widget in self._pages:
+                    self._pages.remove(widget)
+                    if self._current >= len(self._pages):
+                        self._current = len(self._pages) - 1
+
+            def count(self):
+                return len(self._pages)
+
+            def widget(self, idx):
+                if 0 <= idx < len(self._pages):
+                    return self._pages[idx]
+                return None
+
+            def currentIndex(self):
+                return self._current
+
+            def setCurrentIndex(self, idx):
+                if 0 <= idx < len(self._pages) and idx != self._current:
+                    self._current = idx
+                    self.currentChanged.emit(idx)
+
+            def currentWidget(self):
+                return self.widget(self._current)
+
+            def setCurrentWidget(self, widget):
+                try:
+                    idx = self._pages.index(widget)
+                except ValueError:
+                    return
+                self.setCurrentIndex(idx)
+
+        return _QStackedWidget
+
+    sys.modules["PySide6.QtWidgets"].QStackedWidget = _make_qstackedwidget_stub()
+
+    # QLayout subclasses (QVBoxLayout/QHBoxLayout) used by stack
+    # containers need ``removeWidget`` so the history panel can drop a
+    # row before the trailing stretch. The default ``_qt_class`` does
+    # not track the ``layout.addWidget`` calls, so ``removeWidget``
+    # would silently no-op; the real class returns ``True`` on
+    # success.
+    _qvb_stub = sys.modules["PySide6.QtWidgets"].QVBoxLayout
+    _qhb_stub = sys.modules["PySide6.QtWidgets"].QHBoxLayout
+
+    def _layout_remove_widget(self, w):
+        items = getattr(self, "_items", [])
+        if w in items:
+            items.remove(w)
+            return True
+        return False
+
+    if not hasattr(_qvb_stub, "removeWidget"):
+        _qvb_stub.removeWidget = _layout_remove_widget
+        _qhb_stub.removeWidget = _layout_remove_widget
+
+    def _layout_count(self):
+        return len(getattr(self, "_items", []))
+
+    if not hasattr(_qvb_stub, "count"):
+        _qvb_stub.count = _layout_count
+        _qhb_stub.count = _layout_count

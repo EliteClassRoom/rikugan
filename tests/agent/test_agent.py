@@ -11,12 +11,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.agent.context_window import ContextWindowManager
-from rikugan.agent.plan_mode import create_plan_from_text, parse_plan
-from rikugan.agent.turn import TurnEvent, TurnEventType
-from rikugan.core.config import RikuganConfig
-from rikugan.core.types import Message, Role, TokenUsage
-from rikugan.state.session import SessionState
+from rikugan.agent.context_window import ContextWindowManager  # noqa: E402
+from rikugan.agent.plan_mode import create_plan_from_text, parse_plan  # noqa: E402
+from rikugan.agent.turn import TurnEvent, TurnEventType  # noqa: E402
+from rikugan.core.config import RikuganConfig  # noqa: E402
+from rikugan.core.types import Message, Role, TokenUsage  # noqa: E402
+from rikugan.state.session import SessionState  # noqa: E402
 
 
 class TestTurnEvents(unittest.TestCase):
@@ -104,7 +104,8 @@ class TestSessionState(unittest.TestCase):
     def test_add_message(self):
         session = SessionState()
         msg = Message(
-            role=Role.ASSISTANT, content="test",
+            role=Role.ASSISTANT,
+            content="test",
             token_usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         )
         session.add_message(msg)
@@ -123,6 +124,7 @@ class TestSessionHistory(unittest.TestCase):
         import tempfile
 
         from rikugan.state.history import SessionHistory
+
         cfg = RikuganConfig()
         cfg._config_dir = tempfile.mkdtemp()
 
@@ -142,12 +144,18 @@ class TestSessionHistory(unittest.TestCase):
         import tempfile
 
         from rikugan.state.history import SessionHistory
+
         cfg = RikuganConfig()
         cfg._config_dir = tempfile.mkdtemp()
         history = SessionHistory(cfg)
 
         session1 = SessionState()
         session2 = SessionState()
+        # Spec §7.3 — an empty draft is not history; both sessions must have
+        # at least one message to survive the zero-message exclusion that
+        # Task 3 of the on-demand history feature added.
+        session1.add_message(Message(role=Role.USER, content="one"))
+        session2.add_message(Message(role=Role.USER, content="two"))
         history.save_session(session1, description="s1")
         history.save_session(session2, description="s2")
 

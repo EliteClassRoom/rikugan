@@ -23,6 +23,14 @@ from typing import TYPE_CHECKING, Any
 from ..core.config import RikuganConfig
 from ..core.host import get_database_instance_id, set_database_instance_id
 from ..core.logging import log_debug, log_error, log_info, log_warning
+from ..state.history_types import (
+    HistoryAttachResult,
+    HistoryAttachStatus,
+    HistoryLoadResult,
+    HistoryRequestStatus,
+    HistoryScope,
+    SessionHistoryEntry,
+)
 
 if TYPE_CHECKING:
     from ..agent.loop import AgentLoop, BackgroundAgentRunner
@@ -275,15 +283,22 @@ class SessionControllerBase:
         log_debug(f"Switched to tab {tab_id}")
 
     def tab_label(self, tab_id: str) -> str:
-        """Return a display label for a tab."""
+        """Return a display label for a tab.
+
+        Uses the shared :func:`derive_history_title` helper at
+        ``max_chars=20`` so tab text and History titles share one
+        derivation pipeline (spec §9.1). Returns ``"New Chat"`` for
+        empty tabs and unknown ids, matching the previous behavior.
+        """
         session = self._sessions.get(tab_id)
-        if session is None:
+        if session is None or not session.messages:
             return "New Chat"
-        for msg in session.messages:
-            if msg.role.value == "user" and msg.content:
-                text = msg.content.strip()
-                return text[:20] + ("..." if len(text) > 20 else "")
-        return "New Chat"
+        # Lazy import — the derivation helper lives in the persistence
+        # module which is already loaded by ``__init__`` via the heavy
+        # runtime chain.
+        from ..state.history import derive_history_title
+
+        return derive_history_title(session.messages, max_chars=20)
 
     @property
     def active_tab_id(self) -> str:
@@ -651,75 +666,159 @@ class SessionControllerBase:
         )
         log_info("Started new chat session (active tab)")
 
-    def restore_sessions(self, latest_only: bool = False) -> list[tuple[str, SessionState]]:
-        """Load saved sessions for the current idb_path and return (tab_id, session) pairs.
+    # ------------------------------------------------------------------
+    # History on-demand APIs (spec §8.1, §8.3, §10.1-§10.3)
+    # ------------------------------------------------------------------
 
-        When ``latest_only`` is True, only the most recent session is
-        restored (legacy single-session behavior). Otherwise every
-        saved session is loaded.
+    def capture_history_scope(self, generation: int) -> HistoryScope:
+        """Snapshot the live IDB identity + a request generation (Qt main thread).
+
+        The returned :class:`HistoryScope` is immutable; it is the only
+        data the background history worker reads about "which IDB this
+        request belongs to". PanelCore owns ``generation`` so a stale
+        result can be discarded after an IDB switch or shutdown.
         """
-        results: list[tuple[str, SessionState]] = []
-        if not self._idb_path:
-            log_debug("Skipping session restore: no database path available")
-            return results
-        try:
-            history = SessionHistory(self.config)
-            summaries = history.list_sessions(
-                idb_path=self._idb_path,
-                db_instance_id=self._db_instance_id,
-            )
-            summaries.sort(key=lambda s: s.get("created_at", 0))
-            if latest_only:
-                summaries = summaries[-1:]
-            for summary in summaries:
-                session = history.load_session(summary["id"])
-                if session and session.messages:
-                    tab_id = uuid.uuid4().hex[:8]
-                    self._sessions[tab_id] = session
-                    results.append((tab_id, session))
-                    log_debug(f"Restored session {session.id} as tab {tab_id}")
-        except (OSError, ValueError, KeyError) as e:
-            log_error(f"Failed to restore sessions: {e}")
-        if results:
-            # Remove the default empty session that was created in __init__
-            # and set the first restored tab as active
-            if self._active_tab_id in self._sessions:
-                default_session = self._sessions[self._active_tab_id]
-                if not default_session.messages:
-                    del self._sessions[self._active_tab_id]
-            self._active_tab_id = results[-1][0]  # most recent
-        return results
+        return HistoryScope(
+            idb_path=self._idb_path,
+            db_instance_id=self._db_instance_id,
+            generation=generation,
+        )
 
-    def restore_session(self) -> SessionState | None:
-        """Legacy: restore only the latest session into the active tab."""
-        if not self._idb_path:
-            log_debug("Skipping session restore: no database path available")
-            return None
-        try:
-            history = SessionHistory(self.config)
-            session = history.get_latest_session(
-                idb_path=self._idb_path,
-                db_instance_id=self._db_instance_id,
-            )
-            if session and session.messages:
-                log_debug(f"Restoring session {session.id} with {len(session.messages)} messages")
-                self._sessions[self._active_tab_id] = session
-                log_info(f"Restored session {session.id} ({len(session.messages)} messages)")
-                return session
-        except (OSError, ValueError, KeyError) as e:
-            log_error(f"Failed to restore session: {e}")
+    def find_tab_for_session(self, persisted_session_id: str) -> str | None:
+        """Return the open ``tab_id`` whose ``session.id`` matches, else ``None``.
+
+        The parameter is the persisted ``SessionState.id`` stored in the
+        manifest, never the ephemeral ``_sessions`` key (spec §10.2).
+        Used for duplicate detection before starting a load and again
+        before attaching the loaded session.
+        """
+        for tab_id, session in self._sessions.items():
+            if session.id == persisted_session_id:
+                return tab_id
         return None
 
+    def list_history_sessions(self, scope: HistoryScope) -> list[SessionHistoryEntry]:
+        """List persisted sessions that belong to ``scope`` (background worker).
+
+        Maps manifest metadata to frozen :class:`SessionHistoryEntry` rows
+        without opening any session JSON. ``load_session`` is never called
+        per row (spec §8.1). The caller (PanelCore worker) is expected
+        to ``flush_saves`` first and sort newest-first.
+        """
+        history = SessionHistory(self.config)
+        summaries = history.list_sessions(
+            idb_path=scope.idb_path,
+            db_instance_id=scope.db_instance_id,
+        )
+        entries: list[SessionHistoryEntry] = []
+        for row in summaries:
+            entries.append(
+                SessionHistoryEntry(
+                    session_id=row.get("id", ""),
+                    title=row.get("description", "") or "Untitled chat",
+                    created_at=float(row.get("created_at", 0) or 0),
+                    updated_at=float(row.get("updated_at", 0) or 0),
+                    provider=row.get("provider", "") or "",
+                    model=row.get("model", "") or "",
+                    message_count=int(row.get("messages", 0) or 0),
+                )
+            )
+        return entries
+
+    def load_history_session(self, session_id: str, scope: HistoryScope) -> HistoryLoadResult:
+        """Load one session payload and validate it belongs to ``scope``.
+
+        Runs on the dedicated history worker thread. Does not mutate
+        ``_sessions`` and does not touch Qt. The same
+        :func:`_matches_current_idb` predicate used by listing is
+        re-applied here so list-time and post-load authorization cannot
+        drift (spec §8.3, §10.1).
+        """
+        from ..state.history import _matches_current_idb
+
+        history = SessionHistory(self.config)
+        try:
+            session = history.load_session(session_id)
+        except (OSError, ValueError, KeyError) as exc:
+            log_error(f"Failed to load history session {session_id}: {exc}")
+            return HistoryLoadResult(
+                status=HistoryRequestStatus.FAILED,
+                scope=scope,
+                error=str(exc),
+            )
+        if session is None:
+            return HistoryLoadResult(status=HistoryRequestStatus.NOT_FOUND, scope=scope)
+        if not session.messages:
+            return HistoryLoadResult(status=HistoryRequestStatus.EMPTY, scope=scope)
+        # Re-validate against the captured scope using the shared predicate.
+        if not _matches_current_idb(
+            entry_idb_path=session.idb_path,
+            entry_db_instance_id=session.db_instance_id,
+            target_idb_path=scope.idb_path,
+            target_db_instance_id=scope.db_instance_id,
+        ):
+            return HistoryLoadResult(status=HistoryRequestStatus.WRONG_IDB, scope=scope)
+        return HistoryLoadResult(status=HistoryRequestStatus.LOADED, scope=scope, session=session)
+
+    def attach_history_session(self, result: HistoryLoadResult) -> HistoryAttachResult:
+        """Attach a loaded session to ``_sessions`` (Qt main thread only).
+
+        Compares ``result.scope`` with the freshly captured live path /
+        instance identity. A mismatch after an IDB switch yields
+        ``STALE_SCOPE`` without creating a tab. A persisted id already
+        open in some tab yields ``ALREADY_OPEN`` with the existing
+        ``tab_id``. Otherwise the session is inserted under a fresh
+        ``uuid4().hex[:8]`` tab key (spec §10.1, §10.3).
+        """
+        # STALE_SCOPE check: scope must match the live identity. Per the
+        # spec, the drain step compares ``result.scope.generation`` on
+        # the PanelCore side; here we compare the path/instance identity
+        # directly so a stale load cannot be attached to the wrong IDB.
+        from ..state.history import _matches_current_idb
+
+        if result.session is None or result.status is not HistoryRequestStatus.LOADED:
+            return HistoryAttachResult(status=HistoryAttachStatus.STALE_SCOPE)
+        if not _matches_current_idb(
+            entry_idb_path=result.scope.idb_path,
+            entry_db_instance_id=result.scope.db_instance_id,
+            target_idb_path=self._idb_path,
+            target_db_instance_id=self._db_instance_id,
+        ):
+            return HistoryAttachResult(status=HistoryAttachStatus.STALE_SCOPE)
+        # Duplicate detection (post-load): the persisted id may have
+        # been opened by another request while this load was in flight.
+        session = result.session
+        existing_tab_id = self.find_tab_for_session(session.id)
+        if existing_tab_id is not None:
+            return HistoryAttachResult(
+                status=HistoryAttachStatus.ALREADY_OPEN,
+                tab_id=existing_tab_id,
+                session=session,
+            )
+        tab_id = uuid.uuid4().hex[:8]
+        self._sessions[tab_id] = session
+        log_info(f"Attached history session {session.id} as tab {tab_id}")
+        return HistoryAttachResult(status=HistoryAttachStatus.OPENED, tab_id=tab_id, session=session)
+
     def reset_for_new_file(self, new_idb_path: str) -> None:
-        """Save all sessions and reset for a new database file."""
+        """Save all sessions and reset for a new database file.
+
+        Spec §7.2: after ``cancel()``, each non-empty old-IDB session is
+        submitted to ``save_session_async`` in deterministic tab order
+        and then detached by clearing controller state. The futures
+        retain the old session objects; no code may mutate them after
+        detachment. Shutdown keeps its synchronous durability behavior
+        unchanged.
+        """
         self.cancel()
-        for tab_id, session in self._sessions.items():
-            if session.messages:
-                try:
-                    history = SessionHistory(self.config)
-                    history.save_session(session)
-                except (OSError, ValueError) as e:
-                    log_error(f"Failed to save session {tab_id} on file change: {e}")
+        for tab_id, session in list(self._sessions.items()):
+            if not session.messages:
+                continue
+            try:
+                future = SessionHistory(self.config).save_session_async(session)
+                future.add_done_callback(self._on_async_save_done)
+            except (OSError, ValueError) as exc:
+                log_error(f"Failed to enqueue session {tab_id} on file change: {exc}")
         self._sessions.clear()
         self._idb_path = _normalize_db_path(new_idb_path)
         self._db_instance_id = self._ensure_db_instance_id()

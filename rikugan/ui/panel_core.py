@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import time
 from collections.abc import Callable
-from typing import Any, ClassVar
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, ClassVar, Literal
 
 from ..agent.mutation import MutationRecord
 from ..agent.turn import TurnEvent, TurnEventType
@@ -15,6 +17,14 @@ from ..core.early_log import _early_log, _early_log_crash
 from ..core.logging import log_debug, log_error, log_info, log_warning
 from ..core.types import Role
 from ..providers.auth_cache import resolve_auth_cached
+from ..state.history import SessionHistory
+from ..state.history_types import (
+    HistoryAttachStatus,
+    HistoryListResult,
+    HistoryLoadResult,
+    HistoryRequestStatus,
+    HistoryScope,
+)
 from .chat_view import ChatView
 from .context_bar import ContextBar
 from .export_formatting import (
@@ -22,6 +32,7 @@ from .export_formatting import (
     _export_format_tool_args,
     _export_format_tool_result,
 )
+from .history_panel import HistoryPanel
 from .input_area import InputArea
 from .mutation_log_view import MutationLogPanel
 from .profiling import probe as ui_probe
@@ -53,6 +64,16 @@ from .styles import (
 from .theme.manager import ThemeManager
 from .tool_widgets import _SharedSpinnerTimer
 from .tools_panel import ToolsPanel
+
+# History poll interval (ms). Spec §7.4: a dedicated main-thread QTimer
+# drains history results so History works while the agent is idle.
+# 50ms keeps the UI responsive without busy-looping an idle panel.
+_HISTORY_POLL_INTERVAL_MS = 50
+# Bounded result queue: one slot for the single in-flight list/load
+# request + one for its terminal result (spec §11.4).
+_HISTORY_RESULT_QUEUE_MAXSIZE = 2
+# Distinct prefix for the history worker pool (spec §6.1, §11.4).
+_HISTORY_EXECUTOR_PREFIX = "rikugan-history"
 
 # Fixed width for header action buttons (Send, Cancel, New, Export,
 # Settings, Mutations, Tools). Square-ish so icon + short label fit
@@ -231,6 +252,38 @@ class RikuganPanelCore(QWidget):
         self._context_bar: ContextBar | None = None
         self._mutation_panel: MutationLogPanel | None = None
         self._skills_refresh_timer: QTimer | None = None
+        # History-on-demand coordinator state (spec §6.1, §8.1, §11.4).
+        # ``_history_panel`` / ``_history_btn`` are created in
+        # ``_build_main_splitter`` / ``_build_action_buttons``; they are
+        # declared here so every history helper can null-check them
+        # without an ``AttributeError`` if a method runs before the UI
+        # build completed (or in tests that bypass ``__init__``).
+        self._history_panel: HistoryPanel | None = None
+        self._history_btn: QPushButton | None = None
+        self._history_generation: int = 0
+        self._history_executor: ThreadPoolExecutor | None = None
+        self._history_result_queue: queue.Queue[HistoryListResult] = queue.Queue(
+            maxsize=_HISTORY_RESULT_QUEUE_MAXSIZE,
+        )
+        self._history_poll_timer: QTimer | None = None
+        self._history_pending: bool = False
+        # Reviewer MEDIUM #2: when a load FAILS, the persisted session
+        # id is retained so the Retry button can re-dispatch the LOAD
+        # (not the list refresh).  Only the id is held — never the
+        # full ``SessionState`` — so a stale scope is recaptured fresh
+        # on retry and no large payload is retained.  Cleared on
+        # successful attach, IDB change, shutdown, or any non-FAILED /
+        # non-LOADED status that has no retry-load semantics.
+        # ``_history_last_load_session_id`` tracks the in-flight load's
+        # target so a FAILED result (which does NOT carry the id back)
+        # can copy it into the retry slot.  ``HistoryLoadResult`` only
+        # echoes the captured scope, not the requested session id.
+        self._history_retry_load_session_id: str | None = None
+        self._history_last_load_session_id: str | None = None
+        # Closing flag: set by ``_invalidate_history`` so a worker that
+        # finishes after IDB-switch / shutdown drops its result instead
+        # of pushing it onto a queue nobody drains (spec §11.4).
+        self._history_closing: threading.Event = threading.Event()
         # Debounced token display: streaming can fire 30+ usage events per
         # second; each one used to call set_tokens directly. We coalesce to
         # a single update at most every 100ms and skip updates that would
@@ -563,13 +616,9 @@ class RikuganPanelCore(QWidget):
                 self._ui_hooks = None
         _early_log("panel_core:build_ui:ui_hooks:done")
 
-        try:
-            _early_log("session_restore:entry")
-            self._try_restore_session()
-            _early_log("session_restore:done")
-        except Exception as _exc:
-            _early_log_crash(_exc)
-            raise
+        # Task 7 (spec §7.1): startup is fresh-by-default.  No
+        # session-restore side effects — History must be opened
+        # explicitly by the user.
         _early_log("panel_core:build_ui:done")
 
     def _build_tab_widget(self) -> None:
@@ -589,7 +638,13 @@ class RikuganPanelCore(QWidget):
         self._tab_bar.setVisible(False)  # hidden until 2+ tabs
 
     def _build_main_splitter(self, layout: QVBoxLayout) -> None:
-        """Create the horizontal splitter (chat | mutation log) and add to layout."""
+        """Create the horizontal splitter (chat | mutation log | history) and add to layout.
+
+        Spec §6.4: splitter widget order is chat, Mutation Log, History.
+        Mutation and History start hidden; only the visible auxiliary
+        widget receives the existing 3:1 chat-to-side stretch ratio, so
+        the hidden third widget consumes zero width.
+        """
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.setHandleWidth(1)
         self._main_splitter.setStyleSheet(maybe_host_stylesheet(self._main_splitter_style()))
@@ -600,8 +655,22 @@ class RikuganPanelCore(QWidget):
         self._mutation_panel.setVisible(False)
         self._main_splitter.addWidget(self._mutation_panel)
 
+        # History panel — third hidden widget.  Passive widget: only
+        # main-thread signals fire here (spec §6.3).  PanelCore owns
+        # the worker / queue / timer that drive its content.
+        self._history_panel = HistoryPanel()
+        self._history_panel.setVisible(False)
+        self._history_panel.close_requested.connect(lambda: self._show_right_panel(None))
+        self._history_panel.retry_requested.connect(self._on_history_retry)
+        # ``session_open_requested`` is consumed by Task 9; the slot is
+        # wired now so the passive widget has a stable connection owner
+        # and tests can assert the signal reaches PanelCore.
+        self._history_panel.session_open_requested.connect(self._on_history_open_requested)
+        self._main_splitter.addWidget(self._history_panel)
+
         self._main_splitter.setStretchFactor(0, 3)
         self._main_splitter.setStretchFactor(1, 1)
+        self._main_splitter.setStretchFactor(2, 1)
 
         layout.addWidget(self._main_splitter, 1)
 
@@ -655,6 +724,17 @@ class RikuganPanelCore(QWidget):
         self._mutations_btn.setVisible(False)  # shown when first mutation is recorded
         btn_layout.addWidget(self._mutations_btn)
 
+        # History button — always visible (spec §6.3, §6.4).  Unlike
+        # Mutations, History is a user-entry point and must not be
+        # hidden behind an event.  Checkable + routes through the
+        # shared right-panel coordinator so it stays mutually
+        # exclusive with Mutation Log.
+        self._history_btn = QPushButton("History")
+        self._history_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
+        self._history_btn.setCheckable(True)
+        self._history_btn.clicked.connect(self._on_toggle_history)
+        btn_layout.addWidget(self._history_btn)
+
         self._tools_btn = QPushButton("Tools")
         self._tools_btn.setFixedWidth(_ACTION_BUTTON_WIDTH)
         self._tools_btn.setCheckable(True)
@@ -670,6 +750,7 @@ class RikuganPanelCore(QWidget):
             self._export_btn.setStyleSheet(default_btn_style)
             self._settings_btn.setStyleSheet(default_btn_style)
             self._mutations_btn.setStyleSheet(default_btn_style)
+            self._history_btn.setStyleSheet(default_btn_style)
             self._tools_btn.setStyleSheet(default_btn_style)
         else:
             # Apply themed styles so colours track the current ThemeTokens.
@@ -686,6 +767,7 @@ class RikuganPanelCore(QWidget):
         self._export_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
         self._settings_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
         self._mutations_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
+        self._history_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
         self._tools_btn.setStyleSheet(maybe_host_stylesheet(_small_btn_style()))
 
     def _on_theme_changed(self, _tokens) -> None:
@@ -869,6 +951,13 @@ class RikuganPanelCore(QWidget):
         tab_id = self._tab_id_at_index(index)
         if tab_id is None:
             return
+        # Drop the pending restore payload BEFORE shutting down the
+        # ChatView (spec §10.3 step 6, §14.4).  ``ChatView.shutdown``
+        # already bumps its restore generation so any in-flight
+        # ``restore_from_messages_async`` signal is dropped, but the
+        # panel-level payload must be released too so closing a tab
+        # before lazy restore does not retain a full message list.
+        self._pending_restore_messages.pop(tab_id, None)
         self._ctrl.close_tab(tab_id)
         chat_view = self._chat_views.pop(tab_id, None)
         self._tab_widget.removeTab(index)
@@ -1162,6 +1251,26 @@ class RikuganPanelCore(QWidget):
             tools_panel = getattr(self, "_tools_panel", None)
             self._stop_poll_timer()
             self._stop_skills_refresh_timer()
+            # History on-demand teardown (spec §11.4): bump generation,
+            # stop the dedicated timer, non-blocking executor shutdown,
+            # drain result queue.  ``shutdown`` reuses
+            # ``_invalidate_history`` — it already performs every step
+            # the spec lists, and the ``_is_shutdown`` flag set at the
+            # top of ``shutdown`` keeps ``_drain_history_results`` from
+            # touching widgets even if a late result lands between
+            # ``_invalidate_history`` and the C++ destructor.
+            # ``clear_panel=False`` because widget mutation after the
+            # C++ teardown starts is unsafe; the HistoryPanel's own
+            # ``shutdown()`` call below releases its theme
+            # subscriptions without mutating the row model.
+            self._invalidate_history(clear_panel=False)
+            # Release HistoryPanel's theme subscriptions (idempotent).
+            history_panel = getattr(self, "_history_panel", None)
+            if history_panel is not None and hasattr(history_panel, "shutdown"):
+                try:
+                    history_panel.shutdown()
+                except Exception as e:  # defensive — never block teardown
+                    log_debug(f"history panel shutdown skipped: {e}")
             # Stop the token-display debounce timer so a late flush
             # cannot touch the context bar after teardown.
             token_timer = getattr(self, "_token_display_timer", None)
@@ -1265,6 +1374,17 @@ class RikuganPanelCore(QWidget):
             normalized = ""
         if normalized == self._ctrl._idb_path:
             return
+        # Invalidate in-flight history work BEFORE resetting controller
+        # identity (spec §7.2): bump generation, stop timer, drop
+        # executor, drain queue, clear panel.  A worker that returns
+        # for the old IDB is rejected by the generation check in
+        # ``_drain_history_results``.  This must run before
+        # ``reset_for_new_file`` swaps ``_idb_path`` /
+        # ``_db_instance_id`` so the captured scope still reflects the
+        # pre-switch IDB when the worker consults it.  ``clear_panel=True``
+        # because the panel is still alive and the user should not see
+        # stale rows from the previous IDB.
+        self._invalidate_history(clear_panel=True)
         self._ctrl.reset_for_new_file(normalized)
         # Remove all existing tabs
         for cv in self._chat_views.values():
@@ -1277,8 +1397,10 @@ class RikuganPanelCore(QWidget):
         self._chat_views.clear()
         self._pending_restore_messages.clear()
         # Create default tab and try to restore saved sessions
+        # Task 7 (spec §7.2): fresh-by-default after every IDB
+        # switch.  No auto-restore — the user opens History
+        # explicitly when they want a previous chat.
         self._create_tab(self._ctrl.active_tab_id, "New Chat")
-        self._try_restore_session()
 
     def _on_submit(self, text: str) -> None:
         if not text or self._is_shutdown:
@@ -1545,55 +1667,6 @@ class RikuganPanelCore(QWidget):
             chat_view.remove_queued_messages()
         self._set_running(False)
 
-    def _try_restore_session(self) -> None:
-        # Honor ``startup_restore_sessions`` config: "none" → skip,
-        # "latest" → only the most recent session, "all" (default) →
-        # restore every saved session.
-        restore_mode = getattr(self._config, "startup_restore_sessions", "all")
-        if restore_mode == "none":
-            return
-        if restore_mode == "all":
-            restored = self._ctrl.restore_sessions()
-        else:
-            restored = self._ctrl.restore_sessions(latest_only=True)
-        if restored:
-            # Remove the default empty tab if it was replaced
-            for tid, cv in list(self._chat_views.items()):
-                if tid not in self._ctrl.tab_ids:
-                    # This tab was removed during restore
-                    for i in range(self._tab_widget.count()):
-                        if self._tab_widget.widget(i) is cv:
-                            self._tab_widget.removeTab(i)
-                            break
-                    cv.shutdown()
-                    cv.deleteLater()
-                    del self._chat_views[tid]
-
-            for tab_id, session in restored:
-                label = self._ctrl.tab_label(tab_id)
-                self._pending_restore_messages[tab_id] = session.messages
-                self._create_tab(tab_id, label)
-
-            # Activate the last (most recent) tab
-            if restored:
-                last_tab_id = restored[-1][0]
-                last_cv = self._chat_views.get(last_tab_id)
-                if last_cv:
-                    for i in range(self._tab_widget.count()):
-                        if self._tab_widget.widget(i) is last_cv:
-                            self._tab_widget.setCurrentIndex(i)
-                            break
-                    self._restore_messages_if_needed(last_tab_id)
-                self._update_token_display()
-        else:
-            # No saved sessions — try legacy single-session restore
-            session = self._ctrl.restore_session()
-            if session:
-                legacy_cv = self._active_chat_view()
-                if legacy_cv:
-                    legacy_cv.restore_from_messages_async(session.messages)
-                self._update_token_display()
-
     # --- Mutation log integration ---
 
     def _on_mutation_recorded(self, event: TurnEvent) -> None:
@@ -1614,12 +1687,710 @@ class RikuganPanelCore(QWidget):
         self._mutations_btn.setVisible(True)
 
     def _on_toggle_mutation_log(self) -> None:
-        """Toggle visibility of the mutation log panel."""
+        """Toggle visibility of the mutation log panel.
+
+        Routed through the shared right-panel coordinator (spec §6.4)
+        so Mutation Log and History remain mutually exclusive and the
+        ``Mutations`` button stays in sync with the panel visibility.
+        """
         if self._mutation_panel is None:
             return
         visible = not self._mutation_panel.isVisible()
-        self._mutation_panel.setVisible(visible)
-        self._mutations_btn.setChecked(visible)
+        self._show_right_panel("mutation" if visible else None)
+
+    def _on_toggle_history(self) -> None:
+        """Toggle the History side panel via the shared coordinator.
+
+        The History button is the user entry point for history-on-demand
+        (spec §6.3, §6.4).  Checked → open history; unchecked → close
+        every side panel.
+        """
+        if self._history_panel is None:
+            return
+        visible = not self._history_panel.isVisible()
+        self._show_right_panel("history" if visible else None)
+
+    def _show_right_panel(self, name: Literal["history", "mutation"] | None) -> None:
+        """Single right-panel coordinator (spec §6.4).
+
+        Hide + uncheck both auxiliary panels first, then show + check
+        only the requested one.  Opening History also kicks off a list
+        request; closing History simply hides the panel — the cached
+        rows and search query survive in ``HistoryPanel`` so a reopen
+        restores them while a fresh background refresh runs (spec §6.3
+        "Closing and reopening History preserves the last successful
+        rows and search query, but reopening always starts a background
+        refresh").
+        """
+        # Defensive: ``_mutation_panel`` / ``_history_panel`` are built
+        # during ``_build_ui``; in tests that bypass construction the
+        # attributes may be ``MagicMock`` or ``None``.  Guard each call
+        # so the coordinator never crashes on a partially-built panel.
+        if getattr(self, "_mutation_panel", None) is not None:
+            self._mutation_panel.setVisible(False)
+        if getattr(self, "_mutations_btn", None) is not None:
+            self._mutations_btn.setChecked(False)
+        if getattr(self, "_history_panel", None) is not None:
+            self._history_panel.setVisible(False)
+        if getattr(self, "_history_btn", None) is not None:
+            self._history_btn.setChecked(False)
+
+        if name == "history":
+            if self._history_panel is not None:
+                self._history_panel.setVisible(True)
+            if self._history_btn is not None:
+                self._history_btn.setChecked(True)
+            self._start_history_list_request()
+        elif name == "mutation":
+            if self._mutation_panel is not None:
+                self._mutation_panel.setVisible(True)
+            if self._mutations_btn is not None:
+                self._mutations_btn.setChecked(True)
+
+    # ------------------------------------------------------------------
+    # History on-demand coordinator (spec §8.1, §11.4)
+    # ------------------------------------------------------------------
+
+    def _on_history_retry(self) -> None:
+        """Retry button in the History error state (spec §13 "Retry").
+
+        Reviewer MEDIUM #2: if a previous load FAILED, Retry
+        re-dispatches the LOAD — not the list — using the persisted
+        session id stashed in ``_history_retry_load_session_id``.  The
+        scope is recaptured fresh so a stale IDB identity cannot leak.
+        If no FAILED load is remembered, Retry falls back to the
+        ``_start_history_list_request`` list path (Task 8 behavior).
+        """
+        if self._is_shutdown:
+            return
+        retry_id = self._history_retry_load_session_id
+        if retry_id is not None:
+            # The retry consumed the slot; a new FAILED result will
+            # re-populate it, a success path leaves it cleared.
+            self._history_retry_load_session_id = None
+            self._start_history_load(retry_id)
+        else:
+            # List retry (Task 8 behavior).
+            self._start_history_list_request()
+
+    def _start_history_load(self, session_id: str) -> None:
+        """Submit a single load request through the dedicated executor.
+
+        Shared by ``_on_history_open_requested`` (initial open) and
+        ``_on_history_retry`` (FAILED-load retry).  Pre-dedupes an
+        already-open persisted session and applies the same
+        single-flight guard as the list path so a retry burst cannot
+        queue redundant workers.  Captures a fresh immutable scope on
+        every call so an IDB switch between FAILED and Retry cannot
+        leak the old IDB identity into the retry.
+
+        Spec §10.1, §10.2, §11.4.
+        """
+        if self._is_shutdown:
+            return
+        # Pre-load dedupe on retry too: if the session was opened by
+        # some other path while the FAILED result sat in the queue,
+        # focus it and skip the worker (spec §10.2).
+        existing_tab_id = self._ctrl.find_tab_for_session(session_id)
+        if existing_tab_id is not None:
+            self._focus_tab(existing_tab_id)
+            return
+        # Single-flight: at most one history request in flight at a time.
+        if self._history_pending:
+            return
+        # Stash the in-flight load's target session id so a FAILED
+        # result (which does NOT carry the id back) can copy it into
+        # the retry slot (reviewer MEDIUM #2).
+        self._history_last_load_session_id = session_id
+        # Capture immutable scope on the main thread, bump generation so
+        # any in-flight result from a prior generation is discarded, then
+        # submit the load worker to the dedicated single-worker executor
+        # (distinct from ``_SAVE_EXECUTOR`` per spec §6.1).  The
+        # ``_history_closing`` Event is fresh-and-unset from the last
+        # ``_invalidate_history`` (or from ``__init__``); no ``clear()``
+        # is needed here and clearing would be unsafe if a stale worker
+        # shared the Event (Task 10 race fix: the Event is NEVER reused
+        # across requests; ``invalidate`` replaces it with a fresh
+        # instance).
+        self._history_generation += 1
+        scope = self._ctrl.capture_history_scope(self._history_generation)
+        if self._history_executor is None:
+            self._history_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=_HISTORY_EXECUTOR_PREFIX,
+            )
+        self._history_pending = True
+        # Capture the LIVE closing Event reference and pass it into the
+        # worker so it checks ITS captured event, not
+        # ``self._history_closing`` dynamically — same race fix as the
+        # list path.
+        closing_event = self._history_closing
+        self._history_executor.submit(
+            self._history_load_worker,
+            session_id,
+            scope,
+            closing_event,
+        )
+        # The dedicated poll timer is the only path back to the Qt main
+        # thread for a load result (spec §7.4, §10.1).
+        self._ensure_history_poll_timer()
+
+    def _on_history_open_requested(self, session_id: str) -> None:
+        """Row click in HistoryPanel → open a historical session.
+
+        Pre-load dedupe (spec §10.2 step 1): if the persisted
+        ``session.id`` is already attached to some open tab, focus it
+        immediately and skip the worker entirely.  Otherwise delegate
+        to ``_start_history_load`` which captures a fresh immutable
+        ``HistoryScope`` on the Qt main thread and submits a single load
+        request through the dedicated history executor.
+
+        Spec §11.4 keeps at most one list-or-load request in flight at a
+        time (``_history_pending``); a second click while a load is
+        pending is dropped without a worker submit.
+        """
+        if self._is_shutdown:
+            return
+        # Pre-load dedupe: focus the existing tab without I/O if the
+        # persisted session is already open.  The parameter is the
+        # persisted ``SessionState.id`` (manifest / filename key), never
+        # the ephemeral ``_sessions`` dictionary key (spec §10.2).
+        existing_tab_id = self._ctrl.find_tab_for_session(session_id)
+        if existing_tab_id is not None:
+            self._focus_tab(existing_tab_id)
+            return
+        self._start_history_load(session_id)
+
+    def _history_load_worker(
+        self,
+        session_id: str,
+        scope: HistoryScope,
+        closing_event: threading.Event,
+    ) -> None:
+        """Background load worker (spec §10.1, §10.3, §11.4).
+
+        Runs on the dedicated history executor.  Calls only
+        ``self._ctrl.load_history_session`` and enqueues a typed
+        ``HistoryLoadResult``.  No Qt/signal/tab mutation happens here —
+        attach and rendering run on the Qt main thread in
+        ``_apply_history_loaded``.
+
+        Every failure path is converted to a typed result; exceptions
+        are never used as cross-thread control flow.  The outer boundary
+        ``except Exception`` mirrors the list worker: diagnostics are
+        logged via ``log_warning`` but the raw exception message is NOT
+        surfaced (it may include session-id / path / OS strings derived
+        from untrusted binary content — spec §11.3).
+
+        The captured ``closing_event`` is the Event that was live at
+        submit time — Task 10 race fix (see ``_history_list_worker``).
+        """
+        result: HistoryLoadResult
+        try:
+            result = self._ctrl.load_history_session(session_id, scope)
+        except Exception as exc:
+            log_warning(
+                f"history load worker failed: {type(exc).__name__}: {exc}",
+            )
+            result = HistoryLoadResult(
+                HistoryRequestStatus.FAILED,
+                scope,
+                error="",
+            )
+        # If a close / IDB-switch / shutdown beat us to it, drop the
+        # result instead of leaving a full ``SessionState`` sitting in
+        # an unpolled queue (spec §11.4 "shutdown … drain-and-discard").
+        # The check uses the CAPTURED ``closing_event`` so a stale
+        # worker cannot be fooled by an invalidate-then-new-request
+        # sequence into observing the new Event's cleared state.
+        if not closing_event.is_set():
+            self._history_result_queue.put(result)
+
+    def _focus_tab(self, tab_id: str) -> None:
+        """Switch the QTabWidget to the tab owning ``tab_id``.
+
+        Spec §10.2 / §10.3: both the pre-load dedupe path and the
+        post-load ``ALREADY_OPEN`` path focus an existing tab instead of
+        creating a duplicate.  Silently ignores unknown ``tab_id`` so a
+        race (tab closed between dedupe and focus) cannot raise into the
+        Qt slot that invoked us.
+        """
+        chat_view = self._chat_views.get(tab_id)
+        if chat_view is None:
+            return
+        index = self._tab_widget.indexOf(chat_view)
+        if index >= 0:
+            self._tab_widget.setCurrentIndex(index)
+
+    def _start_history_list_request(self) -> None:
+        """Capture an immutable scope and submit the list worker (spec §8.1).
+
+        * Capture ``HistoryScope`` on the Qt main thread before any
+          background I/O so the worker never reads live controller
+          fields while an IDB switch may be mutating them.
+        * Submit to the dedicated single-worker ``_history_executor``
+          (distinct from ``_SAVE_EXECUTOR`` so a ``flush_saves`` call
+          cannot self-deadlock).
+        * Start a separate ``QTimer`` because History normally opens
+          while the agent is idle (spec §7.4).
+
+        At most one list request may be in flight at a time
+        (``_history_pending`` guard, spec §11.4).
+        """
+        if self._is_shutdown:
+            return
+        if self._history_pending:
+            # A list/load is already queued or running.  Dropping the
+            # second submit keeps the executor serialized and prevents
+            # a burst of retry clicks from queueing redundant scans.
+            return
+        # A new request reopens the worker path.  ``_invalidate_history``
+        # already installed a fresh, unset ``_history_closing`` Event for
+        # the next request, so no ``clear()`` is needed here — and
+        # clearing the current Event would be unsafe if a stale worker
+        # from a prior generation happened to share it (Task 10 race fix:
+        # the Event is NEVER reused across requests; ``invalidate``
+        # replaces it with a fresh instance).
+        # Bump the generation BEFORE capturing the scope so any
+        # in-flight result from a prior generation is discarded by
+        # ``_drain_history_results``.
+        self._history_generation += 1
+        scope = self._ctrl.capture_history_scope(self._history_generation)
+        # Lazy executor: created on first open, dropped on
+        # ``_invalidate_history``.  Never reuse ``_SAVE_EXECUTOR``.
+        if self._history_executor is None:
+            self._history_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=_HISTORY_EXECUTOR_PREFIX,
+            )
+        self._history_pending = True
+        if self._history_panel is not None:
+            self._history_panel.set_loading()
+        # Capture the LIVE closing Event reference and pass it into the
+        # worker.  The worker checks ITS captured event, not
+        # ``self._history_closing`` dynamically — so an invalidate that
+        # installs a fresh Event (and sets the OLD one) cannot be hidden
+        # from a stale worker that has already captured the old
+        # reference at submit time.
+        closing_event = self._history_closing
+        self._history_executor.submit(
+            self._history_list_worker,
+            scope,
+            closing_event,
+        )
+        self._ensure_history_poll_timer()
+
+    def _history_list_worker(
+        self,
+        scope: HistoryScope,
+        closing_event: threading.Event,
+    ) -> None:
+        """Background list worker (spec §8.1, §13).
+
+        Runs on the dedicated history executor.  Performs
+        ``SessionHistory.flush_saves`` (so a chat saved moments before
+        the History open appears in the list) then lists manifest
+        metadata.  Every failure path is converted to a typed
+        ``HistoryListResult`` — exceptions are never used as
+        cross-thread control flow.
+
+        The worker receives only the immutable ``scope`` and a captured
+        ``closing_event`` reference; it does not read mutable controller
+        fields (``_idb_path`` / ``_db_instance_id``) because an IDB
+        switch may be mutating them concurrently (spec §8.1).  The
+        captured ``closing_event`` is the Event that was live at submit
+        time — Task 10 race fix: an ``_invalidate_history`` call that
+        installs a fresh Event sets the OLD Event, so a stale worker
+        that captured the old reference observes ``is_set()==True`` and
+        drops its result even after the new request has cleared the
+        new Event.
+        """
+        result: HistoryListResult
+        try:
+            SessionHistory(self._ctrl.config).flush_saves(timeout=10.0)
+            entries = self._ctrl.list_history_sessions(scope)
+            result = HistoryListResult(
+                HistoryRequestStatus.LISTED,
+                scope,
+                tuple(entries),
+            )
+        except TimeoutError:
+            # Save flush did not drain in time.  Do NOT return a
+            # potentially incomplete list — the spec requires the UI
+            # show a Retry state instead (spec §13).
+            result = HistoryListResult(
+                HistoryRequestStatus.SAVE_FLUSH_TIMEOUT,
+                scope,
+            )
+        except Exception as exc:
+            # Outer boundary catch (spec §11.4): convert any other
+            # failure to a typed terminal result so the UI cannot
+            # remain stuck in Loading.  The exception message is logged
+            # in full for diagnostics but NOT surfaced to the UI —
+            # ``result.error`` stays empty because persistence-layer
+            # exceptions may include session-id / path / OS strings
+            # derived from untrusted binary content, and spec §11.3
+            # forbids sending untrusted content to the UI without
+            # going through ``core/sanitize``.  The generic UI copy
+            # is produced by ``_apply_history_list_result``.
+            log_warning(
+                f"history list worker failed: {type(exc).__name__}: {exc}",
+            )
+            result = HistoryListResult(
+                HistoryRequestStatus.FAILED,
+                scope,
+                error="",
+            )
+        # If a close/invalidation beat us to it, drop the result
+        # instead of leaving a full entry list sitting in an unpolled
+        # queue (spec §11.4 "shutdown … drain-and-discard").  The
+        # check uses the CAPTURED ``closing_event`` (the Event that was
+        # live at submit time) so an invalidate-then-new-request
+        # sequence cannot trick a stale worker into observing the new
+        # Event's cleared state.
+        if not closing_event.is_set():
+            self._history_result_queue.put(result)
+
+    def _ensure_history_poll_timer(self) -> None:
+        """Create + start the history poll timer if it is not already running.
+
+        Spec §7.4: a dedicated QTimer (distinct from the agent poll
+        timer) is the only way to drain history results while the agent
+        is idle.  ``timeout`` is wired exactly once to
+        ``_drain_history_results``.
+        """
+        if self._history_poll_timer is not None:
+            return
+        timer = QTimer(self)
+        timer.timeout.connect(self._drain_history_results)
+        timer.start(_HISTORY_POLL_INTERVAL_MS)
+        self._history_poll_timer = timer
+
+    def _drain_history_results(self) -> None:
+        """Qt main-thread slot: drain typed results and apply to HistoryPanel.
+
+        Spec §7.4, §8.1, §10.1: the ONLY method that calls
+        ``HistoryPanel.set_entries`` / ``set_error`` (list path) or
+        ``_apply_history_loaded`` (load path).  Worker callbacks never
+        touch widgets.  Discards any result whose scope generation differs
+        from the live ``_history_generation``.
+
+        Reviewer MEDIUM #1: the pending-flag clear is GENERATION-AWARE.
+        The terminal result has LANDED, so we clear ``_history_pending``
+        BEFORE invoking the apply step.  If the apply then submits a new
+        request (NOT_FOUND auto-refresh via ``_start_history_list_request``,
+        or a load retry), that submit sets ``_history_pending=True`` again
+        at a new generation; the new request's terminal result owns its
+        own pending-flag lifecycle.  Clearing up-front avoids the
+        ordering deadlock where ``_apply_history_loaded`` →
+        ``_start_history_list_request`` would have early-returned because
+        ``_history_pending`` was still True from the just-drained result.
+        """
+        if self._is_shutdown:
+            return
+        # Drain every queued result; keep the latest matching one so
+        # a fast retry (new generation) supersedes a stale result.
+        for _ in range(self._history_result_queue.qsize() + 1):
+            try:
+                result = self._history_result_queue.get_nowait()
+            except queue.Empty:
+                break
+            # Stale generation → silently drop (spec §13 "IDB changes
+            # during metadata load" and §11.4 "Request generations
+            # discard late results").  Applies to BOTH list and load
+            # results — the queue is a typed union and both types carry
+            # the scope used to discard them.
+            if result.scope.generation != self._history_generation:
+                continue
+            # The terminal result for this generation has landed → no
+            # request remains in flight for this generation.  Clear
+            # BEFORE apply so an apply-side submit (NOT_FOUND refresh)
+            # is not rejected by the new submit's pending guard.
+            self._history_pending = False
+            if isinstance(result, HistoryLoadResult):
+                # Load result → attach + tab/restore path (Task 9).
+                self._apply_history_loaded(result)
+            else:
+                # List result → existing list-render path (Task 8).
+                self._apply_history_list_result(result)
+        # Timer-stop check runs on EVERY drain, not only when a result
+        # was applied.  Without this, an empty drain (or one that only
+        # discarded stale results) would leave the timer spinning on
+        # a hidden panel with no pending work — a busy-loop on an idle
+        # IDA.  Spec §7.4: "Stop the timer when History is hidden and
+        # no request remains."  The close path (``_show_right_panel(None)``
+        # hides the panel) and the shutdown path both rely on this
+        # terminal drain stopping the timer once the last in-flight
+        # worker has either delivered or been discarded.
+        history_visible = self._history_panel is not None and self._history_panel.isVisible()
+        if not history_visible and not self._history_pending:
+            self._stop_history_poll_timer()
+
+    def _apply_history_loaded(self, result: HistoryLoadResult) -> None:
+        """Apply a load result on the Qt main thread (spec §10.3, §13).
+
+        ``LOADED`` → ``attach_history_session`` which decides OPENED /
+        ALREADY_OPEN / STALE_SCOPE.  ``OPENED`` writes the pending
+        restore payload, creates exactly one tab, focuses it, and invokes
+        ``_restore_messages_if_needed`` so ``ChatView.restore_from_messages_async``
+        remains the rendering path.  ``ALREADY_OPEN`` focuses the
+        existing tab.  ``STALE_SCOPE`` is silently dropped (the drain's
+        generation check already discarded stale generations; this is a
+        defense-in-depth check for the path/instance identity).
+
+        Every non-LOADED status renders exact user-visible copy from
+        spec §13.  ``NOT_FOUND`` triggers exactly one list refresh
+        (``_start_history_list_request``) so a freshly-deleted session
+        disappears from the list.  The drain's generation-aware epilogue
+        detects the rebump and leaves ``_history_pending=True`` so the
+        new list worker owns its own terminal-result lifecycle.
+
+        ``FAILED`` retains the persisted session id in
+        ``_history_retry_load_session_id`` so the Retry button can
+        re-dispatch the LOAD (not the list).  Only the id is held —
+        never the full ``SessionState`` — so a stale scope is recaptured
+        on retry and no large payload is retained.
+
+        ``result.error`` is NEVER surfaced to the widget because worker
+        exception messages may include session-id / path / OS strings
+        derived from untrusted binary content (spec §11.3).
+        """
+        status = result.status
+        if status is HistoryRequestStatus.LOADED:
+            attach = self._ctrl.attach_history_session(result)
+            if attach.status is HistoryAttachStatus.OPENED:
+                tab_id = attach.tab_id
+                session = attach.session
+                # Pending payload written BEFORE tab creation so the
+                # first ``_restore_messages_if_needed`` on the new tab
+                # has the messages ready (spec §10.3 step 1).  The list
+                # is a snapshot copy so the worker's SessionState can
+                # be mutated later without aliasing this payload.
+                messages = list(session.messages) if session and session.messages else []
+                self._pending_restore_messages[tab_id] = messages
+                self._create_tab(tab_id, "Chat")
+                self._restore_messages_if_needed(tab_id)
+                self._focus_tab(tab_id)
+            elif attach.status is HistoryAttachStatus.ALREADY_OPEN:
+                self._focus_tab(attach.tab_id)
+            # Any successful attach resolution clears a retained
+            # retry-load id (reviewer MEDIUM #2): the user's goal — open
+            # the session — is satisfied, so a stale retry-load id
+            # cannot leak into a future Retry click.
+            self._history_retry_load_session_id = None
+            # STALE_SCOPE: silently drop (spec §10.3, §13).
+            return
+        # Non-LOADED statuses: show exact copy per spec §13.  None of
+        # these retain a retry-load id (only FAILED does, handled last).
+        self._history_retry_load_session_id = None
+        if status is HistoryRequestStatus.NOT_FOUND:
+            # The drain's generation-aware epilogue detects the rebump
+            # performed by ``_start_history_list_request`` and leaves
+            # ``_history_pending=True`` so the new list worker owns its
+            # terminal-result lifecycle.  No defensive manual clear
+            # here — the drain is the single source of truth.
+            if self._history_panel is not None:
+                self._history_panel.set_error(
+                    "This chat is no longer available.",
+                    retry_visible=False,
+                )
+            # Exactly one refresh — no duplicate / infinite generation.
+            self._start_history_list_request()
+            return
+        if status is HistoryRequestStatus.WRONG_IDB:
+            if self._history_panel is not None:
+                self._history_panel.set_error(
+                    "This chat belongs to a different IDB.",
+                    retry_visible=False,
+                )
+            return
+        if status is HistoryRequestStatus.EMPTY:
+            if self._history_panel is not None:
+                self._history_panel.set_error(
+                    "This chat is empty and cannot be opened.",
+                    retry_visible=False,
+                )
+            return
+        # FAILED (and any future non-success): generic copy with Retry
+        # VISIBLE (reviewer MEDIUM #2).  The raw ``error`` is ignored
+        # at the UI boundary — diagnostics are logged by the worker.
+        # ``HistoryLoadResult`` echoes only the captured scope, not the
+        # requested session id; copy the stashed in-flight id
+        # (``_history_last_load_session_id``) into the retry slot so
+        # the Retry button can re-dispatch the LOAD with a fresh scope.
+        # Only the id is retained — never the full ``SessionState``.
+        self._history_retry_load_session_id = self._history_last_load_session_id
+        if self._history_panel is not None:
+            self._history_panel.set_error(
+                "Could not open this chat.",
+                retry_visible=True,
+            )
+
+    def _apply_history_list_result(self, result: HistoryListResult) -> None:
+        """Translate a typed list result into HistoryPanel calls (main thread).
+
+        Every user-visible string here is a PanelCore-owned literal —
+        ``result.error`` is NEVER surfaced to the widget because the
+        worker's exception messages may include session-id / path / OS
+        strings derived from untrusted binary content (spec §11.3,
+        reviewer point #3).  Diagnostics are logged separately by the
+        worker.
+        """
+        if self._history_panel is None:
+            return
+        status = result.status
+        if status == HistoryRequestStatus.LISTED:
+            # Sort newest-first before handing to the widget (spec §8.1
+            # "sort updated_at descending").  Controller listing is
+            # already supposed to be newest-first, but the spec makes
+            # PanelCore responsible, so re-sort defensively.
+            sorted_entries = sorted(
+                result.entries,
+                key=lambda e: e.updated_at,
+                reverse=True,
+            )
+            self._history_panel.set_entries(list(sorted_entries))
+        elif status == HistoryRequestStatus.SAVE_FLUSH_TIMEOUT:
+            self._history_panel.set_error(
+                "Recent chats are still being saved.",
+                retry_visible=True,
+            )
+        else:
+            # FAILED (and any future non-success): generic Retry state.
+            # The user-visible copy is a PanelCore-owned literal;
+            # ``result.error`` is ignored at the UI boundary.
+            self._history_panel.set_error(
+                "Could not load chat history.",
+                retry_visible=True,
+            )
+
+    def _stop_history_poll_timer(self) -> None:
+        """Stop + tear down the history poll timer (spec §7.4).
+
+        Mirrors ``_stop_poll_timer``: stop, disconnect, deleteLater,
+        null the reference.  Swallows ``RuntimeError`` / ``TypeError``
+        on disconnect to stay idempotent when the signal was never
+        wired or was already disconnected by Qt teardown.
+        """
+        timer = self._history_poll_timer
+        if timer is None:
+            return
+        try:
+            timer.stop()
+        except (RuntimeError, TypeError) as e:
+            log_debug(f"history timer stop failed: {e}")
+        try:
+            timer.timeout.disconnect(self._drain_history_results)
+        except (RuntimeError, TypeError) as e:
+            log_debug(f"history timer disconnect failed: {e}")
+        try:
+            timer.deleteLater()
+        except (RuntimeError, TypeError) as e:
+            log_debug(f"history timer deleteLater failed: {e}")
+        self._history_poll_timer = None
+
+    def _invalidate_history(self, *, clear_panel: bool) -> None:
+        """Invalidate in-flight history work on IDB change / shutdown.
+
+        Spec §7.2 (IDB-change order) and §11.4 (shutdown invalidation).
+        Idempotent: called from both ``on_database_changed`` and
+        ``shutdown``.
+
+        Exact order (Task 10 TDD refinement of the Task 8 helper):
+
+        1. ``_history_generation`` += 1 — BEFORE controller identity
+           changes so a worker result for the old IDB is rejected by
+           the generation check in ``_drain_history_results``.
+        2. ``_history_closing.set()`` — BEFORE timer/executor teardown
+           so a worker observing the closing flag mid-flight cannot
+           enqueue into a queue that is about to be drained.
+        3. Stop + delete the history poll timer.
+        4. Detach the executor reference (``self._history_executor =
+           None``) THEN non-blocking shutdown with
+           ``cancel_futures=True`` so a concurrent request reading
+           ``self._history_executor`` cannot re-submit to an executor
+           being cancelled, and any not-yet-started submit is dropped.
+        5. Drain the result queue.
+        6. ``_history_pending = False``.
+        7. Clear ``_history_retry_load_session_id`` /
+           ``_history_last_load_session_id`` — the stashed ids belong
+           to the old IDB; a retry after IDB change must not silently
+           re-dispatch a load for the old IDB.
+        8. Optional ``panel.clear()`` iff ``clear_panel=True``
+           (IDB-change path).  ``shutdown`` passes ``False`` because
+           widget mutation after the C++ teardown starts is unsafe.
+        9. Replace ``_history_closing`` with a fresh unset
+           ``threading.Event``.  THE LOAD-BEARING RACE FIX (spec §11.4
+           closing-flag reuse): a stale worker that captured the OLD
+           event reference at submit time keeps observing
+           ``is_set()==True`` even after a new request has cleared the
+           NEW event.  ``Event.clear()`` on the new event does NOT
+           un-set the old event, so the old worker drops its result and
+           cannot enqueue into the new queue.  ``clear_panel`` does
+           not affect this step — the new event is unset in both paths
+           because the next ``_start_history_*`` request is the only
+           legitimate path to a worker that should be allowed to
+           enqueue.
+
+        ``getattr`` defaults keep this helper safe when a test fixture
+        bypassed ``__init__`` and never seeded the Task-8 fields (the
+        legacy Task 7 shutdown / on_database_changed tests construct a
+        bare panel via ``object.__new__`` and exercise only the
+        restore-removal path).
+        """
+        # 1. Generation bump.
+        self._history_generation = getattr(self, "_history_generation", 0) + 1
+        # 2. Closing flag set BEFORE teardown so a worker that has just
+        #    finished its I/O observes ``is_set()==True`` and drops the
+        #    result instead of racing the queue drain.
+        closing = getattr(self, "_history_closing", None)
+        if closing is None:
+            closing = threading.Event()
+            self._history_closing = closing
+        closing.set()
+        # 3. Stop + delete the poll timer.
+        self._stop_history_poll_timer()
+        # 4. Detach the executor reference BEFORE shutting it down so a
+        #    concurrent request reading ``self._history_executor`` sees
+        #    ``None`` and creates a fresh executor for the new request,
+        #    never re-submitting to an executor being cancelled.
+        executor = self._history_executor
+        self._history_executor = None
+        if executor is not None:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except (RuntimeError, TypeError) as e:
+                log_debug(f"history executor shutdown failed: {e}")
+        # 5. Drain-and-discard any queued results (Task 8 step 4 /
+        #    spec §11.4).
+        result_queue = getattr(self, "_history_result_queue", None)
+        if result_queue is not None:
+            while True:
+                try:
+                    result_queue.get_nowait()
+                except queue.Empty:
+                    break
+        # 6. Pending flag clear.
+        self._history_pending = False
+        # 7. Clear the retry-load / last-load ids (reviewer MEDIUM #2):
+        #    the stashed ids belong to the old IDB.
+        self._history_retry_load_session_id = None
+        self._history_last_load_session_id = None
+        # 8. Optional HistoryPanel.clear — only on IDB change.
+        if clear_panel:
+            history_panel = getattr(self, "_history_panel", None)
+            if history_panel is not None:
+                try:
+                    history_panel.clear()
+                except (RuntimeError, TypeError) as e:
+                    log_debug(f"history panel clear on invalidate failed: {e}")
+        # 9. Replace the closing Event with a fresh unset one so the
+        #    next request starts from a clean closing state.  The OLD
+        #    event stays set; any worker that captured it at submit
+        #    time keeps observing ``is_set()==True`` and drops its
+        #    result, even after the new request has cleared the NEW
+        #    event — this is the load-bearing race fix.
+        self._history_closing = threading.Event()
 
     def _on_mode_changed(self, index: int) -> None:
         """Handle the Chat / Tools mode bar switch."""

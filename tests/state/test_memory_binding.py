@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rikugan.core.config import RikuganConfig
+from rikugan.core.types import Message, Role
 from rikugan.state.history import SessionHistory
 from rikugan.state.session import SessionState
 
@@ -19,6 +20,9 @@ def test_session_and_manifest_round_trip_memory_binding(tmp_path: Path) -> None:
         binary_memory_id="mem-" + "a" * 32,
         active_case_id="case-" + "b" * 32,
     )
+    # Spec §7.3 — an empty draft is not history. Round-trip requires at
+    # least one message so the session is discoverable by listing too.
+    session.add_message(Message(role=Role.USER, content="hello"))
     history = SessionHistory(config)
     history.save_session(session)
     loaded = history.load_session(session.id)
@@ -44,6 +48,11 @@ def test_list_sessions_filters_by_binary_memory_id(tmp_path: Path) -> None:
         idb_path="C:/samples/b.i64",
         binary_memory_id="mem-" + "d" * 32,
     )
+    # Both seeded with one message so they survive the empty-row
+    # exclusion (spec §7.3 — zero-message sessions never appear in
+    # History results).
+    session_a.add_message(Message(role=Role.USER, content="hi a"))
+    session_b.add_message(Message(role=Role.USER, content="hi b"))
     history.save_session(session_a)
     history.save_session(session_b)
 
