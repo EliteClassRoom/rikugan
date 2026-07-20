@@ -29,7 +29,7 @@ import queue
 import sys
 import threading
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -147,6 +147,26 @@ class _FakeAgent:
         self.transport = transport
         self.endpoint = name
         self.capabilities = ["code_generation"]
+
+
+class TestAgentsPane(unittest.TestCase):
+    def test_count_label_uses_qt_alignment_flag(self) -> None:
+        """PySide6 QLabel rejects a raw integer alignment value."""
+        from rikugan.ui import a2a_widget
+
+        label = MagicMock()
+        with (
+            patch.object(a2a_widget, "QLabel", return_value=label),
+            patch.object(a2a_widget, "QGroupBox", return_value=MagicMock()),
+            patch.object(a2a_widget, "QVBoxLayout", return_value=MagicMock()),
+            patch.object(a2a_widget, "QListWidget", return_value=MagicMock()),
+            patch.object(a2a_widget, "QHBoxLayout", return_value=MagicMock()),
+            patch.object(a2a_widget, "QPushButton", return_value=MagicMock()),
+        ):
+            widget = a2a_widget.A2ABridgeWidget.__new__(a2a_widget.A2ABridgeWidget)
+            widget._build_agents_pane()
+
+        label.setAlignment.assert_called_once_with(a2a_widget.Qt.AlignmentFlag.AlignRight)
 
 
 class TestRefreshAgents(unittest.TestCase):

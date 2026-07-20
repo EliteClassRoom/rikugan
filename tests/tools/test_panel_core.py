@@ -1035,6 +1035,51 @@ class TestToolsTabOrderAndDefault(unittest.TestCase):
         self.assertLess(ToolsPanel.TAB_AGENTS, ToolsPanel.TAB_A2A)
         self.assertLess(ToolsPanel.TAB_A2A, ToolsPanel.TAB_KNOWLEDGE)
 
+    def test_replacing_current_tab_does_not_reenter_activation_callback(self):
+        """Replacing a selected lazy tab must not recursively initialize it."""
+        from rikugan.ui.tools_panel import ToolsPanel
+
+        class _Tabs:
+            def __init__(self) -> None:
+                self.currentChanged = MagicMock()
+                self._current_index = ToolsPanel.TAB_AGENTS
+                self._signals_blocked = False
+
+            def blockSignals(self, blocked: bool) -> bool:
+                previous = self._signals_blocked
+                self._signals_blocked = blocked
+                return previous
+
+            def currentIndex(self) -> int:
+                return self._current_index
+
+            def setCurrentIndex(self, index: int) -> None:
+                self._current_index = index
+                if not self._signals_blocked:
+                    self.currentChanged.emit(index)
+
+            def widget(self, _index: int) -> MagicMock:
+                return MagicMock()
+
+            def removeTab(self, _index: int) -> None:
+                self._current_index = ToolsPanel.TAB_AGENTS
+                if not self._signals_blocked:
+                    self.currentChanged.emit(self._current_index)
+
+            def insertTab(self, _index: int, _widget: object, _label: str) -> None:
+                self._current_index = ToolsPanel.TAB_A2A
+                if not self._signals_blocked:
+                    self.currentChanged.emit(self._current_index)
+
+        tools_panel = ToolsPanel.__new__(ToolsPanel)
+        tools_panel._tabs = _Tabs()
+
+        tools_panel._replace_tab(ToolsPanel.TAB_AGENTS, MagicMock(), "Agents")
+
+        tools_panel._tabs.currentChanged.emit.assert_not_called()
+        self.assertEqual(tools_panel._tabs.currentIndex(), ToolsPanel.TAB_AGENTS)
+        self.assertFalse(tools_panel._tabs._signals_blocked)
+
     def test_tab_initializer_keys_match_constants(self):
         panel = RikuganPanelCore.__new__(RikuganPanelCore)
         from rikugan.ui.tools_panel import ToolsPanel

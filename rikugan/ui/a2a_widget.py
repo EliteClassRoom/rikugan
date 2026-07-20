@@ -404,10 +404,8 @@ class A2ABridgeWidget(QWidget):
         bar.addWidget(self._refresh_agents_btn)
         self._agent_count_label = QLabel("0 agents")
         # Right-align the count label so it pushes against the
-        # right edge of the agents pane. The qt_stubs' QLabel doesn't
-        # expose ``alignment()`` as a getter, so we set it directly
-        # with the Qt.AlignRight flag (0x0080).
-        self._agent_count_label.setAlignment(0x0080)
+        # right edge of the agents pane.
+        self._agent_count_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         bar.addWidget(self._agent_count_label, 1)
         layout.addLayout(bar)
         return box

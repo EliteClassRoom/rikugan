@@ -211,8 +211,14 @@ class ToolsPanel(QWidget):
         its lifetime after this call.
         """
         old = self._tabs.widget(index)
-        self._tabs.removeTab(index)
-        self._tabs.insertTab(index, widget, label)
+        current_index = self._tabs.currentIndex()
+        signals_were_blocked = self._tabs.blockSignals(True)
+        try:
+            self._tabs.removeTab(index)
+            self._tabs.insertTab(index, widget, label)
+            self._tabs.setCurrentIndex(current_index)
+        finally:
+            self._tabs.blockSignals(signals_were_blocked)
         if old is not None and old is not widget:
             # Shut down the old widget first so any background threads
             # / timers tied to it stop while the replacement is still

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-20
+
+### Fixed
+
+- Fixed Tools tab initialization under PySide6 by using typed Qt alignment flags and suppressing recursive tab-change signals while lazy widgets replace placeholders.
+
 ## [1.13.0] — 2026-07-20
 
 ### Added
