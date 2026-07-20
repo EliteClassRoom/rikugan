@@ -17,6 +17,7 @@ ida_auto = None
 ida_bytes = None
 ida_enum = None
 ida_hexrays = None
+ida_nalt = None
 ida_typeinf = None
 idc = None
 
@@ -25,6 +26,7 @@ for _mod_name, _target in (
     ("ida_bytes", "ida_bytes"),
     ("ida_enum", "ida_enum"),
     ("ida_hexrays", "ida_hexrays"),
+    ("ida_nalt", "ida_nalt"),
     ("ida_typeinf", "ida_typeinf"),
     ("idc", "idc"),
 ):
@@ -873,10 +875,10 @@ def get_function_prototype(
     Returns a raw C declaration string suitable for mutation pre-state capture.
     """
     ea = parse_addr(address)
-    if idc is None:
+    if ida_typeinf is None or ida_nalt is None:
         return ""
     tif = ida_typeinf.tinfo_t()
-    if idc.get_tinfo(tif, ea):
+    if ida_nalt.get_tinfo(tif, ea):
         proto = str(tif)
         return proto if proto else ""
     return ""

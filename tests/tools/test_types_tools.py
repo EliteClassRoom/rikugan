@@ -19,6 +19,7 @@ from rikugan.core.errors import ToolError
 # _require_ida_enum
 # ---------------------------------------------------------------------------
 
+
 class TestRequireIdaEnum(unittest.TestCase):
     def test_raises_when_ida_enum_and_idc_none(self):
         orig_enum = types_tools.ida_enum
@@ -44,6 +45,7 @@ class TestRequireIdaEnum(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # create_typedef
 # ---------------------------------------------------------------------------
+
 
 class TestCreateTypedef(unittest.TestCase):
     def test_idc_not_available_returns_error(self):
@@ -83,6 +85,7 @@ class TestCreateTypedef(unittest.TestCase):
 # import_c_header
 # ---------------------------------------------------------------------------
 
+
 class TestImportCHeader(unittest.TestCase):
     def test_idc_not_available(self):
         orig = types_tools.idc
@@ -120,6 +123,7 @@ class TestImportCHeader(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # set_function_prototype
 # ---------------------------------------------------------------------------
+
 
 class TestSetFunctionPrototype(unittest.TestCase):
     def test_idc_not_available(self):
@@ -159,6 +163,7 @@ class TestSetFunctionPrototype(unittest.TestCase):
 # apply_type_to_variable
 # ---------------------------------------------------------------------------
 
+
 class TestApplyTypeToVariable(unittest.TestCase):
     def test_hexrays_not_available(self):
         orig = types_tools._HAS_HEXRAYS
@@ -186,6 +191,7 @@ class TestApplyTypeToVariable(unittest.TestCase):
 # create_struct (IDA 9.x path — when _HAS_IDA_STRUCT is False)
 # ---------------------------------------------------------------------------
 
+
 class TestCreateStructIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
         orig_t = types_tools.ida_typeinf
@@ -200,6 +206,7 @@ class TestCreateStructIda9Path(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # modify_struct (IDA 9.x path)
 # ---------------------------------------------------------------------------
+
 
 class TestModifyStructIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
@@ -216,6 +223,7 @@ class TestModifyStructIda9Path(unittest.TestCase):
 # get_struct_info (IDA 9.x path)
 # ---------------------------------------------------------------------------
 
+
 class TestGetStructInfoIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
         orig_t = types_tools.ida_typeinf
@@ -230,6 +238,7 @@ class TestGetStructInfoIda9Path(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # list_structs (IDA 9.x path)
 # ---------------------------------------------------------------------------
+
 
 class TestListStructsIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
@@ -246,6 +255,7 @@ class TestListStructsIda9Path(unittest.TestCase):
 # apply_struct_to_address (IDA 9.x path)
 # ---------------------------------------------------------------------------
 
+
 class TestApplyStructToAddressIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
         orig_t = types_tools.ida_typeinf
@@ -261,6 +271,7 @@ class TestApplyStructToAddressIda9Path(unittest.TestCase):
 # propagate_type (IDA 9.x path)
 # ---------------------------------------------------------------------------
 
+
 class TestPropagateTypeIda9Path(unittest.TestCase):
     def test_ida_typeinf_not_available(self):
         orig_t = types_tools.ida_typeinf
@@ -275,6 +286,7 @@ class TestPropagateTypeIda9Path(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # get_type_libraries
 # ---------------------------------------------------------------------------
+
 
 class TestGetTypeLibraries(unittest.TestCase):
     def test_idati_returns_none(self):
@@ -305,6 +317,7 @@ class TestGetTypeLibraries(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # import_type_from_library
 # ---------------------------------------------------------------------------
+
 
 class TestImportTypeFromLibrary(unittest.TestCase):
     def test_type_already_exists_locally(self):
@@ -339,6 +352,7 @@ class TestImportTypeFromLibrary(unittest.TestCase):
 # suggest_struct_from_accesses
 # ---------------------------------------------------------------------------
 
+
 class TestSuggestStructFromAccesses(unittest.TestCase):
     def test_hexrays_not_available(self):
         orig = types_tools._HAS_HEXRAYS
@@ -348,6 +362,83 @@ class TestSuggestStructFromAccesses(unittest.TestCase):
             self.assertIn("not available", result)
         finally:
             types_tools._HAS_HEXRAYS = orig
+
+
+# ---------------------------------------------------------------------------
+# get_function_prototype
+#
+# Regression: previously called `idc.get_tinfo(tif, ea)` which raised
+# "get_tinfo() takes 1 positional argument but 2 were given" — idc.get_tinfo
+# takes only (ea), while the 2-arg (tif, ea) signature belongs to ida_nalt.
+# As a getter used by mutation.py to capture pre-state for undo, the bug
+# silently produced empty `old_prototype` records, breaking undo.
+# ---------------------------------------------------------------------------
+
+
+class TestGetFunctionPrototype(unittest.TestCase):
+    def test_ida_nalt_not_available_returns_empty(self):
+        orig = types_tools.ida_nalt
+        try:
+            types_tools.ida_nalt = None
+            result = types_tools.get_function_prototype("0x1000")
+            self.assertEqual(result, "")
+        finally:
+            types_tools.ida_nalt = orig
+
+    def test_ida_typeinf_not_available_returns_empty(self):
+        orig = types_tools.ida_typeinf
+        try:
+            types_tools.ida_typeinf = None
+            result = types_tools.get_function_prototype("0x1000")
+            self.assertEqual(result, "")
+        finally:
+            types_tools.ida_typeinf = orig
+
+    def test_uses_ida_nalt_two_arg_signature(self):
+        orig_ti = types_tools.ida_typeinf
+        orig_nalt = types_tools.ida_nalt
+        orig_idc = types_tools.idc
+        try:
+            mock_tif = MagicMock()
+            mock_tif.__str__ = MagicMock(return_value="void __cdecl foo(int)")
+            mock_ti = MagicMock()
+            mock_ti.tinfo_t.return_value = mock_tif
+
+            mock_nalt = MagicMock()
+            mock_nalt.get_tinfo.return_value = True
+
+            mock_idc = MagicMock()
+
+            types_tools.ida_typeinf = mock_ti
+            types_tools.ida_nalt = mock_nalt
+            types_tools.idc = mock_idc
+
+            result = types_tools.get_function_prototype("0x1000")
+
+            # Must call ida_nalt.get_tinfo(tif, ea) — 2-arg signature
+            mock_nalt.get_tinfo.assert_called_once()
+            call_args = mock_nalt.get_tinfo.call_args
+            self.assertEqual(len(call_args.args), 2)
+            self.assertIs(call_args.args[0], mock_tif)
+            # idc.get_tinfo must NOT be used (regression guard)
+            mock_idc.get_tinfo.assert_not_called()
+            # Output is str(tif) — raw C declaration per contract
+            self.assertEqual(result, "void __cdecl foo(int)")
+        finally:
+            types_tools.ida_typeinf = orig_ti
+            types_tools.ida_nalt = orig_nalt
+            types_tools.idc = orig_idc
+
+    def test_returns_empty_when_tinfo_unavailable(self):
+        orig_nalt = types_tools.ida_nalt
+        try:
+            mock_nalt = MagicMock()
+            mock_nalt.get_tinfo.return_value = False
+            types_tools.ida_nalt = mock_nalt
+            result = types_tools.get_function_prototype("0x1000")
+            self.assertEqual(result, "")
+        finally:
+            types_tools.ida_nalt = orig_nalt
 
 
 if __name__ == "__main__":
