@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal  # noqa: F401
 from PySide6.QtGui import (  # noqa: F401
+    QAccessible,
+    QAccessibleAnnouncementEvent,
     QColor,
     QFont,
     QIntValidator,

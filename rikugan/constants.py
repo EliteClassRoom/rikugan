@@ -55,3 +55,11 @@ MEMORY_MARKDOWN_MAX_BYTES = 16 * 1024 * 1024
 # ``derive_history_title`` helper (spec section 9.1), and rendered as plain
 # text in the History panel and as a shorter tab label.
 HISTORY_TITLE_MAX_CHARS = 80
+
+# Threshold (seconds) at which the delete-history UI surfaces a "still
+# working" notice for slow deletes (large manifests, slow disks). The
+# background worker performs one terminal ``HistoryDeleteResult`` per
+# request, so the notice is purely cosmetic — it must NEVER cancel the
+# delete itself. Spec section 11.5 (chat history deletion) pins this to
+# 30s; later tasks may share this value with delete-history UX.
+HISTORY_DELETE_SLOW_NOTICE_SECONDS = 30.0

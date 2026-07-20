@@ -7,11 +7,12 @@ import queue
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import CancelledError, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from ..agent.mutation import MutationRecord
 from ..agent.turn import TurnEvent, TurnEventType
+from ..constants import HISTORY_DELETE_SLOW_NOTICE_SECONDS
 from ..core.config import RikuganConfig
 from ..core.early_log import _early_log, _early_log_crash
 from ..core.logging import log_debug, log_error, log_info, log_warning
@@ -20,6 +21,8 @@ from ..providers.auth_cache import resolve_auth_cached
 from ..state.history import SessionHistory
 from ..state.history_types import (
     HistoryAttachStatus,
+    HistoryDeleteResult,
+    HistoryDeleteStatus,
     HistoryListResult,
     HistoryLoadResult,
     HistoryRequestStatus,
@@ -266,8 +269,13 @@ class RikuganPanelCore(QWidget):
         self._history_btn: QPushButton | None = None
         self._history_generation: int = 0
         self._history_executor: ThreadPoolExecutor | None = None
-        self._history_result_queue: queue.Queue[HistoryListResult] = queue.Queue(
-            maxsize=_HISTORY_RESULT_QUEUE_MAXSIZE,
+        # Typed union queue: every history worker (list, load, delete)
+        # enqueues exactly one terminal result and the drain dispatches
+        # on the result type.  The same queue is safe to share because
+        # at most one request is in flight at a time (``_history_pending``
+        # single-flight invariant, spec §11.4).
+        self._history_result_queue: queue.Queue[HistoryListResult | HistoryLoadResult | HistoryDeleteResult] = (
+            queue.Queue(maxsize=_HISTORY_RESULT_QUEUE_MAXSIZE)
         )
         self._history_poll_timer: QTimer | None = None
         self._history_pending: bool = False
@@ -284,6 +292,23 @@ class RikuganPanelCore(QWidget):
         # echoes the captured scope, not the requested session id.
         self._history_retry_load_session_id: str | None = None
         self._history_last_load_session_id: str | None = None
+        # Task 5 delete-coordinator state (spec §11.5):
+        # ``_history_delete_intents`` is the load-bearing intent gate.
+        # An id is inserted BEFORE the confirmation dialog opens and
+        # removed by the terminal delete apply / cancel / invalidate.
+        # Both LOAD paths (queued-result apply and new open request)
+        # consult the set so a LOAD that lands while a DELETE is in
+        # flight is dropped instead of attaching a session the user
+        # just confirmed deleting.  Immutable-replacement updates keep
+        # the set race-free for future per-row intents.
+        self._history_retry_delete_session_id: str | None = None
+        self._history_last_delete_session_id: str | None = None
+        self._history_delete_intents: set[str] = set()
+        # Watchdog timer for slow-delete notices.  Created lazily by
+        # ``_start_history_delete_watchdog`` and torn down by
+        # ``_stop_history_delete_watchdog`` / ``_invalidate_history``.
+        # Cosmetic only — never cancels the in-flight delete.
+        self._history_delete_watchdog: QTimer | None = None
         # Closing flag: set by ``_invalidate_history`` so a worker that
         # finishes after IDB-switch / shutdown drops its result instead
         # of pushing it onto a queue nobody drains (spec §11.4).
@@ -670,6 +695,12 @@ class RikuganPanelCore(QWidget):
         # wired now so the passive widget has a stable connection owner
         # and tests can assert the signal reaches PanelCore.
         self._history_panel.session_open_requested.connect(self._on_history_open_requested)
+        # Task 5 (spec §11.5): row delete + notice dismiss signals.
+        # PanelCore is the only legitimate owner of panel state mutation;
+        # the widget signals let the user express intent without ever
+        # touching persistence / worker / queue state directly.
+        self._history_panel.session_delete_requested.connect(self._on_history_delete_requested)
+        self._history_panel.notice_dismissed.connect(self._on_history_notice_dismissed)
         self._main_splitter.addWidget(self._history_panel)
 
         self._main_splitter.setStretchFactor(0, 3)
@@ -1807,24 +1838,41 @@ class RikuganPanelCore(QWidget):
     def _on_history_retry(self) -> None:
         """Retry button in the History error state (spec §13 "Retry").
 
-        Reviewer MEDIUM #2: if a previous load FAILED, Retry
-        re-dispatches the LOAD — not the list — using the persisted
-        session id stashed in ``_history_retry_load_session_id``.  The
-        scope is recaptured fresh so a stale IDB identity cannot leak.
-        If no FAILED load is remembered, Retry falls back to the
-        ``_start_history_list_request`` list path (Task 8 behavior).
+        Priority order (Task 5 extension):
+
+        1. Delete retry — if a previous delete FAILED, Retry
+           re-dispatches the DELETE — not the load, not the list —
+           using the persisted session id stashed in
+           ``_history_retry_delete_session_id``.  The retry bypasses
+           confirmation (the user already confirmed once) and re-runs
+           ``_start_history_delete`` which recaptures fresh scope +
+           re-applies the open-tab invariant.
+        2. Load retry — Reviewer MEDIUM #2: if a previous load FAILED,
+           Retry re-dispatches the LOAD using the id stashed in
+           ``_history_retry_load_session_id``.  Fresh scope is
+           recaptured.
+        3. List retry — Task 8 fallback when no FAILED result is
+           remembered.
         """
         if self._is_shutdown:
             return
-        retry_id = self._history_retry_load_session_id
-        if retry_id is not None:
+        # Delete retry has priority — the user just confirmed a delete
+        # and the worker FAILED; re-dispatching the LOAD instead would
+        # open the chat the user is trying to remove.
+        retry_delete_id = self._history_retry_delete_session_id
+        if retry_delete_id is not None:
+            self._history_retry_delete_session_id = None
+            self._start_history_delete(retry_delete_id)
+            return
+        retry_load_id = self._history_retry_load_session_id
+        if retry_load_id is not None:
             # The retry consumed the slot; a new FAILED result will
             # re-populate it, a success path leaves it cleared.
             self._history_retry_load_session_id = None
-            self._start_history_load(retry_id)
-        else:
-            # List retry (Task 8 behavior).
-            self._start_history_list_request()
+            self._start_history_load(retry_load_id)
+            return
+        # List retry (Task 8 behavior).
+        self._start_history_list_request()
 
     def _start_history_load(self, session_id: str) -> None:
         """Submit a single load request through the dedicated executor.
@@ -1901,8 +1949,23 @@ class RikuganPanelCore(QWidget):
         Spec §11.4 keeps at most one list-or-load request in flight at a
         time (``_history_pending``); a second click while a load is
         pending is dropped without a worker submit.
+
+        Task 5 intent gate (spec §11.5): if the user just confirmed (or
+        is currently confirming) a delete of this session, the open
+        request is dropped BEFORE consulting the controller.  Attaching
+        a session the persistence layer is racing to delete would leave
+        a tab pointing at a file the worker just unlinked.
         """
         if self._is_shutdown:
+            return
+        # Task 5 intent gate: short-circuit BEFORE any controller I/O
+        # so the find_tab lookup does not even run.  This mirrors the
+        # queued-result gate in ``_apply_history_loaded`` and keeps the
+        # two LOAD entry points consistent.  ``getattr`` default keeps
+        # the read safe on a stripped-down fixture that bypassed
+        # ``__init__`` (integration tests build a panel via
+        # ``__new__`` and seed only the fields they exercise).
+        if session_id in getattr(self, "_history_delete_intents", ()):
             return
         # Pre-load dedupe: focus the existing tab without I/O if the
         # persisted session is already open.  The parameter is the
@@ -2163,6 +2226,9 @@ class RikuganPanelCore(QWidget):
             if isinstance(result, HistoryLoadResult):
                 # Load result → attach + tab/restore path (Task 9).
                 self._apply_history_loaded(result)
+            elif isinstance(result, HistoryDeleteResult):
+                # Delete result → terminal delete apply (Task 5, §11.5).
+                self._apply_history_deleted(result)
             else:
                 # List result → existing list-render path (Task 8).
                 self._apply_history_list_result(result)
@@ -2207,7 +2273,29 @@ class RikuganPanelCore(QWidget):
         ``result.error`` is NEVER surfaced to the widget because worker
         exception messages may include session-id / path / OS strings
         derived from untrusted binary content (spec §11.3).
+
+        Task 5 intent gate (spec §11.5): a queued LOAD result whose
+        session id is in ``_history_delete_intents`` is dropped BEFORE
+        attach.  The race looks like: user clicks OPEN on a row, the
+        LOAD worker starts, user then clicks DELETE on the same row and
+        confirms before the LOAD result lands.  Without this gate the
+        session would be attached AFTER the user just confirmed
+        deleting it, producing a tab whose backing file the worker is
+        racing to unlink.  The gate runs after the ``result.session``
+        None-check so a NOT_FOUND / FAILED result is still routed to
+        its UI copy below.
         """
+        # Task 5 intent gate: drop a LOAD that targets a session being
+        # deleted.  ``result.session`` is None on every non-LOADED
+        # status, so guard the attribute access.  ``getattr`` default
+        # keeps the read safe on a stripped-down fixture that bypassed
+        # ``__init__``.
+        if (
+            result.status is HistoryRequestStatus.LOADED
+            and result.session is not None
+            and result.session.id in getattr(self, "_history_delete_intents", ())
+        ):
+            return
         status = result.status
         if status is HistoryRequestStatus.LOADED:
             attach = self._ctrl.attach_history_session(result)
@@ -2324,6 +2412,440 @@ class RikuganPanelCore(QWidget):
                 retry_visible=True,
             )
 
+    # ------------------------------------------------------------------
+    # Task 5: History delete coordinator (spec §11.5)
+    # ------------------------------------------------------------------
+
+    def _clear_history_delete_intent(self, session_id: str) -> None:
+        """Remove ``session_id`` from the delete-intent gate.
+
+        Uses immutable replacement so the gate stays race-free for any
+        future per-row intent extension.  Safe to call when the id is
+        not present (idempotent).
+        """
+        self._history_delete_intents = {
+            intent_id for intent_id in self._history_delete_intents if intent_id != session_id
+        }
+
+    def _confirm_history_delete(self, title: str) -> bool:
+        """Modal confirmation dialog for deleting a persisted chat.
+
+        Extracted as its own method so tests can patch it without
+        driving a real ``QMessageBox`` modal loop.  The dialog is
+        window-modal, plain-text (no QSS interpolation of the title —
+        the title is untrusted content derived from user/LLM messages
+        and must never be concatenated into a stylesheet), default to
+        Cancel, and escape to Cancel.  Returns True only when the user
+        explicitly clicks the destructive Delete button.
+        """
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Delete chat?")
+        dialog.setTextFormat(Qt.TextFormat.PlainText)
+        # Fixed literal copy only.  ``title`` is untrusted user/LLM
+        # content; it is rendered via Qt plain-text (no markup) but
+        # never interpolated into QSS or HTML (spec §11.3 sanitize
+        # boundary for binary-derived strings).
+        dialog.setText(f'"{title}" will be permanently deleted from History.\nThis action cannot be undone.')
+        delete_btn = dialog.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        dialog.setDefaultButton(cancel_btn)
+        dialog.setEscapeButton(cancel_btn)
+        dialog.exec()
+        return dialog.clickedButton() is delete_btn
+
+    def _on_history_delete_requested(self, session_id: str, title: str) -> None:
+        """Row delete button → confirm and submit a delete (spec §11.5).
+
+        Sequence:
+
+          1. Drop silently on shutdown.
+          2. ``_history_pending`` busy guard — never start a delete
+             while another history operation is in flight (single
+             flight invariant, spec §11.4).  Surface a dismiss-only
+             busy notice so the user knows why nothing happened.
+          3. Open-tab invariant — if the persisted session is already
+             attached to a tab, focus the tab and refuse to delete
+             until the user closes it.  Deleting an attached session
+             would orphan the tab's persistence layer.  Surface a
+             dismiss-only notice so the user knows what to do.
+          4. INSERT the intent BEFORE the confirmation dialog opens.
+             This is the load-bearing race fix: a LOAD worker already
+             in flight that lands while the dialog is on screen must
+             see the intent and drop its attach (see
+             ``_apply_history_loaded``).
+          5. ``_confirm_history_delete`` modal — on cancel, clear the
+             intent (no DELETE is in flight anymore).
+          6. Delegate to ``_start_history_delete`` for single-flight
+             scope capture + worker submission.
+
+        ``session_id`` is the persisted ``SessionState.id`` (12-hex by default);
+        ``title`` is the untrusted, sanitized, truncated display title
+        for the dialog body.  Both come from the widget signal, never
+        from live controller state, so a stale row cannot be deleted
+        by mistake.
+        """
+        if self._is_shutdown:
+            return
+        # Single-flight busy guard (spec §11.4).
+        if self._history_pending:
+            if self._history_panel is not None:
+                self._history_panel.show_notice(
+                    "History is busy. Try again shortly.",
+                    retry_visible=False,
+                    dismiss_visible=True,
+                )
+            return
+        # Open-tab invariant (spec §11.5 preflight).
+        existing_tab = self._ctrl.find_tab_for_session(session_id)
+        if existing_tab is not None:
+            self._focus_tab(existing_tab)
+            if self._history_panel is not None:
+                self._history_panel.show_notice(
+                    "Close this chat before deleting it from History.",
+                    retry_visible=False,
+                    dismiss_visible=True,
+                )
+            return
+        # Intent inserted BEFORE the modal opens.  Immutable replacement
+        # keeps the set race-free against concurrent apply paths.
+        self._history_delete_intents = {
+            *self._history_delete_intents,
+            session_id,
+        }
+        if not self._confirm_history_delete(title):
+            self._clear_history_delete_intent(session_id)
+            return
+        self._start_history_delete(session_id)
+
+    def _start_history_delete(self, session_id: str) -> None:
+        """Submit a single delete request through the dedicated executor.
+
+        Shared by ``_on_history_delete_requested`` (initial request) and
+        ``_on_history_retry`` (FAILED retry — skips confirmation).
+        Re-applies the shutdown / single-flight / open-tab invariants so
+        a retry that lands after the user opened the chat focuses the
+        tab instead of deleting it out from under them.  Captures a
+        fresh immutable scope on every call so an IDB switch between
+        FAILED and Retry cannot leak the old IDB identity into the
+        retry.  Lazy-creates the dedicated history executor on first
+        use (same pattern as list / load — never reuse
+        ``_SAVE_EXECUTOR``, spec §6.1).
+        """
+        if self._is_shutdown or self._history_pending:
+            # Invariants changed between confirmation and submit.  Drop
+            # the intent so LOAD paths can proceed again; the retry
+            # click (if any) will re-add it.
+            self._clear_history_delete_intent(session_id)
+            return
+        # Re-check the open-tab invariant.  The user may have opened
+        # the chat between the FAILED result and the retry click.
+        existing_tab = self._ctrl.find_tab_for_session(session_id)
+        if existing_tab is not None:
+            self._clear_history_delete_intent(session_id)
+            self._focus_tab(existing_tab)
+            if self._history_panel is not None:
+                self._history_panel.show_notice(
+                    "Close this chat before deleting it from History.",
+                    retry_visible=False,
+                    dismiss_visible=True,
+                )
+            return
+
+        # (Re-)add the intent so a LOAD that races with a retry-delete
+        # is still dropped (the retry path skips the pre-confirm insert
+        # in ``_on_history_delete_requested``).  Immutable replacement.
+        self._history_delete_intents = {
+            *self._history_delete_intents,
+            session_id,
+        }
+        # Capture fresh immutable scope on the main thread; bump the
+        # generation so any in-flight result from a prior request is
+        # discarded by ``_drain_history_results``.  Same pattern as
+        # ``_start_history_load`` (spec §11.4).
+        self._history_generation += 1
+        scope = self._ctrl.capture_history_scope(self._history_generation)
+        self._history_pending = True
+        # Stash the in-flight target so the slow watchdog (which may
+        # fire after a tab change) can decide whether to surface a
+        # notice for THIS delete.  Cleared by terminal apply /
+        # invalidate / dismiss.
+        self._history_last_delete_session_id = session_id
+        self._history_retry_delete_session_id = None
+        if self._history_panel is not None:
+            self._history_panel.clear_notice()
+            self._history_panel.set_operation_pending(session_id)
+        # Create / reuse the dedicated History executor; never use
+        # ``_SAVE_EXECUTOR`` (spec §6.1 — a ``flush_saves`` call cannot
+        # self-deadlock against the history worker this way).
+        if self._history_executor is None:
+            self._history_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=_HISTORY_EXECUTOR_PREFIX,
+            )
+        executor = self._history_executor
+        # Capture the LIVE closing Event reference and pass it into the
+        # worker so it checks ITS captured event, not
+        # ``self._history_closing`` dynamically — same race fix as the
+        # list / load paths.
+        closing_event = self._history_closing
+        try:
+            executor.submit(
+                self._history_delete_worker,
+                session_id,
+                scope,
+                closing_event,
+            )
+        except RuntimeError:
+            # Executor was shut down between the None check and submit
+            # (e.g. invalidate raced this request).  Roll back the
+            # state we just touched so the next user click starts
+            # cleanly.
+            self._clear_history_delete_intent(session_id)
+            self._history_pending = False
+            if self._history_panel is not None:
+                self._history_panel.set_operation_pending(None)
+            raise
+        # Cosmetic slow-delete watchdog.  Purely UI — never cancels the
+        # in-flight delete (spec §11.5).
+        self._start_history_delete_watchdog(scope)
+        # Dedicated poll timer is the only path back to the Qt main
+        # thread for the delete result (spec §7.4).
+        self._ensure_history_poll_timer()
+
+    def _history_delete_worker(
+        self,
+        session_id: str,
+        scope: HistoryScope,
+        closing_event: threading.Event,
+    ) -> None:
+        """Background delete worker (spec §11.5, §11.4).
+
+        Runs on the dedicated history executor.  Calls only
+        ``self._ctrl.delete_history_session`` and enqueues a typed
+        ``HistoryDeleteResult``.  No Qt / signal / row mutation happens
+        here — apply and rendering run on the Qt main thread in
+        ``_apply_history_deleted``.
+
+        ``CancelledError`` is re-raised so a Qt-cancelled future can
+        unwind the executor's future chain.  Every other failure path
+        is converted to a typed terminal result; exceptions are never
+        used as cross-thread control flow (spec §11.4).
+
+        The captured ``closing_event`` is the Event that was live at
+        submit time — same race fix as list / load: an
+        ``_invalidate_history`` call that installs a fresh Event sets
+        the OLD Event, so a stale worker that captured the old
+        reference observes ``is_set()==True`` and drops its result even
+        after the new request has cleared the new Event.
+        """
+        result: HistoryDeleteResult
+        try:
+            result = self._ctrl.delete_history_session(session_id, scope)
+        except CancelledError:
+            # Cancellation propagates so the executor's future chain
+            # can unwind; never enqueue a synthetic result for a
+            # request the user / system actively cancelled.
+            raise
+        except Exception as exc:
+            # Outer boundary catch (spec §11.4): convert any other
+            # failure to a typed terminal result so the UI cannot
+            # remain stuck in pending.  The exception diagnostic is
+            # logged but its raw text is preserved in ``error`` for
+            # the log file only; ``_apply_history_deleted`` never
+            # surfaces it to the user (spec §11.3).
+            log_error(
+                f"history delete worker failed: {type(exc).__name__}: {exc}",
+            )
+            result = HistoryDeleteResult(
+                HistoryDeleteStatus.FAILED,
+                scope,
+                session_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        # Drop the result if a close / IDB-switch / shutdown beat us to
+        # it, instead of leaving it sitting in an unpolled queue (spec
+        # §11.4 drain-and-discard).  The check uses the CAPTURED
+        # ``closing_event`` so a stale worker cannot be fooled by an
+        # invalidate-then-new-request sequence into observing the new
+        # Event's cleared state.
+        if not closing_event.is_set():
+            self._history_result_queue.put(result)
+
+    def _apply_history_deleted(self, result: HistoryDeleteResult) -> None:
+        """Apply a delete result on the Qt main thread (spec §11.5).
+
+        Terminal delete apply.  Routes the typed status to the correct
+        UI + controller action:
+
+        * ``DELETED`` / ``NOT_FOUND``: terminal success — the row is
+          removed from the cached list, the notice is cleared, and a
+          single list refresh runs so the list reconciles with the new
+          on-disk state.  No retry-load / retry-delete id retained.
+        * ``WRONG_IDB``: terminal non-retryable — the row is preserved
+          (it may still belong to a different IDB), the notice is
+          cleared, and a single list refresh runs.  No retry id.
+        * ``FAILED``: non-terminal for the user — the row is preserved
+          and the Retry button is enabled so the user can re-attempt
+          the delete without re-confirming.  Only the id is retained
+          for retry; no SessionState payload is held.
+
+        The watchdog is stopped first so a late slow-delete notice
+        cannot fire after the terminal result has already updated the
+        UI.  The intent is cleared so LOAD paths can proceed again.
+        ``_history_pending`` is cleared by the drain before this method
+        runs.
+        """
+        # Watchdog teardown runs BEFORE any UI mutation so a late
+        # timeout cannot surface a "still working" notice on top of
+        # the terminal result.
+        self._stop_history_delete_watchdog()
+        # Intent clear frees the LOAD paths to proceed for this
+        # session again (only matters for FAILED — the row is gone on
+        # DELETED / NOT_FOUND — but the clear is unconditional and
+        # idempotent).
+        self._clear_history_delete_intent(result.session_id)
+        if self._history_panel is not None:
+            self._history_panel.set_operation_pending(None)
+
+        if result.status in {
+            HistoryDeleteStatus.DELETED,
+            HistoryDeleteStatus.NOT_FOUND,
+        }:
+            # Terminal success for the request.  The row is gone (or
+            # was already gone); refresh the cached list.
+            self._history_retry_delete_session_id = None
+            if self._history_panel is not None:
+                self._history_panel.remove_entry(result.session_id)
+                self._history_panel.clear_notice()
+            self._start_history_list_request()
+            return
+
+        if result.status is HistoryDeleteStatus.WRONG_IDB:
+            # Terminal non-retryable.  Row is preserved; refresh so
+            # the list reconciles with on-disk state.
+            self._history_retry_delete_session_id = None
+            if self._history_panel is not None:
+                self._history_panel.clear_notice()
+            self._start_history_list_request()
+            return
+
+        # FAILED: non-terminal.  Row is preserved, Retry is enabled so
+        # the user can re-attempt without re-confirming.  Only the id
+        # is retained; no payload held.
+        self._history_retry_delete_session_id = result.session_id
+        if self._history_panel is not None:
+            self._history_panel.show_notice(
+                "Could not delete this chat.",
+                retry_visible=True,
+                dismiss_visible=True,
+            )
+
+    def _on_history_notice_dismissed(self) -> None:
+        """Widget dismiss button → clear retry presentation state only.
+
+        The dismiss button is the user's "I saw the notice, hide it"
+        gesture.  It clears the retry-delete slot (the FAILED notice is
+        the only one currently wired to retry — the busy / open-tab /
+        slow notices are dismiss-only and never set the slot) but does
+        NOT mutate the intent set, pending flag, or in-flight worker.
+        Widget-side dismiss is purely a UI concern; PanelCore owns all
+        persistence / worker / queue state.
+        """
+        self._history_retry_delete_session_id = None
+
+    def _start_history_delete_watchdog(self, scope: HistoryScope) -> None:
+        """Start the cosmetic slow-delete watchdog (spec §11.5).
+
+        ``HISTORY_DELETE_SLOW_NOTICE_SECONDS`` after the request was
+        submitted, fire ``_on_history_delete_slow`` which — if the
+        generation / session / pending state still match — surfaces a
+        dismiss-only "still working" notice.  The watchdog NEVER
+        cancels the delete, NEVER clears ``_history_pending``, NEVER
+        clears the intent, and NEVER enables Retry.  The terminal
+        ``HistoryDeleteResult`` owns all of those transitions.
+
+        Teardown: ``_stop_history_delete_watchdog`` is idempotent and
+        is called by terminal apply, invalidate, and any subsequent
+        ``_start_history_delete_watchdog`` so at most one watchdog is
+        alive at a time (single-flight invariant).
+        """
+        self._stop_history_delete_watchdog()
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        # Capture the session id at submit time so a later watchdog
+        # timeout cannot mis-fire for a different delete.  The lambda
+        # also captures the generation; both are checked at fire time.
+        target_session_id = self._history_last_delete_session_id
+        target_generation = scope.generation
+        timer.timeout.connect(
+            lambda: self._on_history_delete_slow(target_generation, target_session_id),
+        )
+        timer.start(int(HISTORY_DELETE_SLOW_NOTICE_SECONDS * 1000))
+        self._history_delete_watchdog = timer
+
+    def _stop_history_delete_watchdog(self) -> None:
+        """Stop + tear down the delete watchdog.
+
+        Idempotent; safe to call when no watchdog is alive.  Mirrors
+        ``_stop_history_poll_timer``: stop, disconnect, deleteLater,
+        null the reference.  Swallows ``RuntimeError`` / ``TypeError``
+        on disconnect so partial-init fixtures and post-teardown calls
+        stay safe.
+
+        ``getattr`` default keeps this safe when a test fixture
+        bypassed ``__init__`` and never seeded the Task-5 fields (the
+        legacy Task 7 shutdown / on_database_changed tests construct a
+        bare panel via ``object.__new__`` and exercise only the
+        restore-removal path).
+        """
+        timer = getattr(self, "_history_delete_watchdog", None)
+        if timer is None:
+            return
+        try:
+            timer.stop()
+        except (RuntimeError, TypeError) as e:
+            log_debug(f"history delete watchdog stop failed: {e}")
+        try:
+            timer.timeout.disconnect()
+        except (RuntimeError, TypeError) as e:
+            log_debug(f"history delete watchdog disconnect failed: {e}")
+        try:
+            timer.deleteLater()
+        except (RuntimeError, TypeError) as e:
+            log_debug(f"history delete watchdog deleteLater failed: {e}")
+        self._history_delete_watchdog = None
+
+    def _on_history_delete_slow(
+        self,
+        generation: int,
+        session_id: str | None,
+    ) -> None:
+        """Watchdog timeout → cosmetic "still working" notice.
+
+        Purely UI.  Fire ONLY when the watchdog's captured generation
+        matches the live ``_history_generation``, the captured session
+        id matches ``_history_last_delete_session_id``, AND
+        ``_history_pending`` is still True.  Any mismatch means the
+        terminal result has already landed (or a new request
+        superseded this one) and the notice would be stale or
+        misleading.  Notice is dismiss-only (no Retry — the delete is
+        still in flight and there is nothing to retry yet).
+        """
+        if self._is_shutdown:
+            return
+        if not self._history_pending:
+            return
+        if generation != self._history_generation:
+            return
+        if session_id is None or session_id != self._history_last_delete_session_id:
+            return
+        if self._history_panel is not None:
+            self._history_panel.show_notice(
+                "Deleting this chat is taking longer than expected.",
+                retry_visible=False,
+                dismiss_visible=True,
+            )
+
     def _stop_history_poll_timer(self) -> None:
         """Stop + tear down the history poll timer (spec §7.4).
 
@@ -2376,21 +2898,31 @@ class RikuganPanelCore(QWidget):
            ``_history_last_load_session_id`` — the stashed ids belong
            to the old IDB; a retry after IDB change must not silently
            re-dispatch a load for the old IDB.
-        8. Optional ``panel.clear()`` iff ``clear_panel=True``
+        8. Task 5 (spec §11.5): stop the delete watchdog, clear the
+           delete-intent gate, and clear
+           ``_history_retry_delete_session_id`` /
+           ``_history_last_delete_session_id``.  The watchdog is
+           cosmetic-only and must not fire a stale notice after the
+           panel has reset; the intent gate must release so LOAD paths
+           can proceed for the new IDB; the retry/last ids belong to
+           the old IDB and must not leak into a future Retry click.
+           Tell the widget to clear its pending-row state so the
+           spinner does not stick to a row that no longer exists.
+        9. Optional ``panel.clear()`` iff ``clear_panel=True``
            (IDB-change path).  ``shutdown`` passes ``False`` because
            widget mutation after the C++ teardown starts is unsafe.
-        9. Replace ``_history_closing`` with a fresh unset
-           ``threading.Event``.  THE LOAD-BEARING RACE FIX (spec §11.4
-           closing-flag reuse): a stale worker that captured the OLD
-           event reference at submit time keeps observing
-           ``is_set()==True`` even after a new request has cleared the
-           NEW event.  ``Event.clear()`` on the new event does NOT
-           un-set the old event, so the old worker drops its result and
-           cannot enqueue into the new queue.  ``clear_panel`` does
-           not affect this step — the new event is unset in both paths
-           because the next ``_start_history_*`` request is the only
-           legitimate path to a worker that should be allowed to
-           enqueue.
+        10. Replace ``_history_closing`` with a fresh unset
+            ``threading.Event``.  THE LOAD-BEARING RACE FIX (spec §11.4
+            closing-flag reuse): a stale worker that captured the OLD
+            event reference at submit time keeps observing
+            ``is_set()==True`` even after a new request has cleared the
+            NEW event.  ``Event.clear()`` on the new event does NOT
+            un-set the old event, so the old worker drops its result and
+            cannot enqueue into the new queue.  ``clear_panel`` does
+            not affect this step — the new event is unset in both paths
+            because the next ``_start_history_*`` request is the only
+            legitimate path to a worker that should be allowed to
+            enqueue.
 
         ``getattr`` defaults keep this helper safe when a test fixture
         bypassed ``__init__`` and never seeded the Task-8 fields (the
@@ -2436,7 +2968,30 @@ class RikuganPanelCore(QWidget):
         #    the stashed ids belong to the old IDB.
         self._history_retry_load_session_id = None
         self._history_last_load_session_id = None
-        # 8. Optional HistoryPanel.clear — only on IDB change.
+        # 8. Task 5: clear delete-coordinator state.  Stop the watchdog
+        #    first so a stale timeout cannot fire after the panel has
+        #    reset.  Use ``getattr`` so a bare fixture that bypassed
+        #    ``__init__`` and never seeded the Task-5 fields does not
+        #    raise AttributeError on the helper call.
+        watchdog_stop = getattr(self, "_stop_history_delete_watchdog", None)
+        if callable(watchdog_stop):
+            watchdog_stop()
+        self._history_delete_intents = set()
+        self._history_retry_delete_session_id = None
+        self._history_last_delete_session_id = None
+        history_panel_for_pending = getattr(self, "_history_panel", None)
+        if history_panel_for_pending is not None:
+            # ``set_operation_pending`` may be absent on a stripped-down
+            # recording fixture in integration tests; guard both the
+            # attribute lookup and the call so invalidate never raises
+            # from a missing widget method.
+            set_pending = getattr(history_panel_for_pending, "set_operation_pending", None)
+            if callable(set_pending):
+                try:
+                    set_pending(None)
+                except (RuntimeError, TypeError, AttributeError) as e:
+                    log_debug(f"history panel set_operation_pending(None) on invalidate failed: {e}")
+        # 9. Optional HistoryPanel.clear — only on IDB change.
         if clear_panel:
             history_panel = getattr(self, "_history_panel", None)
             if history_panel is not None:
@@ -2444,12 +2999,12 @@ class RikuganPanelCore(QWidget):
                     history_panel.clear()
                 except (RuntimeError, TypeError) as e:
                     log_debug(f"history panel clear on invalidate failed: {e}")
-        # 9. Replace the closing Event with a fresh unset one so the
-        #    next request starts from a clean closing state.  The OLD
-        #    event stays set; any worker that captured it at submit
-        #    time keeps observing ``is_set()==True`` and drops its
-        #    result, even after the new request has cleared the NEW
-        #    event — this is the load-bearing race fix.
+        # 10. Replace the closing Event with a fresh unset one so the
+        #     next request starts from a clean closing state.  The OLD
+        #     event stays set; any worker that captured it at submit
+        #     time keeps observing ``is_set()==True`` and drops its
+        #     result, even after the new request has cleared the NEW
+        #     event — this is the load-bearing race fix.
         self._history_closing = threading.Event()
 
     def _on_mode_changed(self, index: int) -> None:

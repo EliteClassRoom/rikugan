@@ -1379,6 +1379,15 @@ def _make_history_panel():
     # Task-9 post-review fix: retry-load session-id state.
     panel._history_retry_load_session_id = None
     panel._history_last_load_session_id = None
+    # Task-5 delete-coordinator state (spec §11.5): intent gate so a
+    # queued LOAD that lands while the user is confirming a DELETE is
+    # discarded before it attaches; retry + last ids mirror the load
+    # pattern; watchdog timer is created lazily by
+    # ``_start_history_delete_watchdog``.
+    panel._history_retry_delete_session_id = None
+    panel._history_last_delete_session_id = None
+    panel._history_delete_intents: set[str] = set()
+    panel._history_delete_watchdog: object | None = None
     return panel
 
 
@@ -3608,6 +3617,420 @@ class TestTask10StaleWorkerRace(unittest.TestCase):
             executor = panel._history_executor
             if executor is not None:
                 executor.shutdown(wait=True)
+
+
+# ---------------------------------------------------------------------------
+# Task 5: PanelCore confirmation, intents, worker, retry, watchdog
+# (spec §11.5). TDD-driven; tests below intentionally exercise every
+# concurrency-sensitive invariant in one atomic suite so regressions in
+# the pre-confirm / post-confirm / watchdog / retry / invalidation
+# phases cannot land silently.
+# ---------------------------------------------------------------------------
+from rikugan.state.history_types import (  # noqa: E402
+    HistoryDeleteResult,
+    HistoryDeleteStatus,
+    HistoryRequestStatus,
+)
+
+
+class TestHistoryDeletePreflight(unittest.TestCase):
+    """Pre-confirmation gating (spec §11.5 preflight).
+
+    Two paths must short-circuit BEFORE the confirmation dialog opens:
+
+    1. The persisted session is already attached to an open tab — focus
+       it, surface a dismiss-only notice, and never submit a worker.
+    2. Another history operation is already in flight — surface a
+       dismiss-only busy notice and never submit a worker.
+
+    Both paths preserve single-flight submission and keep the user
+    informed without enabling Retry (the user did not hit a failure
+    that would warrant a retry).
+    """
+
+    def test_open_chat_is_focused_without_confirmation_or_submit(self) -> None:
+        panel = _make_history_panel()
+        panel._ctrl.find_tab_for_session.return_value = "tab-a"
+        panel._focus_tab = MagicMock()
+        panel._confirm_history_delete = MagicMock()
+
+        panel._on_history_delete_requested("persisted-a", "Analyze parser")
+
+        panel._focus_tab.assert_called_once_with("tab-a")
+        panel._confirm_history_delete.assert_not_called()
+        panel._history_panel.show_notice.assert_called_once_with(
+            "Close this chat before deleting it from History.",
+            retry_visible=False,
+            dismiss_visible=True,
+        )
+
+    def test_pending_history_operation_shows_busy_notice(self) -> None:
+        panel = _make_history_panel()
+        panel._history_pending = True
+
+        panel._on_history_delete_requested("persisted-a", "Analyze parser")
+
+        panel._history_panel.show_notice.assert_called_once_with(
+            "History is busy. Try again shortly.",
+            retry_visible=False,
+            dismiss_visible=True,
+        )
+
+
+class TestHistoryDeleteIntents(unittest.TestCase):
+    """Pre-confirm and post-confirm intent gate (spec §11.5 intent gate).
+
+    The intent set is the load-bearing gate against the race in which a
+    queued LOAD result (from a click the user made moments before) lands
+    while a DELETE confirmation is still on screen. Without the gate the
+    load would attach the session AFTER the user just confirmed deleting
+    it — producing a tab whose persistence layer is racing with the
+    delete worker. The intent MUST be inserted BEFORE the confirmation
+    dialog opens and MUST be honored synchronously by every LOAD path
+    (queued-result apply AND new open request).
+    """
+
+    def test_delete_intent_exists_while_confirmation_is_open(self) -> None:
+        panel = _make_history_panel()
+
+        def confirm(_title: str) -> bool:
+            # Intent is set BEFORE the dialog opens; it must be present
+            # while confirmation is on screen.
+            self.assertIn("persisted-a", panel._history_delete_intents)
+            return False
+
+        panel._confirm_history_delete = confirm
+
+        panel._on_history_delete_requested("persisted-a", "Analyze parser")
+
+        # Cancelled confirmation MUST clear the intent — the user backed
+        # out, so no LOAD should be blocked.
+        self.assertNotIn("persisted-a", panel._history_delete_intents)
+
+    def test_intent_blocks_queued_load_result_before_confirmation_returns(self) -> None:
+        """A LOAD result for the session being deleted must be dropped
+        instead of attached, even when the apply path runs after the
+        worker already enqueued its terminal result."""
+        panel = _make_history_panel()
+        session = MagicMock(id="persisted-a", messages=[])
+        result = _make_load_result(
+            status=HistoryRequestStatus.LOADED,
+            scope=MagicMock(),
+            session=session,
+        )
+        panel._history_delete_intents = {"persisted-a"}
+
+        panel._apply_history_loaded(result)
+
+        panel._ctrl.attach_history_session.assert_not_called()
+
+    def test_intent_blocks_another_load(self) -> None:
+        """A second user click that would start a NEW load for the
+        session being deleted must also be dropped."""
+        panel = _make_history_panel()
+        panel._history_delete_intents = {"persisted-a"}
+        panel._start_history_load = MagicMock()
+
+        panel._on_history_open_requested("persisted-a")
+
+        panel._start_history_load.assert_not_called()
+        panel._ctrl.find_tab_for_session.assert_not_called()
+
+
+class TestHistoryDeleteWorkerAndApply(unittest.TestCase):
+    """Worker submission + queue routing + result application (spec §11.5)."""
+
+    def test_worker_enqueues_typed_delete_result(self) -> None:
+        panel = _make_history_panel()
+        scope = MagicMock(generation=4)
+        result = HistoryDeleteResult(
+            HistoryDeleteStatus.DELETED,
+            scope,
+            "persisted-a",
+        )
+        panel._ctrl.delete_history_session.return_value = result
+
+        panel._history_delete_worker(
+            "persisted-a",
+            scope,
+            panel._history_closing,
+        )
+
+        self.assertIs(panel._history_result_queue.get_nowait(), result)
+
+    def test_worker_catches_exception_as_failed_result(self) -> None:
+        """Unexpected exceptions must be converted to a FAILED typed
+        result — never raised across the worker boundary."""
+        panel = _make_history_panel()
+        scope = MagicMock(generation=4)
+        panel._ctrl.delete_history_session.side_effect = OSError("disk leaked")
+
+        panel._history_delete_worker(
+            "persisted-a",
+            scope,
+            panel._history_closing,
+        )
+
+        result = panel._history_result_queue.get_nowait()
+        self.assertEqual(result.status, HistoryDeleteStatus.FAILED)
+        self.assertEqual(result.session_id, "persisted-a")
+
+    def test_worker_does_not_enqueue_when_closing(self) -> None:
+        """Closing flag set by invalidate drops the result instead of
+        leaving it in an unpolled queue (spec §11.4 drain-and-discard)."""
+        import threading
+
+        panel = _make_history_panel()
+        closing_event = threading.Event()
+        closing_event.set()
+        scope = MagicMock(generation=4)
+        panel._ctrl.delete_history_session.return_value = HistoryDeleteResult(
+            HistoryDeleteStatus.DELETED,
+            scope,
+            "persisted-a",
+        )
+
+        panel._history_delete_worker(
+            "persisted-a",
+            scope,
+            closing_event,
+        )
+
+        self.assertTrue(panel._history_result_queue.empty())
+
+    def test_deleted_result_removes_row_and_starts_refresh(self) -> None:
+        panel = _make_history_panel()
+        scope = panel._ctrl.capture_history_scope.return_value
+        scope.generation = 5
+        panel._history_generation = 5
+        panel._history_delete_intents = {"persisted-a"}
+        panel._start_history_list_request = MagicMock()
+        panel._stop_history_delete_watchdog = MagicMock()
+        result = HistoryDeleteResult(
+            HistoryDeleteStatus.DELETED,
+            scope,
+            "persisted-a",
+        )
+
+        panel._apply_history_deleted(result)
+
+        panel._history_panel.remove_entry.assert_called_once_with("persisted-a")
+        panel._start_history_list_request.assert_called_once()
+        panel._stop_history_delete_watchdog.assert_called_once()
+        panel._history_panel.set_operation_pending.assert_called_once_with(None)
+        self.assertNotIn("persisted-a", panel._history_delete_intents)
+        self.assertIsNone(panel._history_retry_delete_session_id)
+
+    def test_not_found_result_removes_row_and_refreshes(self) -> None:
+        """NOT_FOUND is a terminal-success state: the row is gone and
+        the list refreshes so any stale rows are reconciled."""
+        panel = _make_history_panel()
+        scope = MagicMock(generation=5)
+        panel._history_generation = 5
+        panel._history_delete_intents = {"persisted-a"}
+        panel._start_history_list_request = MagicMock()
+        panel._stop_history_delete_watchdog = MagicMock()
+        result = HistoryDeleteResult(
+            HistoryDeleteStatus.NOT_FOUND,
+            scope,
+            "persisted-a",
+        )
+
+        panel._apply_history_deleted(result)
+
+        panel._history_panel.remove_entry.assert_called_once_with("persisted-a")
+        panel._start_history_list_request.assert_called_once()
+        self.assertIsNone(panel._history_retry_delete_session_id)
+
+    def test_wrong_idb_result_refreshes_without_removing_row(self) -> None:
+        """WRONG_IDB is terminal-success for the request (no retry) but
+        the row may still be valid for a different IDB — refresh the
+        list without touching the row."""
+        panel = _make_history_panel()
+        scope = MagicMock(generation=5)
+        panel._history_generation = 5
+        panel._history_delete_intents = {"persisted-a"}
+        panel._start_history_list_request = MagicMock()
+        panel._stop_history_delete_watchdog = MagicMock()
+        result = HistoryDeleteResult(
+            HistoryDeleteStatus.WRONG_IDB,
+            scope,
+            "persisted-a",
+        )
+
+        panel._apply_history_deleted(result)
+
+        panel._history_panel.remove_entry.assert_not_called()
+        panel._start_history_list_request.assert_called_once()
+        self.assertIsNone(panel._history_retry_delete_session_id)
+
+    def test_failed_result_keeps_row_and_enables_retry(self) -> None:
+        panel = _make_history_panel()
+        result = HistoryDeleteResult(
+            HistoryDeleteStatus.FAILED,
+            MagicMock(),
+            "persisted-a",
+            error="PermissionError: locked",
+        )
+        panel._stop_history_delete_watchdog = MagicMock()
+
+        panel._apply_history_deleted(result)
+
+        panel._history_panel.remove_entry.assert_not_called()
+        panel._history_panel.set_operation_pending.assert_called_with(None)
+        panel._history_panel.show_notice.assert_called_with(
+            "Could not delete this chat.",
+            retry_visible=True,
+            dismiss_visible=True,
+        )
+        self.assertEqual(panel._history_retry_delete_session_id, "persisted-a")
+
+
+class TestHistoryDeleteRetry(unittest.TestCase):
+    """Retry routing after a FAILED delete (spec §11.5 retry priority)."""
+
+    def test_delete_retry_skips_confirmation_and_captures_fresh_scope(self) -> None:
+        panel = _make_history_panel()
+        panel._history_retry_delete_session_id = "persisted-a"
+        panel._confirm_history_delete = MagicMock()
+        panel._start_history_delete = MagicMock()
+
+        panel._on_history_retry()
+
+        panel._confirm_history_delete.assert_not_called()
+        panel._start_history_delete.assert_called_once_with("persisted-a")
+
+    def test_delete_retry_focuses_chat_opened_after_failure(self) -> None:
+        """If the user opened the chat between the FAILED result and the
+        retry click, ``_start_history_delete`` rechecks the open-tab
+        invariant and short-circuits (no worker, no delete of the chat
+        the user is actively viewing)."""
+        panel = _make_history_panel()
+        panel._history_retry_delete_session_id = "persisted-a"
+        panel._ctrl.find_tab_for_session.return_value = "tab-a"
+        panel._focus_tab = MagicMock()
+        panel._history_executor = MagicMock()
+
+        panel._on_history_retry()
+
+        panel._focus_tab.assert_called_once_with("tab-a")
+        panel._history_executor.submit.assert_not_called()
+        panel._ctrl.delete_history_session.assert_not_called()
+
+    def test_delete_retry_takes_priority_over_load_retry(self) -> None:
+        """When both a delete retry and a load retry are pending, delete
+        wins and consumes both slots."""
+        panel = _make_history_panel()
+        panel._history_retry_delete_session_id = "persisted-del"
+        panel._history_retry_load_session_id = "persisted-load"
+        panel._start_history_delete = MagicMock()
+        panel._start_history_load = MagicMock()
+
+        panel._on_history_retry()
+
+        panel._start_history_delete.assert_called_once_with("persisted-del")
+        panel._start_history_load.assert_not_called()
+
+    def test_notice_dismissed_clears_retry_state_only(self) -> None:
+        """The dismiss button on the FAILED notice clears retry
+        presentation state but must NOT mutate persistence/worker
+        state — the widget's dismiss handler is a UI-only concern."""
+        panel = _make_history_panel()
+        panel._history_retry_delete_session_id = "persisted-a"
+        panel._history_delete_intents = {"persisted-a"}
+        panel._history_pending = True
+
+        panel._on_history_notice_dismissed()
+
+        self.assertIsNone(panel._history_retry_delete_session_id)
+        # Intent + pending worker are untouched — dismiss is UI-only.
+        self.assertIn("persisted-a", panel._history_delete_intents)
+        self.assertTrue(panel._history_pending)
+
+
+class TestHistoryDeleteWatchdog(unittest.TestCase):
+    """Non-terminal slow watchdog (spec §11.5 slow-notice).
+
+    The watchdog surfaces a dismiss-only "still working" notice when the
+    delete worker exceeds ``HISTORY_DELETE_SLOW_NOTICE_SECONDS``.  It is
+    PURELY cosmetic — it must NEVER clear ``_history_pending``, NEVER
+    clear the intent, and NEVER enable Retry.  The terminal
+    ``HistoryDeleteResult`` owns those state transitions.
+    """
+
+    def test_delete_watchdog_notice_does_not_clear_pending_or_intent(self) -> None:
+        panel = _make_history_panel()
+        panel._history_pending = True
+        panel._history_generation = 8
+        panel._history_last_delete_session_id = "persisted-a"
+        panel._history_delete_intents = {"persisted-a"}
+
+        panel._on_history_delete_slow(8, "persisted-a")
+
+        self.assertTrue(panel._history_pending)
+        self.assertIn("persisted-a", panel._history_delete_intents)
+        panel._history_panel.show_notice.assert_called_once_with(
+            "Deleting this chat is taking longer than expected.",
+            retry_visible=False,
+            dismiss_visible=True,
+        )
+
+    def test_delete_watchdog_silent_on_generation_mismatch(self) -> None:
+        """A late watchdog timeout from a prior generation must NOT
+        fire a notice — the user would see a stale "still working"
+        message on top of an already-completed delete."""
+        panel = _make_history_panel()
+        panel._history_pending = True
+        panel._history_generation = 9  # newer than watchdog's 8
+        panel._history_last_delete_session_id = "persisted-a"
+
+        panel._on_history_delete_slow(8, "persisted-a")
+
+        panel._history_panel.show_notice.assert_not_called()
+
+    def test_delete_watchdog_silent_on_session_mismatch(self) -> None:
+        """If the user kicked off a second delete that superseded the
+        first, the first watchdog's notice must NOT fire on the second
+        delete — match on session_id, not just generation."""
+        panel = _make_history_panel()
+        panel._history_pending = True
+        panel._history_generation = 8
+        panel._history_last_delete_session_id = "persisted-b"
+
+        panel._on_history_delete_slow(8, "persisted-a")
+
+        panel._history_panel.show_notice.assert_not_called()
+
+    def test_delete_watchdog_silent_when_no_longer_pending(self) -> None:
+        """If the terminal result has already landed and cleared
+        ``_history_pending``, the watchdog must stay silent."""
+        panel = _make_history_panel()
+        panel._history_pending = False
+        panel._history_generation = 8
+        panel._history_last_delete_session_id = "persisted-a"
+
+        panel._on_history_delete_slow(8, "persisted-a")
+
+        panel._history_panel.show_notice.assert_not_called()
+
+
+class TestHistoryDeleteInvalidate(unittest.TestCase):
+    """Invalidate clears all delete state on IDB-switch / shutdown."""
+
+    def test_invalidate_clears_delete_state_and_watchdog(self) -> None:
+        panel = _make_history_panel()
+        panel._history_delete_intents = {"persisted-a"}
+        panel._history_retry_delete_session_id = "persisted-a"
+        panel._history_last_delete_session_id = "persisted-a"
+        panel._stop_history_delete_watchdog = MagicMock()
+
+        panel._invalidate_history(clear_panel=False)
+
+        self.assertEqual(panel._history_delete_intents, set())
+        self.assertIsNone(panel._history_retry_delete_session_id)
+        self.assertIsNone(panel._history_last_delete_session_id)
+        panel._stop_history_delete_watchdog.assert_called_once()
+        panel._history_panel.set_operation_pending.assert_called_with(None)
 
 
 if __name__ == "__main__":

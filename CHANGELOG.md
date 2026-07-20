@@ -8,11 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Delete individual saved chats from History** — hover or focus a row's
+  delete control, confirm permanent removal, and keep the current search
+  context. Open chats are protected and focused instead; failed deletion
+  remains visible with Retry.
+
+## [1.12.0] — 2026-07-17
+
+### Added
+- **Chat History on demand** — a History panel lists saved chats for the
+  current IDB (scoped by 32-hex `db_instance_id` with path fallback).
+  Opening Rikugan or switching IDBs starts with one empty `New Chat`
+  draft; reopen a past chat any time from History. Sessions load
+  lazily — only the chats you open are parsed, so large histories no
+  longer slow startup. Search filters titles case-insensitively.
 - Central memory subsystem (`BinaryMemoryService`) now the sole persistent
   memory path — SQLite structured facts + `MEMORY.md` managed region.
 
 ### Changed
-- Chat history is now on demand. Opening Rikugan or switching IDBs starts with one empty `New Chat`; use History to reopen chats for the current IDB.
+- **Opening a chat from History now reuses the empty active tab** —
+  a historical chat loads into the current blank `New Chat` draft
+  instead of spawning a new tab, so the empty tab no longer lingers
+  beside the opened conversation. When the active tab already has
+  content, History still opens the chat in a new tab. Re-selecting an
+  already-open chat focuses its tab instead of duplicating it.
 
 ### Removed
 - Removed `startup_restore_sessions`. Older config files may retain the key, but Rikugan ignores it and omits it on the next save.

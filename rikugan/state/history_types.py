@@ -83,6 +83,26 @@ class HistoryAttachStatus(str, Enum):
     STALE_SCOPE = "stale_scope"
 
 
+class HistoryDeleteStatus(str, Enum):
+    """Terminal outcome of a persisted-history deletion request.
+
+    String values are stable wire identifiers consumed by the delete
+    worker, the ``SessionControllerBase`` queue, and the History panel;
+    renaming any of them would drift the worker/UI contract in the same
+    way as the list/load statuses above. ``DELETED`` confirms the file
+    and manifest entry were removed; ``NOT_FOUND`` means the worker
+    could not find a session matching the requested ``session_id`` and
+    the requested ``HistoryScope``; ``WRONG_IDB`` means the file existed
+    but belonged to a different IDB; ``FAILED`` covers unexpected
+    exceptions (never raised across the queue — see spec §8.1).
+    """
+
+    DELETED = "deleted"
+    NOT_FOUND = "not_found"
+    WRONG_IDB = "wrong_idb"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class HistoryListResult:
     """Typed terminal result of a background history-list request.
@@ -127,3 +147,27 @@ class HistoryAttachResult:
     status: HistoryAttachStatus
     tab_id: str = ""
     session: SessionState | None = None
+
+
+@dataclass(frozen=True)
+class HistoryDeleteResult:
+    """Typed terminal result of a background history-delete request.
+
+    Mirrors the list/load result shape: the delete worker emits exactly
+    one ``HistoryDeleteResult`` per request (success or failure) and
+    exceptions are never used for cross-thread control flow. ``scope``
+    is echoed so the Qt-main-thread drain can reject a stale generation
+    before mutating ``_sessions`` or touching Qt. ``session_id`` is the
+    persisted session id the request targeted — it is preserved (not derived from
+    ``scope``) so the UI can match the result back to the row the user
+    clicked even when the worker reports ``NOT_FOUND`` / ``WRONG_IDB``
+    / ``FAILED``. ``error`` is empty on every status except ``FAILED``,
+    where it carries a sanitized diagnostic string for the log file but
+    is NEVER rendered to the user — the UI shows a generic notice and
+    keeps the row state consistent.
+    """
+
+    status: HistoryDeleteStatus
+    scope: HistoryScope
+    session_id: str
+    error: str = ""

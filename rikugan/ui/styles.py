@@ -113,6 +113,7 @@ from .theme.widgets_common import (  # noqa: E402,F401 — re-export
     get_error_label_style,
     get_hint_status_style,
     get_history_close_btn_style,
+    get_history_delete_btn_style,
     get_history_meta_style,
     get_history_nav_button_style,
     get_history_nav_frame_style,
