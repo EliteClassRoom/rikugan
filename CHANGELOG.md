@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.2] - 2026-07-20
+
+### Fixed
+
+- Fixed `get_function_prototype` raising `get_tinfo() takes 1 positional argument but 2 were given`. The tool called `idc.get_tinfo(tif, ea)` (1-arg signature) instead of `ida_nalt.get_tinfo(tif, ea)` (2-arg signature). As the pre-state getter for `set_function_prototype` undo, the swallowed exception had silently produced empty `old_prototype` records, breaking `/undo` for prototype changes.
+
 ## [1.13.1] - 2026-07-20
 
 ### Fixed
