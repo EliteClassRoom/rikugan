@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-07-20
+
 ### Added
 - **Delete individual saved chats from History** — hover or focus a row's
   delete control, confirm permanent removal, and keep the current search
