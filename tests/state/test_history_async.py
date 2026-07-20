@@ -48,6 +48,38 @@ def _make_session(message_count: int = 3) -> SessionState:
     return session
 
 
+class TestFlushSaves(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.mkdtemp(prefix="rikugan-hist-flush-")
+        self._config = RikuganConfig()
+        self._config._config_dir = self._tmp
+        self._history = SessionHistory(self._config)
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_blocks_until_all_saves_persisted(self) -> None:
+        import json
+
+        for i in range(5):
+            session = _make_session(message_count=2)
+            session.id = f"flush-test-{i}"
+            self._history.save_session_async(session)
+
+        SessionHistory.flush_saves(timeout=10.0)
+
+        for i in range(5):
+            path = os.path.join(self._history._dir, f"flush-test-{i}.json")
+            self.assertTrue(os.path.exists(path), f"session {i} was not persisted before flush returned")
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            self.assertEqual(data["id"], f"flush-test-{i}")
+
+
 class TestSaveSessionAsync(unittest.TestCase):
     def setUp(self) -> None:
         import tempfile
