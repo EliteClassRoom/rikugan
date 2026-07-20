@@ -26,6 +26,8 @@ from ..core.logging import log_debug, log_error, log_info, log_warning
 from ..state.history_types import (
     HistoryAttachResult,
     HistoryAttachStatus,
+    HistoryDeleteResult,
+    HistoryDeleteStatus,
     HistoryLoadResult,
     HistoryRequestStatus,
     HistoryScope,
@@ -811,6 +813,67 @@ class SessionControllerBase:
         self._sessions[tab_id] = session
         log_info(f"Attached history session {session.id} as tab {tab_id}")
         return HistoryAttachResult(status=HistoryAttachStatus.OPENED, tab_id=tab_id, session=session)
+
+    def delete_history_session(
+        self,
+        session_id: str,
+        scope: HistoryScope,
+    ) -> HistoryDeleteResult:
+        """Delete one persisted current-IDB chat on the history worker thread.
+
+        Qt-free controller boundary (spec §8.4, §11.5): validates the
+        requested ``scope`` against the live ``_idb_path`` /
+        ``_db_instance_id`` before touching the persistence worker, then
+        forwards the delete to :meth:`SessionHistory.delete_session_async`
+        and maps the internal :class:`SessionDeleteStatus` outcome onto
+        the UI-facing :class:`HistoryDeleteStatus`. A scope mismatch
+        short-circuits to ``WRONG_IDB`` without enqueuing any I/O — the
+        delete worker must never see a request targeting a different
+        IDB, because the user already switched away.
+
+        Exceptions deliberately NOT caught:
+          * ``CancelledError`` / ``KeyboardInterrupt`` / ``SystemExit`` —
+            the worker cancellation contract (spec §8.1) lets these
+            propagate so a Qt-cancelled request can unwind the future
+            chain and let the History panel re-enable its row UI.
+          * ``BaseException`` would mask real bugs; every caught branch
+            below is a concrete persistence failure mode the
+            ``HistoryDeleteResult`` is designed to surface to the UI.
+
+        ``json.JSONDecodeError`` is already a ``ValueError`` so the
+        explicit catch set stays minimal.
+        """
+        if scope.idb_path != self._idb_path or scope.db_instance_id != self._db_instance_id:
+            return HistoryDeleteResult(
+                HistoryDeleteStatus.WRONG_IDB,
+                scope,
+                session_id,
+            )
+
+        from ..state.history import SessionDeleteStatus, SessionHistory
+
+        history = SessionHistory(self.config)
+        try:
+            outcome = history.delete_session_async(
+                session_id,
+                expected_idb_path=scope.idb_path,
+                expected_db_instance_id=scope.db_instance_id,
+            ).result()
+        except FileNotFoundError:
+            status = HistoryDeleteStatus.NOT_FOUND
+            error = ""
+        except (OSError, ValueError, KeyError) as exc:
+            status = HistoryDeleteStatus.FAILED
+            error = f"{type(exc).__name__}: {exc}"
+        else:
+            status = {
+                SessionDeleteStatus.DELETED: HistoryDeleteStatus.DELETED,
+                SessionDeleteStatus.NOT_FOUND: HistoryDeleteStatus.NOT_FOUND,
+                SessionDeleteStatus.WRONG_IDB: HistoryDeleteStatus.WRONG_IDB,
+                SessionDeleteStatus.FAILED: HistoryDeleteStatus.FAILED,
+            }[outcome.status]
+            error = outcome.error
+        return HistoryDeleteResult(status, scope, session_id, error=error)
 
     def reset_for_new_file(self, new_idb_path: str) -> None:
         """Save all sessions and reset for a new database file.

@@ -325,6 +325,33 @@ def _history_retry_btn_style() -> str:
     )
 
 
+def _history_delete_btn_style() -> str:
+    """Delete affordance on each row (Task 4 — passive delete).
+
+    The button is muted by default so it does not compete with the
+    title for visual weight, and only the error token activates on
+    hover so a destructive action reads as such. ``:focus`` borrows the
+    accent border (matching every other history button) so keyboard
+    navigation is visually consistent.
+    """
+    t = _tokens()
+    return (
+        f"QPushButton#history_delete_btn {{"
+        f"color: {t.muted_text}; background: transparent; border: 1px solid transparent;"
+        f"padding: 2px 4px; border-radius: 3px;"
+        f"}}"
+        f"QPushButton#history_delete_btn:hover {{"
+        f"color: {t.error}; background: {t.alt_base}; border-color: {t.error};"
+        f"}}"
+        f"QPushButton#history_delete_btn:focus {{"
+        f"color: {t.error}; border-color: {t.accent};"
+        f"}}"
+        f"QPushButton#history_delete_btn:disabled {{"
+        f"color: {t.muted_text}; background: transparent; border-color: transparent;"
+        f"}}"
+    )
+
+
 # Settings button (bold, accent focus)
 def _settings_btn_style() -> str:
     t = _tokens()
@@ -453,6 +480,10 @@ def get_history_close_btn_style() -> str:
 
 def get_history_retry_btn_style() -> str:
     return _history_retry_btn_style()
+
+
+def get_history_delete_btn_style() -> str:
+    return _history_delete_btn_style()
 
 
 def get_tool_colors() -> dict[str, str]:

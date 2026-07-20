@@ -45,6 +45,9 @@ import time
 from typing import TYPE_CHECKING
 
 from .qt_compat import (
+    QAccessible,
+    QAccessibleAnnouncementEvent,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -60,6 +63,7 @@ from .qt_compat import (
 )
 from .styles import (
     get_history_close_btn_style,
+    get_history_delete_btn_style,
     get_history_meta_style,
     get_history_panel_style,
     get_history_retry_btn_style,
@@ -105,6 +109,23 @@ _STATE_LOADING = "loading"
 _STATE_LIST = "list"
 
 
+def _current_focused_widget() -> object | None:
+    """Return the widget that currently has keyboard focus, or ``None``.
+
+    The production path uses ``QApplication.focusWidget()``; the test
+    path falls back to scanning row delete buttons for the stub's
+    ``_has_focus`` marker when no event loop is present. The two
+    paths converge on the same contract: a widget instance with
+    keyboard focus, or ``None`` if focus is elsewhere / unset.
+    """
+    try:
+        if QApplication.instance() is not None:
+            return QApplication.focusWidget()
+    except Exception:
+        pass
+    return None
+
+
 def _format_updated_at(updated_at: float) -> str:
     """Format the file mtime as a short, locale-independent timestamp."""
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(updated_at))
@@ -134,6 +155,7 @@ class HistoryRowWidget(QFrame):
     """
 
     session_open_requested = Signal(str)  # emits the row's session_id
+    session_delete_requested = Signal(str, str)  # (session_id, title)
 
     def __init__(
         self,
@@ -144,6 +166,11 @@ class HistoryRowWidget(QFrame):
         self.setObjectName("history_row")
         self.setStyleSheet(get_history_row_style())
         self._entry = entry
+        # Operations (row-open + delete) are enabled by default. The
+        # panel toggles this when a delete is pending so the user cannot
+        # race a delete-in-flight with an unintended open/delete on the
+        # same row.
+        self._operations_enabled = True
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 4)
@@ -183,9 +210,44 @@ class HistoryRowWidget(QFrame):
 
         layout.addLayout(text_col, 1)
 
+        # Delete affordance (Task 4). The button is a child QPushButton
+        # so Qt consumes the mouse release itself — ``mouseReleaseEvent``
+        # is therefore NOT called when the user clicks the button, which
+        # is exactly what we want (no bubble-up to ``session_open_requested``).
+        self._delete_btn = QPushButton("×")  # noqa: RUF001 — brief-specified glyph
+        self._delete_btn.setObjectName("history_delete_btn")
+        self._delete_btn.setToolTip("Delete chat")
+        self._delete_btn.setAccessibleName(f"Delete chat: {entry.title}")
+        # StrongFocus lets keyboard users reach the button via Tab and
+        # activate it via Space/Return. The default button policy is
+        # NoFocus which would hide the button from the focus chain.
+        self._delete_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # WCAG 2.5.5 target size minimum (24x24). The token-driven QSS
+        # controls the visual size for sighted users; ``setMinimumSize``
+        # guarantees a 24x24 hit target regardless of the token palette
+        # so motor-impaired users can still click the button.
+        self._delete_btn.setMinimumSize(24, 24)
+        self._delete_btn.setStyleSheet(get_history_delete_btn_style())
+        self._delete_btn.clicked.connect(lambda: self.session_delete_requested.emit(entry.session_id, entry.title))
+        layout.addWidget(self._delete_btn)
+
     @property
     def entry(self) -> SessionHistoryEntry:
         return self._entry
+
+    def set_operation_enabled(self, enabled: bool) -> None:
+        """Toggle row-open + delete affordances without touching search.
+
+        Called by ``HistoryPanel.set_operation_pending`` so an
+        in-flight delete disables its own row's controls (and any other
+        row's open intent) while preserving the search box. The panel
+        is the single owner of this state — row tests verify the
+        default ``True`` and the disabled state via the panel API.
+        """
+        self._operations_enabled = bool(enabled)
+        # ``setEnabled`` carries the same flag to Qt so the button
+        # visually dims and refuses mouse clicks while pending.
+        self._delete_btn.setEnabled(self._operations_enabled)
 
     def mouseReleaseEvent(self, event: object) -> None:
         """Forward a row click to ``session_open_requested``.
@@ -197,7 +259,14 @@ class HistoryRowWidget(QFrame):
         forwarded ``session_id`` comes from the row's bound entry
         so the panel's ``session_open_requested(str)`` carries the
         right value.
+
+        Disabled while an operation is pending so the user cannot race
+        a delete-in-flight with an open on the same row. A child
+        QPushButton consumes its own mouse release, so this handler is
+        only invoked for clicks on the row body / text column.
         """
+        if not self._operations_enabled:
+            return
         self.session_open_requested.emit(self._entry.session_id)
 
     def shutdown(self) -> None:
@@ -210,6 +279,8 @@ class HistoryRowWidget(QFrame):
             self._title.setStyleSheet(get_history_title_style())
         if getattr(self, "_meta", None) is not None:
             self._meta.setStyleSheet(get_history_meta_style())
+        if getattr(self, "_delete_btn", None) is not None:
+            self._delete_btn.setStyleSheet(get_history_delete_btn_style())
         self.setStyleSheet(get_history_row_style())
 
 
@@ -224,21 +295,31 @@ class HistoryPanel(QFrame):
 
     Signals:
       * ``session_open_requested(session_id: str)`` — fired on row click.
+      * ``session_delete_requested(session_id: str, title: str)`` —
+        fired on the row delete button.
       * ``close_requested()`` — fired on the header close button.
       * ``retry_requested()`` — fired on the Retry button.
+      * ``notice_dismissed()`` — fired on the notice row's dismiss button.
 
     Methods:
       * ``set_entries(entries)`` — replace cached list + re-render.
       * ``set_loading()`` — show loading state, preserve cache.
       * ``set_error(message, retry_visible=True)`` — show error state.
       * ``clear()`` — reset cached entries AND the search query.
+      * ``remove_entry(session_id)`` — drop one row, preserve query.
+      * ``set_operation_pending(session_id)`` — disable row operations.
+      * ``show_notice(message, retry_visible, dismiss_visible)`` —
+        surface a transient error/info row.
+      * ``clear_notice()`` — hide the notice row.
       * ``shutdown()`` — disconnect theme subscriptions (idempotent).
       * ``visible_session_ids()`` — ids of rows currently rendered.
     """
 
     session_open_requested = Signal(str)
+    session_delete_requested = Signal(str, str)
     close_requested = Signal()
     retry_requested = Signal()
+    notice_dismissed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -254,6 +335,12 @@ class HistoryPanel(QFrame):
         self._entries: tuple[SessionHistoryEntry, ...] = ()
         self._row_widgets: list[HistoryRowWidget] = []
         self._state: str = _STATE_STATUS
+        # When a delete is in flight, ``_pending_session_id`` names the
+        # row whose row-open + delete must be disabled. ``None`` means
+        # no pending operation. The panel is the single owner of this
+        # state — ``HistoryRowWidget.set_operation_enabled`` is the
+        # only downstream consumer.
+        self._pending_session_id: str | None = None
 
         # === Root layout ============================================
         main_layout = QVBoxLayout(self)
@@ -294,6 +381,49 @@ class HistoryPanel(QFrame):
         self._search.textChanged.connect(self._on_search_changed)
         main_layout.addWidget(self._search)
 
+        # === Notice (Task 4) ========================================
+        # A dedicated row above the stacked states so PanelCore can
+        # surface a transient error/info message without flipping the
+        # stack back to ``_status_frame`` (which would hide the cached
+        # rows). Hidden by default; ``show_notice`` flips it on and
+        # ``clear_notice`` / terminal-success paths flip it back.
+        self._notice_frame = QFrame()
+        self._notice_frame.setObjectName("history_notice")
+        notice_layout = QHBoxLayout(self._notice_frame)
+        notice_layout.setContentsMargins(8, 6, 8, 6)
+        notice_layout.setSpacing(8)
+        self._notice_label = QLabel()
+        # Plain-text only — internal notice copy never carries user
+        # input, but we mirror the row-title guard so the label can
+        # never escape into rich text via Qt's auto-format heuristic.
+        self._notice_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._notice_label.setWordWrap(True)
+        self._notice_label.setStyleSheet(get_history_status_style())
+        notice_layout.addWidget(self._notice_label, 1)
+        self._notice_retry_btn = QPushButton("Retry")
+        self._notice_retry_btn.setObjectName("history_notice_retry_btn")
+        self._notice_retry_btn.setStyleSheet(get_history_retry_btn_style())
+        self._notice_retry_btn.setVisible(False)
+        # StrongFocus — keyboard users must be able to Tab into the
+        # notice's retry button so a delete failure is recoverable
+        # without reaching for the mouse.
+        self._notice_retry_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # ``retry_requested`` is a shared signal — the panel re-emits
+        # whatever the notice button fires so PanelCore does not need
+        # to know whether the user clicked Retry on the status frame or
+        # the notice frame.
+        self._notice_retry_btn.clicked.connect(lambda: self.retry_requested.emit())
+        notice_layout.addWidget(self._notice_retry_btn)
+        self._notice_dismiss_btn = QPushButton("Dismiss")
+        self._notice_dismiss_btn.setObjectName("history_notice_dismiss_btn")
+        self._notice_dismiss_btn.setStyleSheet(get_history_close_btn_style())
+        self._notice_dismiss_btn.setVisible(False)
+        self._notice_dismiss_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._notice_dismiss_btn.clicked.connect(self._on_notice_dismissed)
+        notice_layout.addWidget(self._notice_dismiss_btn)
+        self._notice_frame.setVisible(False)
+        main_layout.addWidget(self._notice_frame)
+
         # === Stacked states ==========================================
         self._stack = QStackedWidget()
         self._stack.setObjectName("history_stack")
@@ -331,6 +461,15 @@ class HistoryPanel(QFrame):
         self._retry_btn.setObjectName("history_retry_btn")
         self._retry_btn.setStyleSheet(get_history_retry_btn_style())
         self._retry_btn.setVisible(False)
+        # StrongFocus — keyboard users must be able to Tab to the
+        # status-frame retry button after a load failure. Real Qt's
+        # QWidget default focus policy is ``NoFocus`` (verified in
+        # Qt docs for ``QWidget.focusPolicy``); the explicit pin
+        # flips it to ``StrongFocus`` so the button enters the tab
+        # chain. The pin makes the contract visible in the test
+        # stub (the stub mirrors ``NoFocus`` as the default unless
+        # ``setFocusPolicy`` is called).
+        self._retry_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._retry_btn.clicked.connect(lambda: self.retry_requested.emit())
         retry_row.addWidget(self._retry_btn)
         retry_row.addStretch(1)
@@ -389,6 +528,11 @@ class HistoryPanel(QFrame):
         """
         self._entries = tuple(entries)
         self._retry_btn.setVisible(False)
+        # Terminal-success path: a fresh list means the prior failure
+        # has been resolved and any leftover notice from an earlier
+        # delete/load error is stale. Clear it without emitting
+        # ``notice_dismissed`` — the user did not click dismiss.
+        self.clear_notice()
         self._apply_search()
 
     def set_loading(self) -> None:
@@ -440,6 +584,178 @@ class HistoryPanel(QFrame):
         self._set_status_message(_EMPTY_COPY)
         self._retry_btn.setVisible(False)
         self._stack.setCurrentWidget(self._status_frame)
+        # Explicit resets clear any leftover notice (e.g. an error
+        # row from a previous IDB's delete failure). The dismissal
+        # signal is NOT emitted here — clear is a PanelCore-driven
+        # reset, not a user acknowledge.
+        self.clear_notice()
+
+    def remove_entry(self, session_id: str) -> None:
+        """Drop one row from the cached list, preserving query + scroll.
+
+        Called by ``PanelCore`` after a successful delete so the cached
+        list mirrors on-disk state. The vertical scrollbar value is
+        captured before the rerender and clamped to the new
+        ``maximum()`` so a delete at the end of a long list does not
+        flash the user back to the top.
+
+        Search query is left untouched — the user typed it, so deleting
+        a row should not force a re-typing. ``_apply_search`` re-runs
+        against the trimmed list and naturally collapses the visible
+        set.
+
+        Focus restoration: when the user deletes a row via the delete
+        button, the focused widget is destroyed with the row. The
+        method re-points focus to the next surviving row's delete
+        button (or the previous one if the deleted row was last, or
+        the search box when the list is now empty) so the keyboard
+        user keeps a meaningful anchor instead of landing on an
+        orphaned focus. The restore is skipped when focus is NOT on
+        the deleted row (e.g. ``remove_entry`` called programmatically
+        from a worker callback) so callers do not get their focus
+        hijacked.
+        """
+        scrollbar = self._list_scroll.verticalScrollBar()
+        old_scroll = scrollbar.value()
+        # Capture the focused widget BEFORE the rerender destroys it.
+        # If focus is not on any of our delete buttons, this is a
+        # programmatic call and we leave focus alone at the end.
+        focused_widget = _current_focused_widget()
+        if focused_widget is None:
+            # Stub fallback (no ``QApplication``): scan row widgets
+            # for the stub's ``_has_focus`` marker so unit tests that
+            # do not bootstrap a Qt application still exercise the
+            # restoration path.
+            for row in self._row_widgets:
+                if getattr(row._delete_btn, "_has_focus", False):
+                    focused_widget = row._delete_btn
+                    break
+        target_row_index = next(
+            (i for i, row in enumerate(self._row_widgets) if row._delete_btn is focused_widget),
+            None,
+        )
+        # The deleted row's display index — same as ``target_row_index``
+        # at this point because we have not rerendered yet.
+        deleted_index = target_row_index
+        self._entries = tuple(entry for entry in self._entries if entry.session_id != session_id)
+        self._apply_search()
+        # Clamp the pre-delete scroll position against the new maximum
+        # so we never set a value larger than the bar reports after the
+        # row count shrinks. A real QScrollBar silently clamps on its
+        # own, but the stub raises if we exceed ``maximum``.
+        scrollbar.setValue(min(old_scroll, scrollbar.maximum()))
+        # Restore focus only if the caller was the keyboard user
+        # (i.e. focus was on one of the row delete buttons BEFORE
+        # the rerender). After the rerender the old widget reference
+        # is invalid, so we look at the freshly rebuilt list.
+        if deleted_index is None:
+            return
+        if not self._row_widgets:
+            # Last row was deleted — focus moves to the search box so
+            # the keyboard user keeps a meaningful anchor.
+            self._search.setFocus()
+            return
+        # Prefer the row that took the deleted row's slot (same
+        # index). If we deleted the last row, fall back to the new
+        # last row.
+        restore_index = min(deleted_index, len(self._row_widgets) - 1)
+        self._row_widgets[restore_index]._delete_btn.setFocus()
+
+    def set_operation_pending(self, session_id: str | None) -> None:
+        """Disable row-open + delete on every row while an op is pending.
+
+        Pass ``session_id=None`` to clear the pending state and re-enable
+        all rows. ``PanelCore`` calls this with the request's
+        ``session_id`` when it dispatches a delete (or any future
+        per-row operation); the same call with ``None`` is the terminal
+        step after the worker's result is processed.
+
+        The search box is intentionally NOT disabled — the user can
+        keep filtering the cached rows while a delete is in flight, and
+        the spec considers search a presentation concern the panel
+        owns independently of the operations it owns.
+        """
+        self._pending_session_id = session_id
+        operations_allowed = session_id is None
+        for row in self._row_widgets:
+            row.set_operation_enabled(operations_allowed)
+
+    def show_notice(
+        self,
+        message: str,
+        *,
+        retry_visible: bool = False,
+        dismiss_visible: bool = True,
+    ) -> None:
+        """Surface a transient notice row above the list / status.
+
+        The notice frame is a dedicated row above ``_stack`` (not a
+        status overlay) so it can co-exist with cached rows during a
+        partial failure. ``PanelCore`` calls this when a delete or load
+        returns ``FAILED`` / ``WRONG_IDB`` / ``NOT_FOUND`` — the row
+        stays rendered, the user keeps their scroll position, and the
+        dismiss button gives them a way to clear it.
+
+        ``retry_visible=True`` re-uses the panel's ``retry_requested``
+        signal; ``dismiss_visible=True`` (default) wires the dismiss
+        button to ``notice_dismissed``.
+
+        On display the panel publishes a ``QAccessibleAnnouncementEvent``
+        with ``message`` so a screen reader announces the new error to
+        the user. ``clear_notice`` does NOT re-announce — terminal
+        success paths must not echo the same text back to the user
+        after they have already acknowledged the failure.
+        """
+        self._notice_label.setText(message)
+        self._notice_retry_btn.setVisible(bool(retry_visible))
+        self._notice_dismiss_btn.setVisible(bool(dismiss_visible))
+        self._notice_frame.setVisible(True)
+        # Notify screen readers. ``updateAccessibility`` is the
+        # documented delivery path in PySide6 (Qt 6.5+); in-process
+        # bridges read the event, AT-SPI / UIAutomation bridges
+        # forward it to the host. Posting on the notice frame lets
+        # the event follow the widget's lifecycle.
+        QAccessible.updateAccessibility(QAccessibleAnnouncementEvent(self._notice_frame, message))
+
+    def clear_notice(self) -> None:
+        """Hide the notice row without emitting ``notice_dismissed``.
+
+        Used by terminal-success paths (e.g. an IDB switch clears
+        leftover notices) where the user did not click dismiss.
+        Intentionally silent — re-announcing the same message after
+        the user already saw it would be an accessibility regression.
+        """
+        self._notice_frame.setVisible(False)
+        self._notice_retry_btn.setVisible(False)
+        self._notice_dismiss_btn.setVisible(False)
+
+    def _capture_announcements(self, sink: object) -> None:
+        """Test seam: route ``QAccessible.updateAccessibility`` events
+        for the notice frame into ``sink``.
+
+        Production code never calls this — it exists so the unit
+        suite can install a recorder onto the notice widget without
+        subclassing ``HistoryPanel``. ``sink`` must be a callable that
+        accepts ``(event, message)`` tuples (i.e. ``list.append``).
+
+        Implementation: the test stub's ``QAccessible.updateAccessibility``
+        appends to ``target._announcements`` and, when present, calls
+        ``target._announcements_sink(entry)``. This method registers
+        the sink and drains any events that were already recorded
+        before the sink was installed.
+        """
+        # Drain anything already captured before this method ran.
+        existing = getattr(self._notice_frame, "_announcements", None) or []
+        for entry in existing:
+            sink(entry)
+        # Install the sink so subsequent ``updateAccessibility`` calls
+        # forward into ``sink`` in addition to the raw list.
+        self._notice_frame._announcements_sink = sink
+
+    def _on_notice_dismissed(self) -> None:
+        """User clicked dismiss — clear the notice and emit the signal."""
+        self.clear_notice()
+        self.notice_dismissed.emit()
 
     def shutdown(self) -> None:
         """Detach theme subscriptions on this panel and every row.
@@ -503,10 +819,17 @@ class HistoryPanel(QFrame):
             row.deleteLater()
         self._row_widgets = []
 
-        # Insert new rows before the trailing stretch.
+        # Insert new rows before the trailing stretch. Operations
+        # (open + delete) start enabled unless a delete is pending —
+        # the row widget owns the per-row click handlers so a row with
+        # ``set_operation_enabled(False)`` neither opens nor deletes
+        # while the parent's pending state is active.
+        operations_allowed = self._pending_session_id is None
         for entry in entries:
             row = HistoryRowWidget(entry, self._list_widget)
             row.session_open_requested.connect(self.session_open_requested.emit)
+            row.session_delete_requested.connect(self.session_delete_requested.emit)
+            row.set_operation_enabled(operations_allowed)
             row._apply_styles()
             self._list_layout.insertWidget(self._list_layout.count() - 1, row)
             self._row_widgets.append(row)
@@ -530,6 +853,16 @@ class HistoryPanel(QFrame):
             self._close_btn.setStyleSheet(maybe_host_stylesheet(get_history_close_btn_style()))
         if getattr(self, "_search", None) is not None:
             self._search.setStyleSheet(maybe_host_stylesheet(get_history_search_style()))
+        # Notice row widgets (Task 4 a11y follow-up): the transient
+        # notice frame is part of the chrome and must re-skin on theme
+        # change so a host palette swap reaches the row without a
+        # manual ``show_notice`` round-trip.
+        if getattr(self, "_notice_label", None) is not None:
+            self._notice_label.setStyleSheet(maybe_host_stylesheet(get_history_status_style()))
+        if getattr(self, "_notice_retry_btn", None) is not None:
+            self._notice_retry_btn.setStyleSheet(maybe_host_stylesheet(get_history_retry_btn_style()))
+        if getattr(self, "_notice_dismiss_btn", None) is not None:
+            self._notice_dismiss_btn.setStyleSheet(maybe_host_stylesheet(get_history_close_btn_style()))
         self.setStyleSheet(maybe_host_stylesheet(get_history_panel_style()))
         for row in self._row_widgets:
             row._apply_styles()

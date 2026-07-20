@@ -284,17 +284,43 @@ class TestSessionHistory(unittest.TestCase):
         ids = {s["id"] for s in sessions}
         self.assertEqual(ids, {"sess0", "sess1", "sess2"})
 
-    def test_delete_session(self):
+    def test_history_has_no_public_synchronous_delete(self):
+        """Compatibility guard: the legacy ``delete_session`` sync API must
+        not return. The ordered async API (``delete_session_async``) is the
+        sole public delete entry point — re-adding sync would silently
+        reintroduce the autosave race that motivated Task 2.
+        """
         history = SessionHistory(self.config)
-        s = SessionState(id="todelete")
+        self.assertFalse(hasattr(history, "delete_session"))
+        self.assertTrue(hasattr(history, "delete_session_async"))
+
+    def test_delete_session_async_happy_path(self):
+        """Ordered async delete removes a session and returns DELETED."""
+        history = SessionHistory(self.config)
+        s = SessionState(
+            id="todelete",
+            idb_path="C:/sample.i64",
+            db_instance_id="a" * 32,
+        )
         s.add_message(Message(role=Role.USER, content="test"))
         history.save_session(s)
-        self.assertTrue(history.delete_session("todelete"))
+        outcome = history.delete_session_async(
+            "todelete",
+            expected_idb_path="C:/sample.i64",
+            expected_db_instance_id="a" * 32,
+        ).result(timeout=5)
+        self.assertEqual(outcome.status.value, "deleted")
         self.assertIsNone(history.load_session("todelete"))
 
-    def test_delete_nonexistent(self):
+    def test_delete_session_async_nonexistent(self):
+        """Ordered async delete on missing session returns NOT_FOUND."""
         history = SessionHistory(self.config)
-        self.assertFalse(history.delete_session("nonexistent"))
+        outcome = history.delete_session_async(
+            "nonexistent",
+            expected_idb_path="C:/sample.i64",
+            expected_db_instance_id="a" * 32,
+        ).result(timeout=5)
+        self.assertEqual(outcome.status.value, "not_found")
 
     def _write_summary_file(self, session_id: str, messages_count: int) -> None:
         """Write a fork-format ``{id}.summary.json`` next to the session file.

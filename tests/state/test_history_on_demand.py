@@ -18,17 +18,22 @@ from pathlib import Path
 
 import pytest
 
-from rikugan.constants import HISTORY_TITLE_MAX_CHARS
+from rikugan.constants import HISTORY_DELETE_SLOW_NOTICE_SECONDS, HISTORY_TITLE_MAX_CHARS
 from rikugan.core.config import RikuganConfig
 from rikugan.core.types import Message, Role
 from rikugan.state.history import (
+    MANIFEST_FILE,
     MANIFEST_SCHEMA_VERSION,
+    SessionDeleteOutcome,
+    SessionDeleteStatus,
     SessionHistory,
     derive_history_title,
 )
 from rikugan.state.history_types import (
     HistoryAttachResult,
     HistoryAttachStatus,
+    HistoryDeleteResult,
+    HistoryDeleteStatus,
     HistoryLoadResult,
     HistoryRequestStatus,
     HistoryScope,
@@ -94,6 +99,32 @@ def test_history_title_max_chars_constant() -> None:
     assert HISTORY_TITLE_MAX_CHARS == 80
 
 
+def test_history_delete_contract_is_frozen_and_stable() -> None:
+    # Delete flows share the same cross-thread contract as list/load: a
+    # frozen typed result travels worker -> queue -> Qt main thread.
+    # ``HISTORY_DELETE_SLOW_NOTICE_SECONDS`` is the UI's "still working"
+    # threshold for slow-delete disk I/O; both the constant and the
+    # ``HistoryDeleteStatus`` wire values must stay stable so later tasks
+    # (delete worker, controller, panel) can build on them without drift.
+    scope = HistoryScope("C:/sample.i64", "a" * 32, 7)
+    result = HistoryDeleteResult(
+        status=HistoryDeleteStatus.DELETED,
+        scope=scope,
+        session_id="abc123",
+    )
+
+    assert HISTORY_DELETE_SLOW_NOTICE_SECONDS == 30.0
+    assert [status.value for status in HistoryDeleteStatus] == [
+        "deleted",
+        "not_found",
+        "wrong_idb",
+        "failed",
+    ]
+    assert result.error == ""
+    with pytest.raises(FrozenInstanceError):
+        result.session_id = "changed"  # type: ignore[misc]
+
+
 def _history(tmp_path: Path) -> SessionHistory:
     config = RikuganConfig()
     config._config_dir = str(tmp_path)
@@ -109,7 +140,12 @@ def test_invalid_session_ids_do_not_touch_storage(tmp_path: Path, session_id: st
     before = sorted(Path(history._dir).iterdir())
 
     assert history.load_session(session_id) is None
-    assert history.delete_session(session_id) is False
+    outcome = history.delete_session_async(
+        session_id,
+        expected_idb_path="C:/sample.i64",
+        expected_db_instance_id="a" * 32,
+    ).result(timeout=5)
+    assert outcome.status is SessionDeleteStatus.NOT_FOUND
     assert sorted(Path(history._dir).iterdir()) == before
 
 
@@ -172,6 +208,271 @@ def test_valid_current_id_shape_remains_accepted(tmp_path: Path) -> None:
     expected = os.path.normcase(os.path.realpath(str(Path(history._dir) / "abc123def456.json")))
     assert history._session_path("abc123def456") == expected
     assert isinstance(HISTORY_TITLE_MAX_CHARS, int)
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — Ordered persistence deletion (FIFO behind autosaves).
+# ---------------------------------------------------------------------------
+# These tests pin the spec section 6.5 + 7.x contract: every deletion is
+# submitted to the same single-worker save executor as autosaves, so
+# previously queued saves always complete before the delete runs. The
+# primary session JSON is the authoritative user-visible artifact;
+# sidecar and manifest cleanup are best-effort. Wrong-IDB and ID mismatches
+# must NOT mutate the primary file.
+# ---------------------------------------------------------------------------
+
+
+def _wait_delete(
+    history: SessionHistory,
+    session_id: str,
+    idb_path: str,
+    db_instance_id: str,
+) -> SessionDeleteOutcome:
+    """Resolve the ordered delete future with a bounded timeout.
+
+    Returns a frozen :class:`SessionDeleteOutcome` typed result so the
+    Task 2 delete tests can pin the never-raises terminal-outcome
+    contract end-to-end through ``Future.result(timeout=5)``.
+    """
+    return history.delete_session_async(
+        session_id,
+        expected_idb_path=idb_path,
+        expected_db_instance_id=db_instance_id,
+    ).result(timeout=5)
+
+
+def test_ordered_delete_removes_primary_sidecar_and_manifest(tmp_path: Path) -> None:
+    history = _history(tmp_path)
+    session = SessionState(
+        id="delete-me",
+        idb_path=str(tmp_path / "sample.i64"),
+        db_instance_id="a" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Delete me"))
+    primary = Path(history.save_session(session))
+    sidecar = primary.with_name(f"{session.id}.summary.json")
+    sidecar.write_text('{"messages":1}', encoding="utf-8")
+
+    outcome = _wait_delete(history, session.id, session.idb_path, session.db_instance_id)
+
+    assert outcome.status is SessionDeleteStatus.DELETED
+    assert not primary.exists()
+    assert not sidecar.exists()
+    manifest = json.loads((primary.parent / MANIFEST_FILE).read_text(encoding="utf-8"))
+    assert session.id not in manifest["entries"]
+
+
+def test_ordered_delete_missing_primary_cleans_stale_metadata(tmp_path: Path) -> None:
+    history = _history(tmp_path)
+    session = SessionState(
+        id="already-gone",
+        idb_path=str(tmp_path / "sample.i64"),
+        db_instance_id="b" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Delete me"))
+    primary = Path(history.save_session(session))
+    sidecar = primary.with_name(f"{session.id}.summary.json")
+    sidecar.write_text('{"messages":1}', encoding="utf-8")
+    primary.unlink()
+
+    outcome = _wait_delete(history, session.id, session.idb_path, session.db_instance_id)
+
+    assert outcome.status is SessionDeleteStatus.NOT_FOUND
+    assert not sidecar.exists()
+    manifest = json.loads((primary.parent / MANIFEST_FILE).read_text(encoding="utf-8"))
+    assert session.id not in manifest["entries"]
+
+
+@pytest.mark.parametrize(
+    ("expected_path", "expected_instance"),
+    [
+        ("C:/other.i64", "a" * 32),
+        ("C:/sample.i64", "b" * 32),
+    ],
+)
+def test_ordered_delete_rejects_wrong_idb_without_mutation(
+    tmp_path: Path,
+    expected_path: str,
+    expected_instance: str,
+) -> None:
+    history = _history(tmp_path)
+    session = SessionState(
+        id="keep-me",
+        idb_path="C:/sample.i64",
+        db_instance_id="a" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Keep me"))
+    primary = Path(history.save_session(session))
+
+    outcome = _wait_delete(history, session.id, expected_path, expected_instance)
+
+    assert outcome.status is SessionDeleteStatus.WRONG_IDB
+    assert primary.exists()
+
+
+def test_ordered_delete_rejects_filename_payload_id_mismatch(tmp_path: Path) -> None:
+    history = _history(tmp_path)
+    session = SessionState(
+        id="filename-id",
+        idb_path="C:/sample.i64",
+        db_instance_id="a" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Keep me"))
+    primary = Path(history.save_session(session))
+    payload = json.loads(primary.read_text(encoding="utf-8"))
+    payload["id"] = "different-id"
+    primary.write_text(json.dumps(payload), encoding="utf-8")
+
+    outcome = _wait_delete(history, session.id, session.idb_path, session.db_instance_id)
+
+    assert outcome.status is SessionDeleteStatus.WRONG_IDB
+    assert primary.exists()
+
+
+def test_ordered_delete_primary_remove_failure_keeps_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _history(tmp_path)
+    session = SessionState(
+        id="locked",
+        idb_path="C:/sample.i64",
+        db_instance_id="a" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Keep me"))
+    primary = Path(history.save_session(session))
+    original_remove = os.remove
+
+    def fail_primary(path: str) -> None:
+        if os.path.normcase(path) == os.path.normcase(str(primary)):
+            raise PermissionError("locked")
+        original_remove(path)
+
+    monkeypatch.setattr(os, "remove", fail_primary)
+    outcome = _wait_delete(history, session.id, session.idb_path, session.db_instance_id)
+
+    assert outcome.status is SessionDeleteStatus.FAILED
+    assert primary.exists()
+    manifest = json.loads((primary.parent / MANIFEST_FILE).read_text(encoding="utf-8"))
+    assert session.id in manifest["entries"]
+
+
+def test_delete_runs_after_queued_save_and_wins_final_state(tmp_path: Path) -> None:
+    history = _history(tmp_path)
+    session = SessionState(
+        id="ordered",
+        idb_path="C:/sample.i64",
+        db_instance_id="a" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Original"))
+
+    save_future = history.save_session_async(session)
+    delete_future = history.delete_session_async(
+        session.id,
+        expected_idb_path=session.idb_path,
+        expected_db_instance_id=session.db_instance_id,
+    )
+
+    assert Path(save_future.result(timeout=5)).name == f"{session.id}.json"
+    assert delete_future.result(timeout=5).status is SessionDeleteStatus.DELETED
+    SessionHistory.flush_saves(timeout=5)
+    assert history.load_session(session.id) is None
+    assert all(row["id"] != session.id for row in history.list_sessions())
+
+
+def test_manifest_cleanup_failure_after_primary_delete_is_recoverable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _history(tmp_path)
+    session = SessionState(
+        id="manifest-stale",
+        idb_path="C:/sample.i64",
+        db_instance_id="a" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Delete me"))
+    primary = Path(history.save_session(session))
+    original_write = history._write_manifest
+    calls = 0
+
+    def fail_once(entries, last_full_scan=0.0):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("manifest locked")
+        return original_write(entries, last_full_scan)
+
+    monkeypatch.setattr(history, "_write_manifest", fail_once)
+    outcome = _wait_delete(history, session.id, session.idb_path, session.db_instance_id)
+
+    assert outcome.status is SessionDeleteStatus.DELETED
+    assert not primary.exists()
+    rows = history.list_sessions(
+        idb_path=session.idb_path,
+        db_instance_id=session.db_instance_id,
+    )
+    assert all(row["id"] != session.id for row in rows)
+
+
+def test_sidecar_remove_failure_after_primary_delete_still_returns_deleted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _history(tmp_path)
+    session = SessionState(
+        id="sidecar-locked",
+        idb_path="C:/sample.i64",
+        db_instance_id="a" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Delete me"))
+    primary = Path(history.save_session(session))
+    sidecar = primary.with_name(f"{session.id}.summary.json")
+    sidecar.write_text('{"messages":1}', encoding="utf-8")
+    original_remove = os.remove
+
+    def fail_sidecar(path: str) -> None:
+        if os.path.normcase(path) == os.path.normcase(str(sidecar)):
+            raise PermissionError("sidecar locked")
+        original_remove(path)
+
+    monkeypatch.setattr(os, "remove", fail_sidecar)
+    outcome = _wait_delete(history, session.id, session.idb_path, session.db_instance_id)
+
+    assert outcome.status is SessionDeleteStatus.DELETED
+    assert not primary.exists()
+
+
+def test_ordered_delete_handles_malformed_manifest_last_full_scan(tmp_path: Path) -> None:
+    """Malformed ``last_full_scan`` (non-numeric) must not crash the worker.
+
+    The ordered delete worker must honor its "never raises for control
+    flow" terminal-outcome contract: a corrupt numeric field in the
+    manifest should be treated as the safe default (0.0) with a logged
+    warning, never propagated as an unhandled exception that breaks
+    the FIFO executor for subsequent saves/deletes.
+    """
+    history = _history(tmp_path)
+    session = SessionState(
+        id="corrupt-marker",
+        idb_path="C:/sample.i64",
+        db_instance_id="a" * 32,
+    )
+    session.add_message(Message(role=Role.USER, content="Delete me"))
+    primary = Path(history.save_session(session))
+
+    # Seed the manifest with a non-numeric ``last_full_scan`` so the
+    # worker would raise ``ValueError`` on a naive ``float(...)`` cast.
+    manifest_path = primary.parent / MANIFEST_FILE
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["last_full_scan"] = "not-a-number"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    outcome = _wait_delete(history, session.id, session.idb_path, session.db_instance_id)
+
+    assert outcome.status is SessionDeleteStatus.DELETED
+    assert not primary.exists()
+    post_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert session.id not in post_manifest["entries"]
 
 
 # ---------------------------------------------------------------------------

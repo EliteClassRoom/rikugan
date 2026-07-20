@@ -54,6 +54,7 @@ sleeps -- no ``time.sleep`` appears anywhere in the file.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -61,7 +62,8 @@ import tempfile
 import threading
 import types
 import unittest
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Path + IDA mocks: install BEFORE importing anything from rikugan so
@@ -226,13 +228,25 @@ from rikugan.ui.panel_core import RikuganPanelCore  # noqa: E402
 
 @pytest.fixture(scope="module", autouse=True)
 def _restore_rikugan_modules_after_integration_tests():
-    """Restore the real rikugan modules once this test module finishes."""
+    """Restore the real rikugan modules once this test module finishes.
+
+    Task 6 isolation: the host helper patches are applied per-test in
+    ``setUp`` and restored in ``tearDown`` (see
+    ``_apply_host_helper_patches`` / ``_restore_host_helper_patches``)
+    so they never leak across test modules regardless of collection
+    order.  This fixture only restores the heavier module-level stubs
+    (``rikugan.ui.chat_view`` etc.) that panel_core imports at module
+    scope.
+    """
     yield
     for name, original in _STUBBED_MODULE_BACKUPS.items():
         if original is None:
             sys.modules.pop(name, None)
         else:
             sys.modules[name] = original
+    # Defensive: also restore host helpers at module teardown in case a
+    # test crashed before ``tearDown`` could run.  Idempotent.
+    _restore_host_helper_patches()
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +289,7 @@ def _stable_instance_for(idb_path: str) -> str:
 # the controller keeps the original reference. We must rebind BOTH the
 # host module attributes AND the controller module's bound imports.
 import rikugan.core.host as _host  # noqa: E402
+import rikugan.ida.ui.session_controller as _ida_sc  # noqa: E402
 import rikugan.ui.session_controller_base as _scb  # noqa: E402
 
 _CURRENT_IDB_PATH = {"path": ""}
@@ -294,11 +309,81 @@ def _patched_set_database_instance_id(_instance_id: str) -> bool:
     return True
 
 
-_host.get_database_instance_id = _patched_get_database_instance_id
-_host.set_database_instance_id = _patched_set_database_instance_id
-# CRITICAL: rebind the controller's already-imported references too.
-_scb.get_database_instance_id = _patched_get_database_instance_id
-_scb.set_database_instance_id = _patched_set_database_instance_id
+def _patched_get_database_path() -> str:
+    """Return the live IDB path the test scenario has armed.
+
+    Task 6 (spec §11.5): the controller's delete boundary compares the
+    captured ``HistoryScope.idb_path`` against the live ``_idb_path``
+    that ``IdaSessionController`` materialized via
+    ``database_path_getter`` (``rikugan.core.host.get_database_path``).
+    The IDA mock returns a fixed ``d:\\tmp\\ida_test\\test.idb``, which
+    does not match the temp paths we persist sessions under.  Without
+    this patch the controller's ``_idb_path`` is the mock's default,
+    the delete boundary returns ``WRONG_IDB``, and the row is never
+    removed.  We mirror the existing
+    ``_patched_get_database_instance_id`` pattern: rebind BOTH the host
+    module attribute AND the IDA session-controller's bound import so
+    the function object captured by ``database_path_getter=...`` in
+    ``IdaSessionController.__init__`` resolves to the patched path.
+    """
+    return _CURRENT_IDB_PATH["path"]
+
+
+# Task 6 isolation: snapshot the ORIGINAL helpers BEFORE overwriting
+# them so the test class's ``setUp`` / ``tearDown`` can apply / restore
+# the patches per-test.  Module-level patching (the pre-Task-6 idiom)
+# leaked into subsequently-collected test modules (e.g.
+# ``tests/agent/test_session_controller.py`` whose
+# ``test_restore_preserves_*`` cases construct fresh
+# ``IdaSessionController`` instances that read these helpers and depend
+# on the IDA mock's ``_PersistentNetnode`` behavior, not our path-keyed
+# stub).  Because pytest imports every collected module BEFORE running
+# any test, module-level patches were active during
+# ``test_session_controller``'s execution even though the integration
+# test had not armed ``_CURRENT_IDB_PATH`` yet, producing spurious
+# ``WRONG_IDB`` failures.  Per-test ``setUp`` / ``tearDown`` patching
+# keeps the integration test hermetic and lets the rest of the suite
+# see the IDA mock's original behavior.
+_HOST_HELPER_BACKUPS: list[tuple[object, str, object]] = [
+    (_host, "get_database_instance_id", _host.get_database_instance_id),
+    (_host, "set_database_instance_id", _host.set_database_instance_id),
+    (_host, "get_database_path", _host.get_database_path),
+    (_scb, "get_database_instance_id", _scb.get_database_instance_id),
+    (_scb, "set_database_instance_id", _scb.set_database_instance_id),
+    (_ida_sc, "get_database_path", _ida_sc.get_database_path),
+]
+
+
+def _apply_host_helper_patches() -> None:
+    """Install the path-keyed host helper stubs (call from ``setUp``).
+
+    Idempotent: re-applying over an already-patched module is safe
+    because the writes are simple attribute rebindings.
+    """
+    _host.get_database_instance_id = _patched_get_database_instance_id
+    _host.set_database_instance_id = _patched_set_database_instance_id
+    _host.get_database_path = _patched_get_database_path
+    # CRITICAL: rebind the controller's already-imported references too.
+    _scb.get_database_instance_id = _patched_get_database_instance_id
+    _scb.set_database_instance_id = _patched_set_database_instance_id
+    # Task 6: rebind the IDA controller's bound ``get_database_path``
+    # import so the controller's ``_idb_path`` matches the path we
+    # persisted sessions under.
+    _ida_sc.get_database_path = _patched_get_database_path
+
+
+def _restore_host_helper_patches() -> None:
+    """Restore the original host helpers (call from ``tearDown``).
+
+    Iterates the ``_HOST_HELPER_BACKUPS`` snapshot captured at module
+    import time.  Swallows ``AttributeError`` / ``TypeError`` so a
+    partial-init fixture does not raise during teardown.
+    """
+    for module, attr, original in _HOST_HELPER_BACKUPS:
+        try:
+            setattr(module, attr, original)
+        except (AttributeError, TypeError):
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -413,12 +498,37 @@ if _chat_view_stub is not None:
 # / ``clear`` / ``visible_session_ids`` / ``isVisible``).
 # ---------------------------------------------------------------------------
 class _RecordingHistoryPanel:
+    """Recording HistoryPanel stub.
+
+    Captures the calls PanelCore makes on the real HistoryPanel for the
+    on-demand History tests (``set_entries`` / ``set_loading`` /
+    ``set_error`` / ``clear`` / ``visible_session_ids`` / ``isVisible``)
+    and the Task-5 delete-related calls (``remove_entry`` /
+    ``set_operation_pending`` / ``show_notice`` / ``clear_notice``).
+
+    Task 6 (spec §11.5): added ``notice_calls`` /
+    ``pending_session_id`` and the delete-side methods so the
+    end-to-end deletion regression can assert exact user-visible copy,
+    row-removal ordering, and pending-row spinner state without
+    depending on a real Qt widget.
+    """
+
     def __init__(self):
         self.entries: list = []
         self.loading_calls = 0
         self.error_calls: list[tuple[str, bool]] = []
         self.cleared = 0
         self._visible = False
+        # Task 6 (spec §11.5): recording sink for ``show_notice``.
+        # Each tuple is (message, retry_visible, dismiss_visible) so the
+        # integration test can assert the exact notice copy AND the
+        # retry/dismiss button visibility the panel chose.
+        self.notice_calls: list[tuple[str, bool, bool]] = []
+        # Task 6: pending-row state.  ``set_operation_pending`` is called
+        # by ``_start_history_delete`` (with the session id) and by
+        # terminal apply / invalidate (with None).  We stash the last
+        # value so the test can assert the spinner pinning behavior.
+        self.pending_session_id: str | None = None
 
     def setVisible(self, visible):
         self._visible = bool(visible)
@@ -443,6 +553,47 @@ class _RecordingHistoryPanel:
         return [e.session_id for e in self.entries]
 
     def shutdown(self):
+        pass
+
+    # ------------------------------------------------------------------
+    # Task 6 (spec §11.5): delete-side recording methods.
+    # ------------------------------------------------------------------
+    def remove_entry(self, session_id):
+        """Row removal on terminal DELETED / NOT_FOUND apply.
+
+        Production HistoryPanel rebuilds the filtered list; here we
+        simply drop the matching entry so ``visible_session_ids()``
+        reflects the post-delete state.
+        """
+        self.entries = [entry for entry in self.entries if entry.session_id != session_id]
+
+    def set_operation_pending(self, session_id):
+        """Spinner-pinning state for the delete flow.
+
+        ``_start_history_delete`` pins the row by id; terminal apply /
+        invalidate clears it via ``None``.  We store the latest value
+        verbatim so the test can assert the pinning behavior exactly.
+        """
+        self.pending_session_id = session_id
+
+    def show_notice(self, message, *, retry_visible=False, dismiss_visible=True):
+        """Notice banner sink.
+
+        Records the exact ``(message, retry_visible, dismiss_visible)``
+        triple so the integration test can assert the precise user copy
+        and button visibility for every notice path (busy, open-tab,
+        FAILED, slow-delete).  Mirrors the production HistoryPanel
+        signature.
+        """
+        self.notice_calls.append((message, bool(retry_visible), bool(dismiss_visible)))
+
+    def clear_notice(self):
+        """Notice banner clear.
+
+        Production hides the notice widget; here the sink is a no-op
+        because the assertion surface is the ``notice_calls`` list
+        itself (a clear does not produce a new entry to assert on).
+        """
         pass
 
 
@@ -494,6 +645,15 @@ def _build_panel(ctrl: IdaSessionController) -> RikuganPanelCore:
     panel._history_closing = threading.Event()
     panel._history_retry_load_session_id = None
     panel._history_last_load_session_id = None
+    # Task 6 (spec §11.5): seed the Task-5 delete-coordinator fields
+    # explicitly so the production code paths no longer need to fall
+    # back on the ``getattr(..., default)`` guards.  This mirrors the
+    # field shape ``__init__`` would have created and keeps the
+    # integration test hermetic with respect to deletion state.
+    panel._history_retry_delete_session_id = None
+    panel._history_last_delete_session_id = None
+    panel._history_delete_intents = set()
+    panel._history_delete_watchdog = None
     # Initial tab: panel construction always creates exactly one empty
     # ``New Chat`` tab in production (``_build_ui``); replicate that here
     # so ``tab_count() == 1`` from the start.
@@ -573,6 +733,51 @@ class _HistoryOnDemandFacade:
             )
         self._panel._drain_history_results()
 
+    def delete_history_session(self, session_id: str) -> None:
+        """Click the row's delete button, confirm, drain, and reconcile.
+
+        Task 6 (spec §11.5): drives the production delete seam
+        end-to-end.  Pre-confirms via ``_confirm_history_delete`` (the
+        panel's modal is patched to ``MagicMock(return_value=True)`` so
+        no Qt dialog is raised), then calls the row-delete slot
+        ``_on_history_delete_requested`` exactly as the widget signal
+        would.  Branches on ``_history_pending``:
+
+          * If the slot submitted a worker (the normal path), wait for
+            the single-worker executor to finish the delete job so the
+            typed ``HistoryDeleteResult`` is in the queue, then drop
+            the executor reference (next production request will
+            lazily recreate it) and drain.
+          * If the slot refused to submit (open-tab invariant, busy,
+            cancel), ``_history_pending`` stays False and there is no
+            executor to drain -- return immediately.
+
+        A successful DELETED / NOT_FOUND result queues exactly one
+        reconciliation list request from ``_apply_history_deleted``;
+        we drain that too so the cached list reconciles with the new
+        on-disk state before the test asserts on it.
+        """
+        self._panel._confirm_history_delete = MagicMock(return_value=True)
+        entry = next(entry for entry in self._panel._history_panel.entries if entry.session_id == session_id)
+        self._panel._on_history_delete_requested(session_id, entry.title)
+        if not self._panel._history_pending:
+            # Open-tab/busy/cancel path: no worker was submitted.
+            return
+
+        executor = self._panel._history_executor
+        assert executor is not None
+        executor.shutdown(wait=True)
+        self._panel._history_executor = None
+        self._panel._drain_history_results()
+
+        # DELETED/NOT_FOUND queues one reconciliation list request.
+        if self._panel._history_pending:
+            executor = self._panel._history_executor
+            assert executor is not None
+            executor.shutdown(wait=True)
+            self._panel._history_executor = None
+            self._panel._drain_history_results()
+
     def on_database_changed(self, new_path: str) -> None:
         # Sync the stable-instance map cell BEFORE the controller reset
         # so ``_ensure_db_instance_id`` reads the new id.
@@ -636,6 +841,14 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
         self.idb_a_instance = _stable_instance_for(self.idb_a)
         self.idb_b_instance = _stable_instance_for(self.idb_b)
 
+        # Task 6 isolation: apply the path-keyed host helper patches
+        # per-test BEFORE any controller construction.  The patches
+        # resolve the live db_instance_id / idb_path from
+        # ``_CURRENT_IDB_PATH`` so the controller sees the same stable
+        # ids we persist with.  Per-test application (vs module-level)
+        # keeps the patches from leaking into other test modules.
+        _apply_host_helper_patches()
+
         # Persist two non-empty IDB-A sessions + one IDB-B session BEFORE
         # constructing any panel/controller. This mirrors "prior sessions
         # exist on disk" -- the brief's starting state.
@@ -677,6 +890,11 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
             SessionHistory.flush_saves()
             self.ctrl.shutdown()
             shutil.rmtree(self._tmp_root, ignore_errors=True)
+            # Task 6 isolation: restore the original host helpers so the
+            # patches do not leak into subsequently-run tests from other
+            # modules.  Must run AFTER the controller + panel shutdown so
+            # any final controller reads still see the patched values.
+            _restore_host_helper_patches()
 
     def test_startup_one_empty_new_chat(self):
         """Spec 7.1: opening Rikugan shows exactly one empty New Chat."""
@@ -795,6 +1013,167 @@ class TestHistoryOnDemandIntegration(unittest.TestCase):
         finally:
             SessionHistory.flush_saves()
             ctrl2.shutdown()
+
+    # ------------------------------------------------------------------
+    # Task 6: End-to-end deletion regression (spec §11.5).
+    #
+    # These four scenarios stitch together the real persistence layer
+    # (ordered primary -> sidecar -> manifest delete), the real
+    # controller delete boundary (scope + status mapping), and the real
+    # PanelCore delete coordinator (confirm -> intent -> worker ->
+    # apply -> reconcile).  Together they prove that:
+    #
+    #   * a closed chat can be permanently removed for the current IDB
+    #     only (sibling IDBs are untouched) and stays gone after a
+    #     panel restart;
+    #   * an open chat is focused, not deleted, and the disk is left
+    #     untouched;
+    #   * a LOAD that lands while a DELETE is confirmed is dropped
+    #     before attach (no resurrection);
+    #   * a primary-file failure keeps the row and records retry state;
+    #     Retry re-dispatches the DELETE without re-confirming and
+    #     succeeds when the OS condition clears.
+    # ------------------------------------------------------------------
+
+    def test_delete_closed_chat_is_permanent_and_scoped(self):
+        """Task 6 spec §11.5 terminal success path.
+
+        Deleting a closed chat for the current IDB removes the primary
+        JSON, its summary sidecar, and the manifest entry.  Sibling
+        IDB-B chats are untouched.  Re-opening History after the
+        deletion must NOT list the deleted id (no resurrection through
+        the manifest or disk).
+        """
+        self.facade.open_history()
+        primary = Path(self.cfg.checkpoints_dir) / "sessions" / f"{self.a1_id}.json"
+        sidecar = primary.with_name(f"{self.a1_id}.summary.json")
+        sidecar.write_text('{"messages":1}', encoding="utf-8")
+
+        self.facade.delete_history_session(self.a1_id)
+
+        # Row is gone from the cached list immediately after the
+        # terminal apply + reconciliation list refresh.
+        self.assertNotIn(self.a1_id, self.facade.visible_history_ids())
+        # Primary + sidecar files are removed.
+        self.assertFalse(primary.exists())
+        self.assertFalse(sidecar.exists())
+        # Manifest entry is removed.
+        manifest = json.loads((primary.parent / "_session_manifest.json").read_text(encoding="utf-8"))
+        self.assertNotIn(self.a1_id, manifest["entries"])
+        # Sibling IDB-B chat is untouched by the current-IDB delete.
+        self.assertTrue(
+            (primary.parent / f"{self.b1_id}.json").exists(),
+            "IDB-B history must remain untouched",
+        )
+
+        # Re-opening History does NOT resurrect the deleted id (no
+        # cached list reuse, no stale manifest).
+        self.facade.open_history()
+        self.assertNotIn(self.a1_id, self.facade.visible_history_ids())
+
+    def test_delete_open_chat_focuses_tab_without_disk_mutation(self):
+        """Task 6 spec §11.5 open-tab refusal.
+
+        Deleting an already-open chat focuses the existing tab, surfaces
+        the dismiss-only "Close this chat before deleting it from
+        History." notice, and never touches disk.  The primary JSON
+        remains so a subsequent panel restart can re-list the chat.
+        """
+        self.facade.open_history()
+        self.facade.open_history_session(self.a1_id)
+        primary = Path(self.cfg.checkpoints_dir) / "sessions" / f"{self.a1_id}.json"
+
+        self.facade.delete_history_session(self.a1_id)
+
+        self.assertTrue(primary.exists())
+        self.assertEqual(
+            self.panel._history_panel.notice_calls[-1][0],
+            "Close this chat before deleting it from History.",
+        )
+
+    def test_confirmed_delete_intent_blocks_loaded_session_attach(self):
+        """Task 6 spec §11.5 LOAD → DELETE race.
+
+        Drive the production apply seam deterministically: capture a
+        fresh scope, load the session through the controller, set the
+        delete-intent gate, and call ``_apply_history_loaded`` directly.
+        The load must be dropped BEFORE attach so the session cannot be
+        resurrected into a tab.  After the intent is in place, the
+        facade's delete must succeed and the session must stay gone on
+        disk after a flush.
+        """
+        self.facade.open_history()
+        scope = self.panel._ctrl.capture_history_scope(generation=1)
+        loaded = self.panel._ctrl.load_history_session(self.a1_id, scope)
+        self.panel._history_delete_intents = {self.a1_id}
+
+        self.panel._apply_history_loaded(loaded)
+
+        # Intent gate must have dropped the attach: no tab is bound to
+        # the persisted id.
+        self.assertIsNone(self.panel._ctrl.find_tab_for_session(self.a1_id))
+        # Facade delete proceeds through the production worker path
+        # (confirm -> submit -> apply -> reconcile) and succeeds.
+        self.facade.delete_history_session(self.a1_id)
+        SessionHistory.flush_saves(timeout=5)
+        self.assertIsNone(SessionHistory(self.cfg).load_session(self.a1_id))
+
+    def test_primary_delete_failure_keeps_row_and_retry_succeeds(self):
+        """Task 6 spec §11.5 FAILED path + Retry without re-confirm.
+
+        Patch ``os.remove`` in the history module so the target primary
+        file raises ``PermissionError`` but every other path (sidecar,
+        manifest) is allowed through.  The first delete attempt must:
+
+          * keep the row (FAILED is non-terminal),
+          * record the retry-delete id,
+          * surface the "Could not delete this chat." notice with both
+            Retry and Dismiss visible.
+
+        A subsequent Retry must NOT re-pop the confirmation dialog
+        (``_confirm_history_delete`` is replaced with a fresh MagicMock
+        to assert non-invocation) and must succeed once the OS lock is
+        released.  After Retry the primary file must be gone.
+        """
+        self.facade.open_history()
+        primary = Path(self.cfg.checkpoints_dir) / "sessions" / f"{self.a1_id}.json"
+        original_remove = os.remove
+
+        def fail_target(path):
+            if os.path.normcase(str(path)) == os.path.normcase(str(primary)):
+                raise PermissionError("locked")
+            original_remove(path)
+
+        with patch("rikugan.state.history.os.remove", side_effect=fail_target):
+            self.facade.delete_history_session(self.a1_id)
+
+        # Row is preserved (FAILED is non-terminal).
+        self.assertIn(self.a1_id, self.facade.visible_history_ids())
+        # Retry-delete id is the target session.
+        self.assertEqual(self.panel._history_retry_delete_session_id, self.a1_id)
+        # Notice copy + button visibility.
+        self.assertEqual(
+            self.panel._history_panel.notice_calls[-1],
+            ("Could not delete this chat.", True, True),
+        )
+
+        # Retry must NOT re-confirm.  Replacing the slot with a fresh
+        # MagicMock lets us assert non-invocation cleanly.
+        self.panel._confirm_history_delete = MagicMock()
+        self.panel._on_history_retry()
+        retry_executor = self.panel._history_executor
+        assert retry_executor is not None
+        retry_executor.shutdown(wait=True)
+        self.panel._history_executor = None
+        self.panel._drain_history_results()
+        if self.panel._history_pending:
+            refresh_executor = self.panel._history_executor
+            assert refresh_executor is not None
+            refresh_executor.shutdown(wait=True)
+            self.panel._history_executor = None
+            self.panel._drain_history_results()
+        self.panel._confirm_history_delete.assert_not_called()
+        self.assertFalse(primary.exists())
 
 
 if __name__ == "__main__":

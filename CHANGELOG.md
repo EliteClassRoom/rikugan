@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Delete individual saved chats from History** — hover or focus a row's
+  delete control, confirm permanent removal, and keep the current search
+  context. Open chats are protected and focused instead; failed deletion
+  remains visible with Retry.
+
 ## [1.12.0] — 2026-07-17
 
 ### Added

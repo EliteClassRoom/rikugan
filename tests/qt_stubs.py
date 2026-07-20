@@ -15,6 +15,19 @@ from enum import IntFlag
 
 _installed = False
 
+# Global focus tracking for tests. Real Qt routes focus through the
+# platform window manager; the stub has no event loop so it uses a
+# single-slot dict keyed by ``"current"``. ``setFocus`` overwrites the
+# slot; ``hasFocus`` checks it against the widget instance.
+_STUB_FOCUS_STATE: dict = {"current": None}
+# Default focus policy for stubbed widgets. Mirrors real Qt's
+# ``QWidget.focusPolicy`` default (``NoFocus``) so a widget that does
+# NOT call ``setFocusPolicy`` still reports the real default under
+# ``focusPolicy()``. Production code that wants the button in the tab
+# chain must call ``setFocusPolicy(StrongFocus)`` explicitly — the
+# tests then pin that explicit pin.
+_DEFAULT_FOCUS_POLICY: object = None  # set by ``ensure_pyside6_stubs`` once ``Qt`` exists.
+
 
 def _qt_class(name: str) -> type:
     """Create a minimal stubbed Qt class that supports subclassing.
@@ -142,6 +155,82 @@ def _qt_class(name: str) -> type:
     def _stylesheet_getter(self):
         return getattr(self, "_styleSheet", "")
 
+    def _set_tooltip(self, value: object) -> None:
+        self._tooltip = "" if value is None else str(value)
+
+    def _tooltip_getter(self) -> str:
+        return getattr(self, "_tooltip", "")
+
+    def _set_accessible_name(self, value: object) -> None:
+        self._accessible_name = "" if value is None else str(value)
+
+    def _accessible_name_getter(self) -> str:
+        return getattr(self, "_accessible_name", "")
+
+    def _set_enabled(self, value: object) -> None:
+        self._enabled = bool(value)
+
+    def _is_enabled(self) -> bool:
+        return getattr(self, "_enabled", True)
+
+    def _set_focus(self, reason=None) -> None:
+        # Record the widget as the focused one globally so
+        # ``hasFocus`` can be queried deterministically. The real Qt
+        # engine routes focus through the platform window manager; the
+        # stub uses a single-slot model since no event loop runs in
+        # tests.
+        self._has_focus = True
+        _STUB_FOCUS_STATE["current"] = self
+
+    def _has_focus(self) -> bool:
+        return getattr(self, "_has_focus", False)
+
+    def _set_focus_policy(self, policy: object) -> None:
+        # Real PySide6 enumerates ``Qt.FocusPolicy`` values; the stub
+        # only stores the policy object so tests can assert equality
+        # against ``Qt.FocusPolicy.StrongFocus``.
+        self._focusPolicy = policy
+
+    def _focus_policy(self) -> object:
+        # Default mirrors real Qt's ``QWidget.focusPolicy`` default
+        # (``NoFocus``); tests pin specific policies via
+        # ``assertEqual(policy, Qt.FocusPolicy.StrongFocus)`` after
+        # the production code calls ``setFocusPolicy``.
+        return getattr(self, "_focusPolicy", _DEFAULT_FOCUS_POLICY)
+
+    def _set_minimum_size(self, w=None, h=None, *args) -> None:
+        # ``setMinimumSize(w, h)`` and ``setMinimumSize(QSize)`` both
+        # route here. Real Qt returns void; the stub persists the
+        # values so ``minimumSize`` can be asserted against.
+        if w is None:
+            return
+        if hasattr(w, "width") and hasattr(w, "height") and h is None:
+            self._minimumWidth = int(w.width())
+            self._minimumHeight = int(w.height())
+            return
+        try:
+            self._minimumWidth = int(w)
+            self._minimumHeight = int(h) if h is not None else 0
+        except (TypeError, ValueError):
+            return
+
+    def _minimum_size(self):
+        # Returns a QSize-like object whose ``width``/``height`` are
+        # the minimums last set. Tests assert these are >= 24 for the
+        # delete button to satisfy the WCAG 2.5.5 24x24 target size.
+        class _StubSize:
+            def __init__(self, w: int, h: int) -> None:
+                self._w = w
+                self._h = h
+
+            def width(self) -> int:
+                return self._w
+
+            def height(self) -> int:
+                return self._h
+
+        return _StubSize(getattr(self, "_minimumWidth", 0), getattr(self, "_minimumHeight", 0))
+
     def _layout_getter(self):
         """Return the QLayout attached via ``setLayout``.
 
@@ -217,7 +306,8 @@ def _qt_class(name: str) -> type:
         "setMinimumWidth": _noop,
         "setMinimumHeight": _min_h_setter,
         "minimumHeight": _min_h_getter,
-        "setMinimumSize": _noop,
+        "setMinimumSize": _set_minimum_size,
+        "minimumSize": _minimum_size,
         "setSizePolicy": _noop,
         "setFixedSize": _noop,
         "setFixedWidth": _noop,
@@ -229,7 +319,16 @@ def _qt_class(name: str) -> type:
         "wordWrap": _word_wrap_getter,
         "setSingleStep": _noop,
         "setValue": _noop,
-        "setEnabled": _noop,
+        "setEnabled": _set_enabled,
+        "isEnabled": _is_enabled,
+        "setToolTip": _set_tooltip,
+        "setFocus": _set_focus,
+        "hasFocus": _has_focus,
+        "setFocusPolicy": _set_focus_policy,
+        "focusPolicy": _focus_policy,
+        "toolTip": _tooltip_getter,
+        "setAccessibleName": _set_accessible_name,
+        "accessibleName": _accessible_name_getter,
         "setTextFormat": _set_text_format,
         "textFormat": _text_format_getter,
         "setTextInteractionFlags": _noop,
@@ -244,7 +343,6 @@ def _qt_class(name: str) -> type:
         "setChecked": _noop,
         "setText": _text_setter,
         "setAlignment": _noop,
-        "setToolTip": _noop,
         "setStatusTip": _noop,
         "setWhatsThis": _noop,
         "addLayout": _layout_add_layout,
@@ -289,8 +387,6 @@ def _qt_class(name: str) -> type:
         "setUniformRowHeights": _noop,
         "setSectionResizeMode": _noop,
         "setTabOrder": _noop,
-        "setFocus": _noop,
-        "setFocusPolicy": _noop,
         "setCurrentCell": _noop,
         "setCurrentItem": _noop,
         "setCurrentRow": _noop,
@@ -392,7 +488,6 @@ def _qt_class(name: str) -> type:
         "itemData": lambda self, *a: None,
         "setSelectionBehavior": _noop,
         "setEditTriggers": _noop,
-        "isEnabled": lambda self: True,
         "currentIndex": lambda self: 0,
         "moveToThread": _noop,
         "verticalHeader": lambda self: _HeaderStub(),
@@ -755,6 +850,28 @@ def ensure_pyside6_stubs() -> None:
         },
     )()
     _sentinel.Orientation = type("_Orientation", (), {"Horizontal": 1, "Vertical": 2})()
+    # Qt.FocusPolicy enum — used by QPushButton.setFocusPolicy so a
+    # keyboard user can reach the row's delete button via Tab. The
+    # stub only needs the values production code references
+    # (``StrongFocus``); other policy values are trivially 0.
+    _sentinel.FocusPolicy = type(
+        "_FocusPolicy",
+        (),
+        {
+            "NoFocus": 0,
+            "TabFocus": 1,
+            "ClickFocus": 2,
+            "StrongFocus": 11,
+            "WheelFocus": 15,
+        },
+    )()
+    # Mirror real Qt's QWidget default (``NoFocus``) so the stub returns
+    # the documented default when ``setFocusPolicy`` was never called.
+    # Production code that wants the widget in the tab chain must call
+    # ``setFocusPolicy(StrongFocus)`` explicitly; tests then pin that
+    # explicit pin via ``assertEqual(policy, Qt.FocusPolicy.StrongFocus)``.
+    global _DEFAULT_FOCUS_POLICY
+    _DEFAULT_FOCUS_POLICY = _sentinel.FocusPolicy.NoFocus
     _sentinel.WindowModality = type(
         "_WindowModality",
         (),
@@ -980,6 +1097,66 @@ def ensure_pyside6_stubs() -> None:
         ),
     )
     sys.modules["PySide6.QtGui"].QFont = _qfont
+
+    # QAccessibleAnnouncementEvent is the canonical PySide6 class for
+    # notifying screen readers about a transient message. The stub
+    # mirrors the real constructor signature ``(object, message)`` and
+    # exposes the payload through ``message()`` so tests can assert
+    # both the event type and the announced text without a real
+    # accessibility bridge.
+    class _AccessibleAnnouncementEvent:
+        """Stub for ``PySide6.QtGui.QAccessibleAnnouncementEvent``.
+
+        Real PySide6 constructs an announcement event with
+        ``QAccessibleAnnouncementEvent(obj, message)`` and posts it to
+        ``QAccessible.updateAccessibility``. The stub preserves the
+        constructor signature and exposes the message via ``message()``
+        so production code reads identically with either the real
+        binding or this stub.
+        """
+
+        def __init__(self, obj: object = None, message: str = "") -> None:
+            self._object = obj
+            self._message = str(message)
+            self._politeness = "Polite"
+
+        def message(self) -> str:
+            return self._message
+
+        def setPoliteness(self, politeness: object) -> None:
+            self._politeness = politeness
+
+        def politeness(self) -> object:
+            return self._politeness
+
+        def accessibleObject(self) -> object:
+            return self._object
+
+    sys.modules["PySide6.QtGui"].QAccessibleAnnouncementEvent = _AccessibleAnnouncementEvent
+
+    # QAccessible namespace — only the entries production code reads.
+    # ``updateAccessibility(event)`` is the documented delivery path
+    # for accessibility notifications; the stub forwards the event
+    # into the per-widget ``_announcements`` sink so tests can assert
+    # what was announced without bridging to a real screen reader.
+    class _AccessibleNamespace:
+        @staticmethod
+        def updateAccessibility(event: object) -> None:
+            target = getattr(event, "accessibleObject", lambda: None)()
+            if target is None:
+                return
+            sink = getattr(target, "_announcements", None)
+            if sink is None:
+                sink = []
+                target._announcements = sink
+            entry = (event, event.message() if hasattr(event, "message") else "")
+            sink.append(entry)
+            # Forward to the test-installed recorder if any.
+            test_sink = getattr(target, "_announcements_sink", None)
+            if test_sink is not None:
+                test_sink(entry)
+
+    sys.modules["PySide6.QtGui"].QAccessible = _AccessibleNamespace
 
     sys.modules.setdefault(
         "PySide6.QtWidgets",
@@ -1365,6 +1542,67 @@ def ensure_pyside6_stubs() -> None:
         return _QStackedWidget
 
     sys.modules["PySide6.QtWidgets"].QStackedWidget = _make_qstackedwidget_stub()
+
+    # QScrollArea needs a stateful vertical scrollbar so tests can
+    # capture and restore the list position across ``remove_entry``
+    # rerenders. The base ``_qt_class`` produces a no-op widget that
+    # silently swallows ``verticalScrollBar()`` calls; the panel's
+    # scroll-clamp logic relies on the stub returning a value-tracking
+    # bar.
+    class _ScrollBar:
+        """Minimal QScrollBar stub for tests.
+
+        The history panel captures the value before re-rendering rows
+        and clamps it after the rerender to ``maximum()``. The stub
+        tracks ``_value`` and ``_maximum`` as plain Python ints so the
+        test can drive ``setValue`` and assert the clamp without an
+        event loop.
+        """
+
+        def __init__(self) -> None:
+            self._value = 0
+            self._maximum = 0
+
+        def value(self) -> int:
+            return self._value
+
+        def setValue(self, v: int) -> None:
+            self._value = int(v)
+
+        def maximum(self) -> int:
+            return self._maximum
+
+        def setMaximum(self, m: int) -> None:
+            self._maximum = int(m)
+
+    def _make_qscrollarea_stub() -> type:
+        """Build a minimal QScrollArea stub with a stateful vertical bar.
+
+        Each instance owns a private ``_ScrollBar`` so multiple panels
+        in the same test process do not share scroll state. ``setWidget``
+        is routed to a private attribute so re-parenting test fixtures
+        don't fail when the widget loop is absent.
+        """
+
+        _Base = _qt_class("QScrollAreaBase")
+
+        class _QScrollArea(_Base):
+            def __init__(self, parent=None):
+                super().__init__()
+                self._vertical = _ScrollBar()
+
+            def verticalScrollBar(self) -> _ScrollBar:
+                return self._vertical
+
+            def setWidget(self, widget) -> None:
+                self._widget = widget
+
+            def setWidgetResizable(self, _resizable: bool) -> None:
+                return None
+
+        return _QScrollArea
+
+    sys.modules["PySide6.QtWidgets"].QScrollArea = _make_qscrollarea_stub()
 
     # QLayout subclasses (QVBoxLayout/QHBoxLayout) used by stack
     # containers need ``removeWidget`` so the history panel can drop a

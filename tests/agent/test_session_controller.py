@@ -7,7 +7,9 @@ import shutil
 import sys
 import tempfile
 import unittest
+from concurrent.futures import CancelledError, Future
 from typing import ClassVar
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from tests.mocks.ida_mock import install_ida_mocks
@@ -20,6 +22,7 @@ from rikugan.ida.ui.session_controller import IdaSessionController  # noqa: E402
 from rikugan.state.history import SessionHistory  # noqa: E402
 from rikugan.state.history_types import (  # noqa: E402
     HistoryAttachStatus,
+    HistoryDeleteStatus,
     HistoryRequestStatus,
 )
 
@@ -330,6 +333,56 @@ class TestIdaSessionController(unittest.TestCase):
         self.assertEqual(entry.session_id, saved_id)
         self.assertEqual(entry.message_count, 1)
         self.assertEqual(entry.title, "Analyze parser")
+
+    # ------------------------------------------------------------------
+    # Task 3 — Delete boundary (Qt-free controller method)
+    # ------------------------------------------------------------------
+
+    def test_delete_history_session_maps_deleted_outcome(self) -> None:
+        saved_id = self._save_history_session(self.ctrl._db_instance_id)
+        scope = self.ctrl.capture_history_scope(generation=9)
+
+        result = self.ctrl.delete_history_session(saved_id, scope)
+
+        self.assertIs(result.status, HistoryDeleteStatus.DELETED)
+        self.assertEqual(result.scope, scope)
+        self.assertEqual(result.session_id, saved_id)
+
+    def test_delete_history_session_rejects_stale_live_scope(self) -> None:
+        scope = self.ctrl.capture_history_scope(generation=3)
+        self.ctrl._db_instance_id = "f" * 32
+
+        with patch("rikugan.state.history.SessionHistory.delete_session_async") as delete_async:
+            result = self.ctrl.delete_history_session("saved-history", scope)
+
+        self.assertIs(result.status, HistoryDeleteStatus.WRONG_IDB)
+        delete_async.assert_not_called()
+
+    def test_delete_history_session_translates_persistence_failure(self) -> None:
+        scope = self.ctrl.capture_history_scope(generation=4)
+        failed = Future()
+        failed.set_exception(PermissionError("locked path"))
+
+        with patch(
+            "rikugan.state.history.SessionHistory.delete_session_async",
+            return_value=failed,
+        ):
+            result = self.ctrl.delete_history_session("saved-history", scope)
+
+        self.assertIs(result.status, HistoryDeleteStatus.FAILED)
+        self.assertIn("PermissionError", result.error)
+
+    def test_delete_history_session_does_not_swallow_cancelled_error(self) -> None:
+        scope = self.ctrl.capture_history_scope(generation=4)
+        cancelled = Future()
+        cancelled.cancel()
+
+        with patch(
+            "rikugan.state.history.SessionHistory.delete_session_async",
+            return_value=cancelled,
+        ):
+            with self.assertRaises(CancelledError):
+                self.ctrl.delete_history_session("saved-history", scope)
 
     def test_tab_label_uses_shared_helper(self) -> None:
         """tab_label must derive from the shared helper at max_chars=20."""

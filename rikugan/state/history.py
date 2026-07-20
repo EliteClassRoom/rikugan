@@ -15,6 +15,8 @@ import threading
 import time
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from ..constants import HISTORY_TITLE_MAX_CHARS, SESSION_SCHEMA_VERSION
@@ -46,6 +48,29 @@ MANIFEST_SCHEMA_VERSION = 2
 #: and shorter tab labels — never interpolated into QSS or sent to the
 #: LLM (spec §11.3).
 UNTITLED_HISTORY_TITLE = "Untitled chat"
+
+
+#: Terminal outcome of an ordered persistence deletion. The persistence
+#: worker emits exactly one ``SessionDeleteOutcome`` per request and
+#: exceptions are never used for cross-thread control flow (spec §6.5).
+class SessionDeleteStatus(str, Enum):
+    DELETED = "deleted"
+    NOT_FOUND = "not_found"
+    WRONG_IDB = "wrong_idb"
+    FAILED = "failed"
+
+
+#: Typed terminal result returned by the ordered delete worker. ``error``
+#: is empty on every status except ``FAILED``, where it carries a
+#: sanitized diagnostic string for the log file but is NEVER rendered to
+#: the user — the controller / History panel shows a generic notice and
+#: keeps the row state consistent. Wire values are stable strings, NOT
+#: the public ``HistoryDeleteStatus`` enum (Task 1 owns the UI contract).
+@dataclass(frozen=True)
+class SessionDeleteOutcome:
+    status: SessionDeleteStatus
+    error: str = ""
+
 
 #: Conservative session-id rule (spec §11.1). The current generator emits
 #: 12 lowercase hex characters, so the existing ID space is a strict
@@ -93,6 +118,43 @@ def _normalize_db_path(path: str) -> str:
 
 
 _HEX_INSTANCE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _safe_last_full_scan(value: object) -> float:
+    """Return a finite ``last_full_scan`` timestamp, or ``0.0`` on malformed input.
+
+    Manifests persisted by older Rikugan versions or hand-edited by the
+    operator may carry a non-numeric ``last_full_scan``. The ordered
+    delete worker refuses to propagate that as an unhandled exception:
+    a corrupt value is replaced with ``0.0`` (forcing the next list to
+    rebuild) and logged, never re-raised. ``bool`` is explicitly excluded
+    so ``True``/``False`` don't accidentally appear as timestamps; string
+    numerics like ``"1700000000"`` are accepted because that's how an
+    operator might patch a manifest in a pinch.
+    """
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        try:
+            result = float(value)
+        except (ValueError, OverflowError):
+            return 0.0
+        if result != result or result in (float("inf"), float("-inf")):
+            return 0.0
+        return result
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return 0.0
+        try:
+            result = float(stripped)
+        except ValueError:
+            log_warning(f"Ignoring malformed manifest last_full_scan: {value!r}")
+            return 0.0
+        if result != result or result in (float("inf"), float("-inf")):
+            return 0.0
+        return result
+    return 0.0
 
 
 def _canonical_instance_id(value: object) -> str:
@@ -342,19 +404,6 @@ class SessionHistory:
                     log_warning(f"Failed to update session manifest after saving {session.id}: {write_err}")
         except Exception as e:
             log_warning(f"Failed to update session manifest entry for {session.id}: {e}")
-
-    def _remove_manifest_entry(self, session_id: str) -> None:
-        """Remove a manifest entry by session id."""
-        with self._manifest_lock:
-            data = self._read_manifest()
-            entries = data.get("entries", {})
-            last_full_scan = data.get("last_full_scan", 0.0)
-            if session_id in entries:
-                del entries[session_id]
-                try:
-                    self._write_manifest(entries, last_full_scan=last_full_scan)
-                except OSError as write_err:
-                    log_warning(f"Failed to write session manifest after removing {session_id}: {write_err}")
 
     def _validate_manifest_entry(self, session_id: str, entry: dict[str, Any]) -> bool:
         """Check that the session file on disk matches the manifest entry.
@@ -816,12 +865,140 @@ class SessionHistory:
             )
         return rows, manifest_misses
 
-    def delete_session(self, session_id: str) -> bool:
+    @staticmethod
+    def _remove_file_if_present(path: str, *, session_id: str) -> None:
+        """Best-effort companion cleanup used by the ordered delete worker.
+
+        Logs and swallows OS errors so the caller can continue without
+        converting a missing secondary artifact into a primary failure
+        (spec §7.2 — primary file is the authoritative user-visible
+        artifact; sidecar and manifest are best-effort cleanup).
+        """
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            log_warning(f"Failed to clean up companion for session {session_id}: {type(exc).__name__}")
+
+    def delete_session_async(
+        self,
+        session_id: str,
+        *,
+        expected_idb_path: str,
+        expected_db_instance_id: str,
+    ) -> Future[SessionDeleteOutcome]:
+        """Queue one hard delete behind all earlier autosaves.
+
+        The single-worker ``_SAVE_EXECUTOR`` is the FIFO ordering
+        guarantee: every save already queued completes before this
+        delete runs, so a queued autosave cannot resurrect the session
+        mid-deletion (spec §6.5, §7.1). The call returns a ``Future``
+        immediately; the worker emits exactly one terminal
+        :class:`SessionDeleteOutcome` (never raises for control flow).
+        """
+        return _SAVE_EXECUTOR.submit(
+            self._delete_session_ordered,
+            session_id,
+            expected_idb_path,
+            expected_db_instance_id,
+        )
+
+    def _delete_session_ordered(
+        self,
+        session_id: str,
+        expected_idb_path: str,
+        expected_db_instance_id: str,
+    ) -> SessionDeleteOutcome:
+        """Ordered persistence worker — never call outside the save executor.
+
+        Contract (spec §7.2):
+          * Primary JSON is authoritative. ``DELETED`` only when the
+            primary file is gone. ``NOT_FOUND`` when the primary file
+            is already absent at the moment we try to remove it.
+          * Sidecar and manifest cleanup are best-effort after a
+            successful primary removal. A failure to clean them logs a
+            warning but keeps the result ``DELETED``.
+          * ``WRONG_IDB`` is returned (no mutation) when the payload's
+            ``id`` does not match the requested session id, when the
+            path/instance does not match the expected scope, or when
+            the JSON itself is missing/invalid.
+          * ``FAILED`` is returned when the primary remove raises a
+            non-``FileNotFoundError`` ``OSError`` — the manifest entry
+            is intentionally preserved so the caller can retry.
+        """
         path = self._session_path(session_id)
         if path is None:
-            return False
-        if os.path.exists(path):
-            os.remove(path)
-            self._remove_manifest_entry(session_id)
-            return True
-        return False
+            return SessionDeleteOutcome(SessionDeleteStatus.NOT_FOUND)
+
+        sidecar_path = os.path.join(self._dir, f"{session_id}{_SUMMARY_SUFFIX}")
+        with self._manifest_lock:
+            data = self._read_manifest()
+            entries = dict(data.get("entries", {}))
+            last_full_scan = _safe_last_full_scan(data.get("last_full_scan"))
+
+            if not os.path.exists(path):
+                self._remove_file_if_present(sidecar_path, session_id=session_id)
+                entries.pop(session_id, None)
+                try:
+                    self._write_manifest(entries, last_full_scan=last_full_scan)
+                except OSError as exc:
+                    log_warning(f"Session {session_id} was already absent, but manifest cleanup failed: {exc}")
+                return SessionDeleteOutcome(SessionDeleteStatus.NOT_FOUND)
+
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    persisted = json.load(handle)
+            except (json.JSONDecodeError, OSError):
+                # Corrupt primary — refuse to delete so the operator
+                # can investigate (does not match the requested scope).
+                return SessionDeleteOutcome(SessionDeleteStatus.WRONG_IDB)
+
+            # Strict identity match: payload ``id`` must equal the
+            # request, and BOTH ``idb_path`` / ``db_instance_id`` must
+            # match the expected scope on every populated field.
+            # Mirrors :func:`_matches_current_idb` semantics for
+            # list/load (instance_id authoritative when populated) but
+            # adds the deletion-time requirement that the caller's
+            # expected scope and the on-disk record agree on every
+            # populated field — a single-field match is not enough when
+            # the caller explicitly supplied the full scope.
+            if persisted.get("id") != session_id:
+                return SessionDeleteOutcome(SessionDeleteStatus.WRONG_IDB)
+            persisted_idb_path = str(persisted.get("idb_path", ""))
+            persisted_db_instance_id = str(persisted.get("db_instance_id", ""))
+            if (
+                expected_idb_path
+                and persisted_idb_path
+                and (_normalize_db_path(persisted_idb_path) != _normalize_db_path(expected_idb_path))
+            ):
+                return SessionDeleteOutcome(SessionDeleteStatus.WRONG_IDB)
+            entry_instance = _canonical_instance_id(persisted_db_instance_id)
+            target_instance = _canonical_instance_id(expected_db_instance_id)
+            if entry_instance or target_instance:
+                if entry_instance != target_instance:
+                    return SessionDeleteOutcome(SessionDeleteStatus.WRONG_IDB)
+            elif not _matches_current_idb(
+                entry_idb_path=persisted_idb_path,
+                entry_db_instance_id=persisted_db_instance_id,
+                target_idb_path=expected_idb_path,
+                target_db_instance_id=expected_db_instance_id,
+            ):
+                return SessionDeleteOutcome(SessionDeleteStatus.WRONG_IDB)
+
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                primary_status = SessionDeleteStatus.NOT_FOUND
+            except OSError as exc:
+                return SessionDeleteOutcome(SessionDeleteStatus.FAILED, str(exc))
+            else:
+                primary_status = SessionDeleteStatus.DELETED
+
+            self._remove_file_if_present(sidecar_path, session_id=session_id)
+            entries.pop(session_id, None)
+            try:
+                self._write_manifest(entries, last_full_scan=last_full_scan)
+            except OSError as exc:
+                log_warning(f"Deleted session {session_id}, but manifest cleanup failed: {exc}")
+            return SessionDeleteOutcome(primary_status)
