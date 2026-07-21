@@ -792,7 +792,9 @@ _GUI_NAMES = [
     "QColor",
     "QFont",
     "QIntValidator",
+    "QKeySequence",
     "QPalette",
+    "QShortcut",
     "QSyntaxHighlighter",
     "QTextCharFormat",
 ]
@@ -904,6 +906,19 @@ def ensure_pyside6_stubs() -> None:
             "ScrollBarAsNeeded": 0,
             "ScrollBarAlwaysOff": 1,
             "ScrollBarAlwaysOn": 2,
+        },
+    )()
+    # Qt.ShortcutContext enum — production code (panel_core QShortcuts)
+    # scopes shortcuts to the panel window so they never leak into the
+    # host's global shortcut namespace. Values mirror real Qt.
+    _sentinel.ShortcutContext = type(
+        "_ShortcutContext",
+        (),
+        {
+            "WidgetShortcut": 0,
+            "WidgetWithChildrenShortcut": 3,
+            "WindowShortcut": 1,
+            "ApplicationShortcut": 2,
         },
     )()
 

@@ -13,6 +13,7 @@ from .qt_compat import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    Qt,
     QTimer,
     QWidget,
 )
@@ -79,6 +80,9 @@ class ContextBar(QFrame):
         label.setObjectName("context_label")
         value = QLabel(initial)
         value.setObjectName("context_value")
+        # Make the value selectable so a user can copy an address, a long
+        # function name, or a model id straight off the bar.
+        value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         return label, value
 
     def stop(self) -> None:
@@ -94,7 +98,19 @@ class ContextBar(QFrame):
         self._address_label[1].setText(addr)
 
     def set_function(self, name: str) -> None:
-        self._function_label[1].setText(name if len(name) < 30 else name[:27] + "...")
+        """Display the function name, truncating long names with a tooltip.
+
+        C++ mangled / Rust generic names routinely exceed the 27-char
+        display slice, so the full name is mirrored into the tooltip —
+        otherwise the truncated value is unrecoverable.
+        """
+        value = self._function_label[1]
+        if len(name) < 30:
+            value.setText(name)
+            value.setToolTip("")
+        else:
+            value.setText(name[:27] + "...")
+            value.setToolTip(name)
 
     def set_model(self, model: str) -> None:
         self._model_label[1].setText(model)

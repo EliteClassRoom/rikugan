@@ -1319,19 +1319,21 @@ class ToolApprovalWidget(QFrame):
         btn_layout.setSpacing(8)
 
         self._allow_btn = QToolButton()
-        self._allow_btn.setText("  Allow  ")
+        # QSS already carries ``padding: 4px 16px`` — a plain label keeps
+        # the text centered and stops whitespace reaching screen readers.
+        self._allow_btn.setText("Allow")
         self._allow_btn.setStyleSheet(get_tool_approval_allow_btn_style())
         self._allow_btn.clicked.connect(self._on_allow)
         btn_layout.addWidget(self._allow_btn)
 
         self._always_btn = QToolButton()
-        self._always_btn.setText("  Always Allow  ")
+        self._always_btn.setText("Always Allow")
         self._always_btn.setStyleSheet(get_tool_approval_always_btn_style())
         self._always_btn.clicked.connect(self._on_always_allow)
         btn_layout.addWidget(self._always_btn)
 
         self._deny_btn = QToolButton()
-        self._deny_btn.setText("  Deny  ")
+        self._deny_btn.setText("Deny")
         self._deny_btn.setStyleSheet(get_tool_approval_deny_btn_style())
         self._deny_btn.clicked.connect(self._on_deny)
         btn_layout.addWidget(self._deny_btn)
@@ -1346,19 +1348,19 @@ class ToolApprovalWidget(QFrame):
 
     def _on_allow(self):
         self._disable_buttons()
-        self._allow_btn.setText("  Allowed  ")
+        self._allow_btn.setText("Allowed")
         self._allow_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
         self.approved.emit(self._tool_call_id, "allow")
 
     def _on_always_allow(self):
         self._disable_buttons()
-        self._always_btn.setText("  Always Allowed  ")
+        self._always_btn.setText("Always Allowed")
         self._always_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
         self.approved.emit(self._tool_call_id, "allow_all")
 
     def _on_deny(self):
         self._disable_buttons()
-        self._deny_btn.setText("  Denied  ")
+        self._deny_btn.setText("Denied")
         self._deny_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
         self.approved.emit(self._tool_call_id, "deny")
 
@@ -1531,19 +1533,19 @@ class ExecutePythonWidget(QFrame):
         btn_layout.setSpacing(8)
 
         self._allow_btn = QToolButton()
-        self._allow_btn.setText("  Allow  ")
+        self._allow_btn.setText("Allow")
         self._allow_btn.setStyleSheet(get_tool_approval_allow_btn_style())
         self._allow_btn.clicked.connect(self._on_allow)
         btn_layout.addWidget(self._allow_btn)
 
         self._always_btn = QToolButton()
-        self._always_btn.setText("  Always Allow  ")
+        self._always_btn.setText("Always Allow")
         self._always_btn.setStyleSheet(get_tool_approval_always_btn_style())
         self._always_btn.clicked.connect(self._on_always_allow)
         btn_layout.addWidget(self._always_btn)
 
         self._deny_btn = QToolButton()
-        self._deny_btn.setText("  Deny  ")
+        self._deny_btn.setText("Deny")
         self._deny_btn.setStyleSheet(get_tool_approval_deny_btn_style())
         self._deny_btn.clicked.connect(self._on_deny)
         btn_layout.addWidget(self._deny_btn)
@@ -1742,18 +1744,18 @@ class ExecutePythonWidget(QFrame):
 
     def _on_allow(self) -> None:
         self._disable_buttons()
-        self._allow_btn.setText("  Allowed  ")
+        self._allow_btn.setText("Allowed")
         self._allow_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
         self.approved.emit(self._tool_call_id, "allow")
 
     def _on_always_allow(self) -> None:
         self._disable_buttons()
-        self._always_btn.setText("  Always Allowed  ")
+        self._always_btn.setText("Always Allowed")
         self._always_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
         self.approved.emit(self._tool_call_id, "allow_all")
 
     def _on_deny(self) -> None:
         self._disable_buttons()
-        self._deny_btn.setText("  Denied  ")
+        self._deny_btn.setText("Denied")
         self._deny_btn.setStyleSheet(get_tool_approval_disabled_btn_style())
         self.approved.emit(self._tool_call_id, "deny")

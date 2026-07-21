@@ -49,10 +49,12 @@ from .qt_compat import (
     QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
+    QKeySequence,
     QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
+    QShortcut,
     QSplitter,
     QStackedWidget,
     Qt,
@@ -648,7 +650,29 @@ class RikuganPanelCore(QWidget):
         # Task 7 (spec §7.1): startup is fresh-by-default.  No
         # session-restore side effects — History must be opened
         # explicitly by the user.
+        self._install_shortcuts()
         _early_log("panel_core:build_ui:done")
+
+    def _install_shortcuts(self) -> None:
+        """Wire window-scoped panel shortcuts (Ctrl+T new tab, Ctrl+W close).
+
+        ``WindowShortcut`` confines the binding to this panel's window so it
+        never collides with the host's global shortcut namespace (IDA owns
+        nearly every plain key; the panel must not fight it). Kept off the
+        QAction path so it works in both the Qt and headless-host test
+        harnesses without an IDA action registry.
+        """
+        new_tab_sc = QShortcut(QKeySequence("Ctrl+T"), self)
+        new_tab_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        new_tab_sc.activated.connect(self._on_new_tab)
+
+        close_tab_sc = QShortcut(QKeySequence("Ctrl+W"), self)
+        close_tab_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        close_tab_sc.activated.connect(self._close_current_tab)
+
+    def _close_current_tab(self) -> None:
+        """Close the active chat tab (Ctrl+W handler)."""
+        self._on_close_tab(self._tab_widget.currentIndex())
 
     def _build_tab_widget(self) -> None:
         """Create the tab widget with custom tab bar."""
@@ -776,6 +800,8 @@ class RikuganPanelCore(QWidget):
         self._tools_btn.clicked.connect(self._on_toggle_tools)
         btn_layout.addWidget(self._tools_btn)
 
+        self._apply_action_button_tooltips()
+
         if self._use_native_host_theme:
             default_btn_style = build_small_button_stylesheet(self)
             danger_btn_style = build_small_button_stylesheet(self, danger=True)
@@ -793,6 +819,27 @@ class RikuganPanelCore(QWidget):
 
         btn_layout.addStretch()
         return btn_layout
+
+    def _apply_action_button_tooltips(self) -> None:
+        """Attach a one-line tooltip + accessible name to each header action.
+
+        ``Mutations`` is a Rikugan-specific concept (the undo tracking log),
+        so a bare label gives a new user no way to discover what it opens.
+        Tooltips also double as the accessible description for screen readers
+        when an explicit accessible name is present.
+        """
+        for btn, tip in (
+            (self._send_btn, "Send the message (Enter)"),
+            (self._cancel_btn, "Stop the running agent (Esc)"),
+            (self._new_btn, "Start a new chat tab (Ctrl+T)"),
+            (self._export_btn, "Export this chat to a file"),
+            (self._settings_btn, "Open Rikugan settings"),
+            (self._mutations_btn, "Show the mutation log (IDA database edits made by the agent)"),
+            (self._history_btn, "Show past chat sessions"),
+            (self._tools_btn, "Open the tools panel"),
+        ):
+            btn.setToolTip(tip)
+            btn.setAccessibleName(f"{btn.text()} — {tip}")
 
     def _apply_action_button_styles(self) -> None:
         """Refresh the action-bar button styles from the current theme."""
@@ -3547,4 +3594,9 @@ class RikuganPanelCore(QWidget):
         self._send_btn.setVisible(True)
         self._send_btn.setEnabled(not self._awaiting_button_approval)
         self._send_btn.setText("Queue" if running else "Send")
+        # Keep the accessible name in sync with the dynamic label so a
+        # screen reader announces "Queue" while the agent is running.
+        self._send_btn.setAccessibleName(
+            "Queue — Queue a follow-up message" if running else "Send — Send the message (Enter)"
+        )
         self._cancel_btn.setVisible(running)
