@@ -62,7 +62,16 @@ def _user_role(t) -> str:
 
 
 def _assistant_role(t) -> str:
-    return t.highlight
+    """Assistant role label color — highest-contrast of accent/text.
+
+    ``t.highlight`` (the old choice) collapses to 2.61:1 on the bundled
+    dark palette (``#0e639c`` on ``#1e1e1e``), failing WCAG AA for the
+    11px role label. ``accent`` and ``text`` are both high-contrast
+    against ``window`` in every bundled palette; picking the runtime
+    winner keeps the label readable for arbitrary IDA-native host
+    palettes too (same idiom as ``_pick_contrasting_text``).
+    """
+    return _pick_contrasting_text(t.window, t.accent, t.text)
 
 
 def _body_text(t) -> str:

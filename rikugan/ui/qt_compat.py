@@ -32,8 +32,10 @@ from PySide6.QtGui import (  # noqa: F401
     QColor,
     QFont,
     QIntValidator,
+    QKeySequence,
     QPainter,
     QPalette,
+    QShortcut,
     QSyntaxHighlighter,
     QTextCharFormat,
 )
