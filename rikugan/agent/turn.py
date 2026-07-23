@@ -43,12 +43,20 @@ class TurnEventType(str, Enum):
     COMMAND_ORCHESTRA = "command_orchestra"
     KNOWLEDGE_RETRIEVED = "knowledge_retrieved"
     DOCS_GATE_STATUS = "docs_gate_status"
+    # GLM reasoning-resilience events (consumed by stream/UI/recovery tasks).
+    REASONING_DELTA = "reasoning_delta"
+    RECOVERY_START = "recovery_start"
+    TOOL_CALL_DISCARDED = "tool_call_discarded"
 
 
 @dataclass
 class TurnEvent:
     type: TurnEventType
     text: str = ""
+    # Provider reasoning/thinking channel, distinct from user-visible ``text``.
+    # Populated by REASONING_DELTA events; the same value can also carry
+    # reasoning payloads from other resilience events.
+    reasoning: str = ""
     tool_call_id: str = ""
     tool_name: str = ""
     tool_args: str = ""
@@ -440,6 +448,59 @@ class TurnEvent:
         )
 
     # ------------------------------------------------------------------
+    # GLM reasoning-resilience factories
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def reasoning_event(text: str) -> TurnEvent:
+        """Emit an incremental reasoning/thinking delta from the provider.
+
+        Carries the private reasoning channel separately from the
+        user-visible ``text`` channel so the UI and recovery logic can
+        distinguish them.
+        """
+        return TurnEvent(type=TurnEventType.REASONING_DELTA, reasoning=text)
+
+    @staticmethod
+    def recovery_start(
+        *,
+        attempt: int,
+        reason: str,
+        discard_transient_reasoning: bool,
+    ) -> TurnEvent:
+        """Mark the boundary where a reasoning-recovery retry begins.
+
+        ``attempt`` is the 1-based retry number. ``reason`` is the
+        canonical trigger (e.g. ``reasoning_degenerated``,
+        ``truncated_partial_tool_use``). ``discard_transient_reasoning``
+        records whether the transient reasoning trace from the failed
+        attempt is dropped before retrying.
+        """
+        return TurnEvent(
+            type=TurnEventType.RECOVERY_START,
+            metadata={
+                "attempt": attempt,
+                "reason": reason,
+                "discard_transient_reasoning": discard_transient_reasoning,
+            },
+        )
+
+    @staticmethod
+    def tool_call_discarded(tool_call_id: str, tool_name: str, reason: str) -> TurnEvent:
+        """Close out a started-but-discarded tool call.
+
+        Emitted when a partial tool call (truncated args, degenerated
+        JSON, etc.) is dropped instead of executed. Pairs with a prior
+        ``TOOL_CALL_START`` so the UI can render a closed lifecycle.
+        """
+        return TurnEvent(
+            type=TurnEventType.TOOL_CALL_DISCARDED,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            metadata={"reason": reason},
+        )
+
+    # ------------------------------------------------------------------
     # Serialization — stable dict format for headless / control-server
     # ------------------------------------------------------------------
 
@@ -454,6 +515,8 @@ class TurnEvent:
 
         if self.text:
             d["text"] = self.text
+        if self.reasoning:
+            d["reasoning"] = self.reasoning
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
         if self.tool_name:

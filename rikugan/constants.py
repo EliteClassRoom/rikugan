@@ -33,6 +33,13 @@ SYSTEM_PROMPT_VERSION = 1
 CONFIG_SCHEMA_VERSION = 2
 SESSION_SCHEMA_VERSION = 1
 
+# ---------------------------------------------------------------------------
+# Built-in GLM provider (Task 4 of GLM reasoning resilience plan)
+# ---------------------------------------------------------------------------
+#: Default model for the built-in ``glm`` provider.  The user can override
+#: via Settings; this is only the fallback when the saved model is empty.
+GLM_DEFAULT_MODEL = "glm-5.2"
+
 SKILLS_DIR_NAME = "skills"
 MCP_CONFIG_FILE = "mcp.json"
 MCP_TOOL_PREFIX = "mcp_"

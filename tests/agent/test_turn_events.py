@@ -204,6 +204,41 @@ class TestTurnEventTypeEnum(unittest.TestCase):
         self.assertTrue(expected.issubset(actual), f"Missing: {expected - actual}")
 
 
+class TestReasoningRecoveryEvents(unittest.TestCase):
+    """GLM reasoning resilience events: reasoning channel, recovery boundary,
+    and discarded (partial) tool calls."""
+
+    def test_reasoning_event_serializes_distinct_payload(self):
+        e = TurnEvent.reasoning_event("private chain")
+        self.assertEqual(e.type, TurnEventType.REASONING_DELTA)
+        self.assertEqual(e.reasoning, "private chain")
+        self.assertEqual(e.text, "")
+        self.assertEqual(e.to_dict()["reasoning"], "private chain")
+
+    def test_recovery_start_serializes_boundary_metadata(self):
+        e = TurnEvent.recovery_start(
+            attempt=2,
+            reason="reasoning_degenerated",
+            discard_transient_reasoning=True,
+        )
+        self.assertEqual(e.type, TurnEventType.RECOVERY_START)
+        self.assertEqual(
+            e.metadata,
+            {
+                "attempt": 2,
+                "reason": "reasoning_degenerated",
+                "discard_transient_reasoning": True,
+            },
+        )
+
+    def test_tool_call_discarded_closes_started_call(self):
+        e = TurnEvent.tool_call_discarded("call_1", "read_bytes", "truncated_arguments")
+        self.assertEqual(e.type, TurnEventType.TOOL_CALL_DISCARDED)
+        self.assertEqual(e.tool_call_id, "call_1")
+        self.assertEqual(e.tool_name, "read_bytes")
+        self.assertEqual(e.metadata["reason"], "truncated_arguments")
+
+
 class TestDocsGateStatusEvent(unittest.TestCase):
     def test_factory_sets_metadata_and_tool_call_id(self):
         ev = TurnEvent.docs_gate_status(

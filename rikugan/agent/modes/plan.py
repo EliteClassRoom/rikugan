@@ -56,10 +56,13 @@ def _generate_plan_text(
     """Stream a text-only LLM turn for plan generation. Returns plan text or None."""
     yield TurnEvent.turn_start(1)
     try:
-        plan_text, _, usage, _ = yield from loop._stream_llm_turn(system_prompt, None)
+        outcome = yield from loop._stream_llm_turn(system_prompt, None)
     except ProviderError as e:
         yield TurnEvent.error_event(loop._format_provider_error_for_user(e))
         return None
+
+    plan_text = outcome.visible_text
+    usage = outcome.usage
 
     if plan_text:
         yield TurnEvent.text_done(plan_text)

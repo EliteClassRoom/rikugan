@@ -18,7 +18,16 @@ from typing import Any, NoReturn, TypedDict
 
 from ..core.errors import AuthenticationError, ContextLengthError, ProviderError, RateLimitError
 from ..core.logging import log_debug
-from ..core.types import Message, ModelInfo, ProviderCapabilities, Role, StreamChunk, TokenUsage, ToolCall
+from ..core.types import (
+    LLMRequestContext,
+    Message,
+    ModelInfo,
+    ProviderCapabilities,
+    Role,
+    StreamChunk,
+    TokenUsage,
+    ToolCall,
+)
 from .base import LLMProvider
 
 CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -478,11 +487,17 @@ class CodexProvider(LLMProvider):
         temperature: float,
         max_tokens: int,
         system: str,
+        *,
+        request_context: LLMRequestContext | None = None,
     ) -> dict[str, Any]:
         # Codex/ChatGPT OAuth sessions do not support temperature/max_tokens
         # overrides (server-side defaults apply), so these are accepted to
         # satisfy the LLMProvider contract but intentionally unused.
-        del temperature, max_tokens
+        # ``request_context`` is also a pure pass-through — the base
+        # ``LLMProvider.chat`` already merges ``context.system_suffix`` into
+        # ``system`` and applies any ``max_tokens_override`` before this
+        # hook is reached.
+        del temperature, max_tokens, request_context
         kwargs: dict[str, Any] = {
             "model": self.model,
             "input": self._format_messages(messages),

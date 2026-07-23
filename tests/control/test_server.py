@@ -52,11 +52,7 @@ class _FakeSocket:
     """Minimal fake socket."""
 
     def makefile(self, mode: str = "rb", buffering: int = -1):
-        return (
-            _FakeFile(b"GET / HTTP/1.0\r\n\r\n")
-            if "r" in mode
-            else _FakeFile()
-        )
+        return _FakeFile(b"GET / HTTP/1.0\r\n\r\n") if "r" in mode else _FakeFile()
 
     def close(self) -> None:
         pass
@@ -97,9 +93,7 @@ class _RequestHelper:
         auth: str | None = "Bearer test-token",
         raw_body: bytes | None = None,
     ):
-        body_bytes = raw_body if raw_body is not None else (
-            json.dumps(body).encode("utf-8") if body else b""
-        )
+        body_bytes = raw_body if raw_body is not None else (json.dumps(body).encode("utf-8") if body else b"")
         raw_headers = {"Host": "127.0.0.1"}
         if auth:
             raw_headers["Authorization"] = auth
@@ -110,9 +104,7 @@ class _RequestHelper:
 
         # Patch BaseHTTPRequestHandler.handle() so __init__ doesn't
         # trigger a full request cycle.
-        with patch(
-            "http.server.BaseHTTPRequestHandler.handle", return_value=None
-        ):
+        with patch("http.server.BaseHTTPRequestHandler.handle", return_value=None):
             handler = cls(_FakeSocket(), ("127.0.0.1", 54321), None)
 
         # Replace send helpers with mocks that still call through so
@@ -120,15 +112,9 @@ class _RequestHelper:
         _send_response = handler.send_response
         _send_header = handler.send_header
         _end_headers = handler.end_headers
-        handler.send_response = MagicMock(
-            side_effect=lambda *a, **kw: _send_response(*a, **kw)
-        )
-        handler.send_header = MagicMock(
-            side_effect=lambda *a, **kw: _send_header(*a, **kw)
-        )
-        handler.end_headers = MagicMock(
-            side_effect=lambda *a, **kw: _end_headers(*a, **kw)
-        )
+        handler.send_response = MagicMock(side_effect=lambda *a, **kw: _send_response(*a, **kw))
+        handler.send_header = MagicMock(side_effect=lambda *a, **kw: _send_header(*a, **kw))
+        handler.end_headers = MagicMock(side_effect=lambda *a, **kw: _end_headers(*a, **kw))
 
         # Replace streams with our own
         rfile = io.BytesIO(body_bytes)
@@ -248,9 +234,7 @@ class TestControlServerInit(unittest.TestCase):
         from rikugan.control.server import ControlServer
 
         controller = MagicMock()
-        server = ControlServer(
-            controller, host="127.0.0.1", port=9999, token="a" * 64
-        )
+        server = ControlServer(controller, host="127.0.0.1", port=9999, token="a" * 64)
 
         fd, path = tempfile.mkstemp(suffix=".json")
         os.close(fd)
@@ -396,9 +380,7 @@ class TestControlHandler(unittest.TestCase):
         self.assertIn("error", resp)
 
     def test_prompt_with_auth(self):
-        handler, _wfile = self._rh.request(
-            "POST", "/prompt", body={"prompt": "hello"}
-        )
+        handler, _wfile = self._rh.request("POST", "/prompt", body={"prompt": "hello"})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("run_id", resp)
@@ -406,9 +388,7 @@ class TestControlHandler(unittest.TestCase):
     def test_prompt_rejects_when_shutting_down(self):
         with self.state.lock:
             self.state.shutting_down = True
-        handler, _wfile = self._rh.request(
-            "POST", "/prompt", body={"prompt": "hello"}
-        )
+        handler, _wfile = self._rh.request("POST", "/prompt", body={"prompt": "hello"})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("error", resp)
@@ -418,9 +398,7 @@ class TestControlHandler(unittest.TestCase):
 
         with self.state.lock:
             self.state.run = RunState(run_id="existing")
-        handler, _wfile = self._rh.request(
-            "POST", "/prompt", body={"prompt": "hello"}
-        )
+        handler, _wfile = self._rh.request("POST", "/prompt", body={"prompt": "hello"})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("error", resp)
@@ -433,9 +411,7 @@ class TestControlHandler(unittest.TestCase):
             self.state.run = RunState(run_id="existing")
             self.state.run.finished = True
 
-        handler, _wfile = self._rh.request(
-            "POST", "/prompt", body={"prompt": "hello"}
-        )
+        handler, _wfile = self._rh.request("POST", "/prompt", body={"prompt": "hello"})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("run_id", resp)
@@ -454,9 +430,7 @@ class TestControlHandler(unittest.TestCase):
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
-        handler, _wfile = self._rh.request(
-            "POST", "/cancel", body={"run_id": "test-run"}
-        )
+        handler, _wfile = self._rh.request("POST", "/cancel", body={"run_id": "test-run"})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("status", resp)
@@ -467,9 +441,7 @@ class TestControlHandler(unittest.TestCase):
 
         with self.state.lock:
             self.state.run = RunState(run_id="active-run")
-        handler, _wfile = self._rh.request(
-            "POST", "/cancel", body={"run_id": "other-run"}
-        )
+        handler, _wfile = self._rh.request("POST", "/cancel", body={"run_id": "other-run"})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("error", resp)
@@ -549,17 +521,13 @@ class TestControlHandler(unittest.TestCase):
         self.assertIn("error", resp)
 
     def test_answer_missing_run_id(self):
-        handler, _wfile = self._rh.request(
-            "POST", "/answer", body={"answer": "yes"}
-        )
+        handler, _wfile = self._rh.request("POST", "/answer", body={"answer": "yes"})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("error", resp)
 
     def test_answer_missing_answer_field(self):
-        handler, _wfile = self._rh.request(
-            "POST", "/answer", body={"run_id": "test-run"}
-        )
+        handler, _wfile = self._rh.request("POST", "/answer", body={"run_id": "test-run"})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("error", resp)
@@ -612,9 +580,7 @@ class TestControlHandler(unittest.TestCase):
         agent_loop.submit_tool_approval.assert_called_with("allow")
 
     def test_tool_approval_missing_run_id(self):
-        handler, _wfile = self._rh.request(
-            "POST", "/tool-approval", body={"approved": True}
-        )
+        handler, _wfile = self._rh.request("POST", "/tool-approval", body={"approved": True})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("error", resp)
@@ -657,9 +623,7 @@ class TestControlHandler(unittest.TestCase):
         agent_loop.submit_approval.assert_called_with("approve")
 
     def test_approval_missing_run_id(self):
-        handler, _wfile = self._rh.request(
-            "POST", "/approval", body={"approved": True}
-        )
+        handler, _wfile = self._rh.request("POST", "/approval", body={"approved": True})
         handler.do_POST()
         resp = self._get_json(_wfile)
         self.assertIn("error", resp)
@@ -868,9 +832,7 @@ class TestControlHandler(unittest.TestCase):
 
         with self.state.lock:
             self.state.run = RunState(run_id="test-run")
-            self.state.run.event_buffer.append(
-                {"type": "text_delta", "text": "hello!", "seq": 0}
-            )
+            self.state.run.event_buffer.append({"type": "text_delta", "text": "hello!", "seq": 0})
             self.state.run.next_seq = 1
 
         handler, _wfile = self._rh.request("GET", "/events?index=0")
@@ -893,9 +855,7 @@ class TestControlHandler(unittest.TestCase):
 
     def test_events_stale_run_id_after_empty_events(self):
         """When run_id is stale and no events, return empty finished."""
-        handler, _wfile = self._rh.request(
-            "GET", "/events?run_id=nonexistent"
-        )
+        handler, _wfile = self._rh.request("GET", "/events?run_id=nonexistent")
         handler.do_GET()
         resp = self._get_json(_wfile)
         self.assertTrue(resp.get("finished", False))
@@ -939,7 +899,7 @@ class TestControlHandler(unittest.TestCase):
         handler, _wfile = self._rh.request(
             "POST",
             "/prompt",
-            raw_body=b'[1, 2, 3]',
+            raw_body=b"[1, 2, 3]",
         )
         handler.do_POST()
         self.assertEqual(self._get_status(handler), 400)
@@ -1667,14 +1627,10 @@ class TestEventsRunReplacementRace(unittest.TestCase):
         with self.state.lock:
             old_run = RunState(run_id="old-run-runid")
             self.state.run = old_run
-            old_run.event_buffer.append(
-                {"type": "text_delta", "text": "old-event", "turn_number": 1}
-            )
+            old_run.event_buffer.append({"type": "text_delta", "text": "old-event", "turn_number": 1})
 
         # Now query /events with the old run ID and wait=1
-        handler, _wfile = self._rh.request(
-            "GET", "/events?run_id=old-run-runid&index=0&wait=1"
-        )
+        handler, _wfile = self._rh.request("GET", "/events?run_id=old-run-runid&index=0&wait=1")
 
         # In a background thread, replace the run and notify condition
         def _replace_run():
@@ -1788,6 +1744,7 @@ class TestShutdownProductionPath(unittest.TestCase):
         t.start()
 
         import time
+
         # Give broker a moment to enter its loop.
         time.sleep(0.05)
 
@@ -1836,3 +1793,136 @@ class TestProtocolSerialization(unittest.TestCase):
         self.assertIn('"error"', body)
         self.assertIn('"Something went wrong"', body)
         self.assertIn('"detail"', body)
+
+
+# ---------------------------------------------------------------------------
+# Pass-through: reasoning/recovery events in EventBroker
+# ---------------------------------------------------------------------------
+
+
+class _FakeBrokerRunner:
+    """Fake runner that feeds events from a queue for the EventBroker."""
+
+    def __init__(self, events: list):
+        import queue
+
+        self._queue: queue.Queue = queue.Queue()
+        for e in events:
+            self._queue.put(e)
+        self.agent_loop = MagicMock()
+
+    def get_event(self, timeout: float = 0.2):
+        import queue
+
+        try:
+            return self._queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+
+class TestEventBrokerReasoningPassThrough(unittest.TestCase):
+    """GLM reasoning/recovery events must enter ``event_buffer`` via
+    ``to_dict()`` but must NOT mutate ``run.final_text`` or ``run.exit_code``.
+
+    Only TEXT_DONE mutates ``final_text``; only ERROR/CANCELLED mutate
+    ``exit_code``.
+    """
+
+    def _drain_broker(self, events: list):
+        """Run the EventBroker against *events* and return the final RunState."""
+        from rikugan.control.server import (
+            ControlServerState,
+            EventBroker,
+            RunState,
+        )
+
+        runner = _FakeBrokerRunner(events)
+
+        class _Controller:
+            def __init__(self):
+                self._runner = runner
+                self._running = True
+                self.on_agent_finished = MagicMock()
+                self.cancel = MagicMock()
+
+            def get_runner(self):
+                return self._runner
+
+            @property
+            def is_agent_running(self):
+                # Flip to False after the queue is drained.
+                return not self._runner._queue.empty()
+
+        controller = _Controller()
+        state = ControlServerState(token="test-token")
+
+        with state.lock:
+            state.run = RunState(run_id="passthrough-test")
+            broker = EventBroker(state, controller)
+            state.run.broker = broker
+
+        broker.start()
+        # Wait for the broker thread to finish draining.
+        broker._thread.join(timeout=5.0) if broker._thread else None
+
+        with state.lock:
+            assert state.run is not None
+            return state.run
+
+    def test_reasoning_and_recovery_events_enter_buffer_without_mutating_status(self):
+        from rikugan.agent.turn import TurnEvent
+
+        run = self._drain_broker(
+            [
+                TurnEvent.reasoning_event("hidden reasoning"),
+                TurnEvent.recovery_start(
+                    attempt=2,
+                    reason="reasoning_degenerated",
+                    discard_transient_reasoning=True,
+                ),
+                TurnEvent.text_done("visible"),
+            ]
+        )
+
+        # final_text must be visible-only — reasoning is NOT in final_text.
+        self.assertEqual(run.final_text, "visible")
+        # exit_code stays at 0 — no error or cancellation.
+        self.assertEqual(run.exit_code, 0)
+        # Events must appear in the buffer.
+        event_types = [ev["type"] for ev in run.event_buffer]
+        self.assertIn("reasoning_delta", event_types)
+        self.assertIn("recovery_start", event_types)
+
+    def test_tool_call_discarded_enters_buffer_without_mutating_status(self):
+        from rikugan.agent.turn import TurnEvent
+
+        run = self._drain_broker(
+            [
+                TurnEvent.tool_call_start("call_1", "read_bytes"),
+                TurnEvent.tool_call_discarded("call_1", "read_bytes", "truncated"),
+                TurnEvent.text_done("done"),
+            ]
+        )
+
+        self.assertEqual(run.final_text, "done")
+        self.assertEqual(run.exit_code, 0)
+        event_types = [ev["type"] for ev in run.event_buffer]
+        self.assertIn("tool_call_discarded", event_types)
+
+    def test_recovery_failure_error_sets_exit_code(self):
+        """Recovery failure ERROR is a real failure — exit_code must change."""
+        from rikugan.agent.turn import TurnEvent
+
+        run = self._drain_broker(
+            [
+                TurnEvent.recovery_start(
+                    attempt=2,
+                    reason="reasoning_degenerated",
+                    discard_transient_reasoning=True,
+                ),
+                TurnEvent.error_event("Reasoning degeneration persisted after recovery attempt."),
+            ]
+        )
+
+        self.assertEqual(run.exit_code, 5)
+        self.assertTrue(any("degeneration persisted" in e for e in run.errors))

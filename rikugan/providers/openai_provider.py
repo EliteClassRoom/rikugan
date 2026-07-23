@@ -18,6 +18,7 @@ from ..core.errors import (
 )
 from ..core.logging import log_debug
 from ..core.types import (
+    LLMRequestContext,
     Message,
     ModelInfo,
     ProviderCapabilities,
@@ -28,6 +29,138 @@ from ..core.types import (
     coerce_token_count,
 )
 from .base import LLMProvider
+
+
+def _format_openai_messages(
+    messages: list[Message],
+    *,
+    include_reasoning_content: bool = False,
+) -> list[dict[str, Any]]:
+    """Format messages for the OpenAI Chat Completions API wire shape.
+
+    Defensively repairs duplicate or missing ``tool_calls[].id`` values
+    before sending the request, because OpenAI rejects requests with
+    ``invalid params, duplicate tool_call id`` and older / restored
+    sessions may already contain duplicates.
+
+    Strategy:
+    - Track every assistant ``tool_calls[].id`` emitted into the outgoing
+      request (across all messages, not just the current one).
+    - If a new ``tc.id`` is empty or collides with an id already used in
+      this request, generate a safe replacement id of the form
+      ``call_dedup_<counter>_<short_uuid>`` that cannot collide with any
+      other rewritten id.
+    - Rewrite the *immediately following* ``Role.TOOL`` message's
+      ``tool_results[*].tool_call_id`` values so each tool result still
+      references the (possibly rewritten) assistant tool call id.  Original
+      ids can collide multiple times in pathological histories, so the
+      rewrite uses an ordered queue per original id and pops the first
+      unused replacement.
+
+    ``include_reasoning_content`` controls whether assistant messages
+    carry the ``reasoning_content`` field.  OpenAI omits it (reasoning is
+    only surfaced in streamed responses); GLM includes it so the upstream
+    endpoint sees prior thinking context on multi-turn conversations.
+
+    The function does not mutate the input ``Message`` objects.
+    """
+    formatted: list[dict[str, Any]] = []
+    # ``used_ids`` are the assistant ``tool_calls[].id`` values that have
+    # already been emitted into ``formatted``.  Used only to detect
+    # duplicates within the *outgoing* request (we do not need it to
+    # track replacements because the counter suffix makes them unique by
+    # construction).
+    used_ids: set[str] = set()
+    # ``pending_rewrites`` maps an *original* tool_call_id to a queue of
+    # replacement ids that the next matching TOOL result messages must
+    # consume, in order.  This handles the case where the same original
+    # id appears multiple times in the assistant message (we still want
+    # each tool result message to point at a unique replacement).
+    pending_rewrites: dict[str, list[str]] = {}
+    _counter = 0
+
+    def _new_replacement_id() -> str:
+        nonlocal _counter
+        _counter += 1
+        return f"call_dedup_{_counter}_{uuid.uuid4().hex[:8]}"
+
+    for msg in messages:
+        if msg.role == Role.SYSTEM:
+            formatted.append({"role": "system", "content": msg.content})
+        elif msg.role == Role.USER:
+            formatted.append({"role": "user", "content": msg.content})
+        elif msg.role == Role.ASSISTANT:
+            d: dict[str, Any] = {"role": "assistant"}
+            if msg.content:
+                d["content"] = msg.content
+            # GLM carries the prior reasoning trace on the wire so the
+            # model can continue multi-turn thinking.  OpenAI never sends
+            # this field — its reasoning text only appears in the streamed
+            # response.
+            if include_reasoning_content and msg.reasoning_content:
+                d["reasoning_content"] = msg.reasoning_content
+            if msg.tool_calls:
+                out_tcs: list[dict[str, Any]] = []
+                for tc in msg.tool_calls:
+                    original = tc.id or ""
+                    if not original or original in used_ids:
+                        # Missing or duplicate within the request:
+                        # synthesize a fresh, unique id.
+                        new_id = _new_replacement_id()
+                    else:
+                        new_id = original
+                    used_ids.add(new_id)
+                    # Remember the rewrite so the matching TOOL result(s)
+                    # can be updated.  Multiple duplicates of the *same*
+                    # original id push multiple replacement ids; the next
+                    # matching TOOL result pops them in order.
+                    if not original or new_id != original:
+                        pending_rewrites.setdefault(original, []).append(new_id)
+                    out_tcs.append(
+                        {
+                            "id": new_id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments),
+                            },
+                        }
+                    )
+                d["tool_calls"] = out_tcs
+            formatted.append(d)
+        elif msg.role == Role.TOOL:
+            for tr in msg.tool_results:
+                tr_id = tr.tool_call_id
+                rewritten: str | None = None
+                if pending_rewrites.get(tr_id):
+                    rewritten = pending_rewrites[tr_id].pop(0)
+                elif tr_id and tr_id in used_ids:
+                    # Id is valid (matches a previous assistant tool_call)
+                    # and unique.  No rewrite needed.
+                    rewritten = None
+                elif not tr_id:
+                    # Empty tool_call_id: synthesize a fresh one.
+                    rewritten = _new_replacement_id()
+                else:
+                    # ``tr_id`` does not match any assistant tool_call in
+                    # the request.  This is a corrupt / stale history;
+                    # rewrite to a fresh id so the request still parses
+                    # (better than dropping the result, which would break
+                    # tool sequencing).
+                    rewritten = _new_replacement_id()
+                    log_debug(
+                        "_format_openai_messages: tool result with unknown "
+                        f"tool_call_id={tr_id!r} was rewritten to {rewritten!r}."
+                    )
+                out_id = rewritten if rewritten is not None else tr_id
+                formatted.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": out_id,
+                        "content": tr.content,
+                    }
+                )
+    return formatted
 
 
 class OpenAIProvider(LLMProvider):
@@ -120,119 +253,16 @@ class OpenAIProvider(LLMProvider):
         requests with ``invalid params, duplicate tool_call id`` and
         older / restored sessions may already contain duplicates.
 
-        Strategy:
-        - Track every assistant ``tool_calls[].id`` emitted into the
-          outgoing request (across all messages, not just the
-          current one).
-        - If a new ``tc.id`` is empty or collides with an id already
-          used in this request, generate a safe replacement id of
-          the form ``call_dedup_<counter>_<short_uuid>`` that cannot
-          collide with any other rewritten id.
-        - Rewrite the *immediately following* ``Role.TOOL``
-          message's ``tool_results[*].tool_call_id`` values so each
-          tool result still references the (possibly rewritten)
-          assistant tool call id.  Original ids can collide multiple
-          times in pathological histories, so the rewrite uses an
-          ordered queue per original id and pops the first unused
-          replacement.
+        The repair logic lives in :func:`_format_openai_messages` (module
+        level) so the GLM dialect can reuse it without duplicating the
+        tool-ID rewrite.  OpenAI itself does not send ``reasoning_content``
+        on the wire (the reasoning text is only surfaced in the streamed
+        response via ``delta.reasoning_content``), so
+        ``include_reasoning_content`` is False here.
 
         The function does not mutate the input ``Message`` objects.
         """
-        formatted: list[dict[str, Any]] = []
-        # ``used_ids`` are the assistant ``tool_calls[].id`` values
-        # that have already been emitted into ``formatted``.  Used
-        # only to detect duplicates within the *outgoing* request
-        # (we do not need it to track replacements because the
-        # counter suffix makes them unique by construction).
-        used_ids: set[str] = set()
-        # ``pending_rewrites`` maps an *original* tool_call_id to a
-        # queue of replacement ids that the next matching TOOL
-        # result messages must consume, in order.  This handles the
-        # case where the same original id appears multiple times in
-        # the assistant message (we still want each tool result
-        # message to point at a unique replacement).
-        pending_rewrites: dict[str, list[str]] = {}
-        _counter = 0
-
-        def _new_replacement_id() -> str:
-            nonlocal _counter
-            _counter += 1
-            return f"call_dedup_{_counter}_{uuid.uuid4().hex[:8]}"
-
-        for msg in messages:
-            if msg.role == Role.SYSTEM:
-                formatted.append({"role": "system", "content": msg.content})
-            elif msg.role == Role.USER:
-                formatted.append({"role": "user", "content": msg.content})
-            elif msg.role == Role.ASSISTANT:
-                d: dict[str, Any] = {"role": "assistant"}
-                if msg.content:
-                    d["content"] = msg.content
-                if msg.tool_calls:
-                    out_tcs: list[dict[str, Any]] = []
-                    for tc in msg.tool_calls:
-                        original = tc.id or ""
-                        if not original or original in used_ids:
-                            # Missing or duplicate within the request:
-                            # synthesize a fresh, unique id.
-                            new_id = _new_replacement_id()
-                        else:
-                            new_id = original
-                        used_ids.add(new_id)
-                        # Remember the rewrite so the matching TOOL
-                        # result(s) can be updated.  Multiple
-                        # duplicates of the *same* original id push
-                        # multiple replacement ids; the next
-                        # matching TOOL result pops them in order.
-                        if not original or new_id != original:
-                            pending_rewrites.setdefault(original, []).append(new_id)
-                        out_tcs.append(
-                            {
-                                "id": new_id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.name,
-                                    "arguments": json.dumps(tc.arguments),
-                                },
-                            }
-                        )
-                    d["tool_calls"] = out_tcs
-                formatted.append(d)
-            elif msg.role == Role.TOOL:
-                for tr in msg.tool_results:
-                    tr_id = tr.tool_call_id
-                    rewritten: str | None = None
-                    if pending_rewrites.get(tr_id):
-                        rewritten = pending_rewrites[tr_id].pop(0)
-                    elif tr_id and tr_id in used_ids:
-                        # Id is valid (matches a previous assistant
-                        # tool_call) and unique.  No rewrite needed.
-                        rewritten = None
-                    elif not tr_id:
-                        # Empty tool_call_id: synthesize a fresh one.
-                        rewritten = _new_replacement_id()
-                    else:
-                        # ``tr_id`` does not match any assistant
-                        # tool_call in the request.  This is a
-                        # corrupt / stale history; rewrite to a
-                        # fresh id so the request still parses
-                        # (better than dropping the result, which
-                        # would break tool sequencing).
-                        rewritten = _new_replacement_id()
-                        log_debug(
-                            f"OpenAIProvider._format_messages: tool result "
-                            f"with unknown tool_call_id={tr_id!r} was "
-                            f"rewritten to {rewritten!r}."
-                        )
-                    out_id = rewritten if rewritten is not None else tr_id
-                    formatted.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": out_id,
-                            "content": tr.content,
-                        }
-                    )
-        return formatted
+        return _format_openai_messages(messages, include_reasoning_content=False)
 
     def _normalize_response(self, response: Any) -> Message:
         choice = response.choices[0]
@@ -324,8 +354,19 @@ class OpenAIProvider(LLMProvider):
         temperature: float,
         max_tokens: int,
         system: str,
+        *,
+        request_context: LLMRequestContext | None = None,
     ) -> dict[str, Any]:
-        """Build kwargs dict for chat.completions.create."""
+        """Build kwargs dict for chat.completions.create.
+
+        ``request_context`` is keyword-only and a pure pass-through for
+        this provider — the base :meth:`LLMProvider.chat` already merges
+        ``context.system_suffix`` into ``system`` and applies any
+        ``max_tokens_override`` before this hook is reached, so for
+        non-GLM providers the wire payload is identical with or without
+        a context.
+        """
+        del request_context  # explicitly unused on the OpenAI wire
         msgs = []
         if system:
             msgs.append({"role": "system", "content": system})
@@ -496,9 +537,19 @@ class OpenAIProvider(LLMProvider):
                     continue
                 delta = chunk.choices[0].delta
 
-                # OpenAI o-series reasoning_content
+                # Reasoning content.  Capability-gated:
+                # - Providers that advertise ``reasoning_content`` (GLM)
+                #   yield a dedicated ``reasoning_delta`` chunk so the
+                #   agent loop can surface the thinking trace separately
+                #   from the user-visible text.  No ``<think>`` tags are
+                #   injected.
+                # - Providers without the capability (plain OpenAI) keep
+                #   the legacy inline-``<think>`` behavior so existing
+                #   o-series sessions continue to render reasoning inline.
                 reasoning = getattr(delta, "reasoning_content", None)
-                if reasoning:
+                if reasoning and self.capabilities.reasoning_content:
+                    yield StreamChunk(reasoning_delta=reasoning)
+                elif reasoning:
                     if not _in_reasoning:
                         yield StreamChunk(text="<think>")
                         _in_reasoning = True

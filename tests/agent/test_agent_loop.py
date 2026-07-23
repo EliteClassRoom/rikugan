@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import unittest
+from collections.abc import Generator as GeneratorType
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -15,7 +16,7 @@ install_ida_mocks()
 
 from rikugan.agent.exploration_mode import ExplorationState
 from rikugan.agent.loop import AgentLoop, BackgroundAgentRunner
-from rikugan.agent.turn import TurnEventType
+from rikugan.agent.turn import TurnEvent, TurnEventType
 from rikugan.core.config import RikuganConfig
 from rikugan.core.types import (
     Message,
@@ -25,6 +26,8 @@ from rikugan.core.types import (
     StreamChunk,
     TokenUsage,
     ToolCall,
+    TurnDisposition,
+    TurnOutcome,
 )
 from rikugan.providers.base import LLMProvider
 from rikugan.state.session import SessionState
@@ -64,7 +67,7 @@ class MockProvider(LLMProvider):
     def _normalize_response(self, raw):
         return raw
 
-    def _build_request_kwargs(self, messages, tools, temperature, max_tokens, system):
+    def _build_request_kwargs(self, messages, tools, temperature, max_tokens, system, **kwargs):
         return {}
 
     def _call_api(self, client, kwargs):
@@ -76,7 +79,7 @@ class MockProvider(LLMProvider):
     def _stream_chunks(self, client, kwargs, cancel_event=None):
         yield from ()
 
-    def chat(self, messages, tools=None, temperature=0.3, max_tokens=4096, system=""):
+    def chat(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", **kwargs):
         return Message(role=Role.ASSISTANT, content="mock response")
 
     def chat_stream(
@@ -87,6 +90,9 @@ class MockProvider(LLMProvider):
         max_tokens=4096,
         system="",
         cancel_event=None,
+        *,
+        request_context=None,
+        **kwargs,
     ):
         if self._call_count < len(self._responses):
             chunks = self._responses[self._call_count]
@@ -118,6 +124,18 @@ def _tool_call_response(tool_name: str, args: dict[str, Any], call_id: str = "ca
         StreamChunk(is_tool_call_end=True, tool_call_id=call_id, tool_name=tool_name),
         StreamChunk(usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)),
     ]
+
+
+def _drain_generator_with_return(
+    generator: GeneratorType,
+) -> tuple[list, Any]:
+    """Drain a generator, returning events and return value."""
+    events: list = []
+    while True:
+        try:
+            events.append(next(generator))
+        except StopIteration as stopped:
+            return events, stopped.value
 
 
 class TestAgentLoop(unittest.TestCase):
@@ -449,7 +467,9 @@ class TestAgentLoop(unittest.TestCase):
             mid-generation (e.g. httpx.RemoteProtocolError classified as a
             generic, non-retryable ProviderError by _handle_api_error)."""
 
-            def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None):
+            def chat_stream(
+                self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None, **kwargs
+            ):
                 yield StreamChunk(text="Partial answer that the user already ")
                 yield StreamChunk(text="saw stream by.")
                 raise ProviderError(
@@ -483,7 +503,9 @@ class TestAgentLoop(unittest.TestCase):
         from rikugan.core.errors import ProviderError
 
         class ColdFailProvider(MockProvider):
-            def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None):
+            def chat_stream(
+                self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None, **kwargs
+            ):
                 raise ProviderError("Connection refused", provider="mock", retryable=False)
 
         provider = ColdFailProvider()
@@ -508,7 +530,9 @@ class TestAgentLoop(unittest.TestCase):
         from rikugan.core.errors import CancellationError
 
         class CancelMidStreamProvider(MockProvider):
-            def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None):
+            def chat_stream(
+                self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None, **kwargs
+            ):
                 yield StreamChunk(text="Streaming")
                 raise CancellationError("Cancelled mid-stream")
 
@@ -540,7 +564,9 @@ class TestAgentLoop(unittest.TestCase):
         )
 
         class MixedStreamProvider(MockProvider):
-            def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None):
+            def chat_stream(
+                self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None, **kwargs
+            ):
                 # Completed tool call
                 yield StreamChunk(is_tool_call_start=True, tool_call_id="c1", tool_name="echo")
                 yield StreamChunk(tool_args_delta='{"text": "hi"}', tool_call_id="c1")
@@ -625,6 +651,552 @@ class TestAgentLoop(unittest.TestCase):
         loop = self._make_loop(provider)
         options = self._collect_question_options(loop, {"question": "Thoughts?"})
         self.assertEqual(options, [])
+
+    def test_stream_turn_returns_typed_completed_outcome(self):
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = self._make_loop(provider)
+        generator = loop._stream_llm_turn("system", None)
+        _events, outcome = _drain_generator_with_return(generator)
+        assert isinstance(outcome, TurnOutcome)
+        assert outcome.visible_text == "done"
+        assert outcome.disposition == TurnDisposition.COMPLETED
+        assert outcome.tool_calls == []
+
+    def test_stream_turn_returns_tool_use_outcome(self):
+        provider = MockProvider(responses=[_tool_call_response("echo", {"text": "hi"})])
+        loop = self._make_loop(provider)
+        generator = loop._stream_llm_turn("system", None)
+        _events, outcome = _drain_generator_with_return(generator)
+        assert isinstance(outcome, TurnOutcome)
+        assert outcome.disposition == TurnDisposition.TOOL_USE
+        assert len(outcome.tool_calls) == 1
+        assert outcome.tool_calls[0].name == "echo"
+
+    def test_stream_turn_returns_truncated_text_outcome(self):
+        chunks = [StreamChunk(text="partial answer"), StreamChunk(finish_reason="length")]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+        generator = loop._stream_llm_turn("system", None)
+        _events, outcome = _drain_generator_with_return(generator)
+        assert isinstance(outcome, TurnOutcome)
+        assert outcome.disposition == TurnDisposition.TRUNCATED_TEXT
+        assert outcome.visible_text == "partial answer"
+
+    def test_stream_turn_returns_truncated_partial_tool_use(self):
+        chunks = [
+            StreamChunk(text="thinking..."),
+            StreamChunk(is_tool_call_start=True, tool_call_id="c1", tool_name="echo"),
+            StreamChunk(tool_args_delta='{"text":', tool_call_id="c1"),
+            StreamChunk(finish_reason="length"),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+        generator = loop._stream_llm_turn("system", None)
+        _events, outcome = _drain_generator_with_return(generator)
+        assert isinstance(outcome, TurnOutcome)
+        assert outcome.disposition == TurnDisposition.TRUNCATED_PARTIAL_TOOL_USE
+
+    def test_stream_turn_returns_stream_broken_outcome(self):
+        from rikugan.core.errors import ProviderError
+
+        class BrokenStreamProvider(MockProvider):
+            def chat_stream(
+                self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", cancel_event=None, **kwargs
+            ):
+                yield StreamChunk(text="partial")
+                raise ProviderError("dropped", provider="mock", retryable=False)
+
+        provider = BrokenStreamProvider()
+        loop = self._make_loop(provider)
+        generator = loop._stream_llm_turn("system", None)
+        _events, outcome = _drain_generator_with_return(generator)
+        assert isinstance(outcome, TurnOutcome)
+        assert outcome.disposition == TurnDisposition.STREAM_BROKEN
+        assert outcome.visible_text == "partial"
+
+    def test_stream_turn_reasoning_accumulated_separately(self):
+        chunks = [
+            StreamChunk(reasoning_delta="Thinking step 1. "),
+            StreamChunk(reasoning_delta="Step 2. "),
+            StreamChunk(text="Final answer."),
+            StreamChunk(usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)),
+        ]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+        generator = loop._stream_llm_turn("system", None)
+        _events, outcome = _drain_generator_with_return(generator)
+        assert isinstance(outcome, TurnOutcome)
+        assert outcome.visible_text == "Final answer."
+        assert "Thinking step 1." in outcome.reasoning_content
+        assert "Step 2." in outcome.reasoning_content
+        assert "Final answer." not in outcome.reasoning_content
+
+    def test_stream_turn_reasoning_emits_reasoning_events(self):
+        chunks = [StreamChunk(reasoning_delta="thinking..."), StreamChunk(text="answer")]
+        provider = MockProvider(responses=[chunks])
+        loop = self._make_loop(provider)
+        generator = loop._stream_llm_turn("system", None)
+        _events, _ = _drain_generator_with_return(generator)
+        reasoning_events = [e for e in _events if e.type == TurnEventType.REASONING_DELTA]
+        assert len(reasoning_events) == 1
+        assert "thinking" in reasoning_events[0].reasoning
+
+
+class TestStreamOutcomeGuardIntegration(unittest.TestCase):
+    def _make_loop(self, provider, tools=None):
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        return AgentLoop(provider=provider, tool_registry=tools or ToolRegistry(), config=config, session=session)
+
+    def test_guard_not_created_without_tools(self):
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = self._make_loop(provider)
+        generator = loop._stream_llm_turn("system", None)
+        _events, outcome = _drain_generator_with_return(generator)
+        assert outcome.disposition == TurnDisposition.COMPLETED
+        assert outcome.guard_trigger == ""
+
+    def test_guard_not_created_for_non_glm_provider(self):
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+        provider = MockProvider(responses=[_text_response("done")])
+        loop = self._make_loop(provider, tools=registry)
+        tools_schema = registry.to_provider_format()
+        generator = loop._stream_llm_turn("system", tools_schema)
+        _events, outcome = _drain_generator_with_return(generator)
+        assert outcome.disposition == TurnDisposition.COMPLETED
+        assert outcome.guard_trigger == ""
+
+    def test_guard_trigger_estimates_nonzero_completion(self):
+        """When the guard triggers with no provider usage, the AttemptUsage
+        must have nonzero exact completion computed via the ceil(bytes/3)
+        formula and provenance='estimated'."""
+        import math
+
+        # Build a large reasoning payload that will hit the ceiling.
+        # The default ceiling is 16384 tokens = 49150 UTF8 bytes.
+        # We will send a single chunk with enough bytes.
+        big_reasoning = ("Calling tool tool calling execute outputting now." + chr(10)) * 5000
+
+        # No usage chunk emitted -- guard triggers before provider sends usage.
+        chunks = [StreamChunk(reasoning_delta=big_reasoning)]
+
+        class GLMMockProvider(MockProvider):
+            @property
+            def name(self):
+                return "glm"
+
+        # Configure GLM with low ceiling for faster trigger
+        config = RikuganConfig()
+        config.auto_context = False
+        config.provider.extra = {"dialect": "glm", "degeneration_guard": {"reasoning_token_ceiling": 1024}}
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+
+        provider = GLMMockProvider(responses=[chunks])
+        loop = AgentLoop(
+            provider=provider,
+            tool_registry=registry,
+            config=config,
+            session=SessionState(provider_name="glm", model_name="glm-4.6"),
+        )
+        tools_schema = registry.to_provider_format()
+        generator = loop._stream_llm_turn("system", tools_schema)
+        _events, outcome = _drain_generator_with_return(generator)
+
+        assert outcome.disposition == TurnDisposition.DEGENERATED
+        assert outcome.attempt_usage is not None
+        assert outcome.attempt_usage.provenance == "estimated"
+        # Nonzero completion
+        assert outcome.attempt_usage.usage.completion_tokens > 0
+        # Exact: ceil(total_bytes / 3)
+        expected = math.ceil(len(big_reasoning.encode("utf-8")) / 3)
+        assert outcome.attempt_usage.usage.completion_tokens == expected
+
+    def test_authoritative_usage_wins_over_estimate(self):
+        """When provider emits usage before guard trigger, provenance
+        must be 'authoritative' even though the guard fires."""
+        # Build reasoning that will hit ceiling but usage arrives first.
+        big_reasoning = ("Calling tool tool calling execute outputting now." + chr(10)) * 5000
+
+        # Usage chunk arrives BEFORE the guard-triggering reasoning.
+        auth_usage = TokenUsage(prompt_tokens=42, completion_tokens=99, total_tokens=141)
+        chunks = [
+            StreamChunk(usage=auth_usage),
+            StreamChunk(reasoning_delta=big_reasoning),
+        ]
+
+        class GLMMockProvider(MockProvider):
+            @property
+            def name(self):
+                return "glm"
+
+        config = RikuganConfig()
+        config.auto_context = False
+        config.provider.extra = {"dialect": "glm", "degeneration_guard": {"reasoning_token_ceiling": 1024}}
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+
+        provider = GLMMockProvider(responses=[chunks])
+        loop = AgentLoop(
+            provider=provider,
+            tool_registry=registry,
+            config=config,
+            session=SessionState(provider_name="glm", model_name="glm-4.6"),
+        )
+        tools_schema = registry.to_provider_format()
+        generator = loop._stream_llm_turn("system", tools_schema)
+        _events, outcome = _drain_generator_with_return(generator)
+
+        assert outcome.disposition == TurnDisposition.DEGENERATED
+        assert outcome.attempt_usage is not None
+        assert outcome.attempt_usage.provenance == "authoritative"
+        assert outcome.attempt_usage.usage.prompt_tokens == 42
+        assert outcome.attempt_usage.usage.completion_tokens == 99
+
+    def test_invalid_glm_extra_raises_not_silently_skipped(self):
+        """Invalid GLM config values must surface as ValueError, not be
+        silently swallowed by a broad except in _maybe_create_guard."""
+        from rikugan.core.glm_config import parse_glm_extra
+
+        # An invalid reasoning_token_ceiling (string instead of int) must raise.
+        invalid_extra = {"dialect": "glm", "degeneration_guard": {"reasoning_token_ceiling": "not_an_int"}}
+
+        # Verify the parser itself raises
+        with self.assertRaises(ValueError):
+            parse_glm_extra(invalid_extra, "glm-4.6")
+
+        # Verify the guard creation surfaces the error
+        class GLMMockProvider(MockProvider):
+            @property
+            def name(self):
+                return "glm"
+
+        config = RikuganConfig()
+        config.auto_context = False
+        config.provider.extra = invalid_extra
+
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                name="echo",
+                description="echo",
+                parameters=[ParameterSchema(name="text", type="string", description="t", required=True)],
+                handler=lambda text: f"Echo: {text}",
+                category="test",
+            )
+        )
+
+        provider = GLMMockProvider(responses=[[_text_response("done")]])
+        loop = AgentLoop(
+            provider=provider,
+            tool_registry=registry,
+            config=config,
+            session=SessionState(provider_name="glm", model_name="glm-4.6"),
+        )
+        tools_schema = registry.to_provider_format()
+
+        with self.assertRaises(ValueError):
+            loop._maybe_create_guard(tools_schema)
+
+
+# ---------------------------------------------------------------------------
+# GLM strict partial-tool-call handling (Task 9)
+# ---------------------------------------------------------------------------
+
+
+class GLMMockProvider(MockProvider):
+    """Mock provider that advertises itself as GLM."""
+
+    @property
+    def name(self) -> str:
+        return "glm"
+
+
+def _make_glm_loop(
+    responses: list[list[StreamChunk]],
+    tools: ToolRegistry | None = None,
+) -> AgentLoop:
+    """Create an AgentLoop configured as GLM with the given scripted responses."""
+    config = RikuganConfig()
+    config.auto_context = False
+    config.provider.extra = {
+        "dialect": "glm",
+        "degeneration_guard": {"reasoning_token_ceiling": 65536},
+    }
+    session = SessionState(provider_name="glm", model_name="glm-4.6")
+    provider = GLMMockProvider(responses=responses)
+    return AgentLoop(
+        provider=provider,
+        tool_registry=tools or ToolRegistry(),
+        config=config,
+        session=session,
+    )
+
+
+def _glm_tool_schema(tools: ToolRegistry | None) -> list | None:
+    if tools is None or len(tools._tools) == 0:
+        return None
+    return tools.to_provider_format()
+
+
+def run_glm_stream(
+    chunks: list[StreamChunk],
+    tools: ToolRegistry | None = None,
+) -> tuple[TurnOutcome, list]:
+    """Stream chunks through a GLM-configured loop's inner stream."""
+    loop = _make_glm_loop([chunks], tools=tools)
+    generator = loop._stream_llm_turn_inner("system", _glm_tool_schema(tools))
+    events, outcome = _drain_generator_with_return(generator)
+    return outcome, events
+
+
+def _echo_registry() -> ToolRegistry:
+    """A minimal registry with read_bytes and get_pseudocode tools."""
+    registry = ToolRegistry()
+    registry.register(
+        ToolDefinition(
+            name="read_bytes",
+            description="Read bytes at address",
+            parameters=[ParameterSchema(name="address", type="integer", description="addr", required=True)],
+            handler=lambda address: f"bytes at {address}",
+            category="test",
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="get_pseudocode",
+            description="Get pseudocode",
+            parameters=[ParameterSchema(name="address", type="integer", description="addr", required=True)],
+            handler=lambda address: f"pseudocode at {address}",
+            category="test",
+        )
+    )
+    return registry
+
+
+class TestGLMStrictPartialToolCalls(unittest.TestCase):
+    """GLM must reject incomplete/malformed tool calls instead of
+    silently falling back to {}."""
+
+    def test_length_cutoff_keeps_only_safe_completed_tool_prefix(self):
+        chunks = [
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"address":4096}'),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", tool_args_delta='{"address":'),
+            StreamChunk(finish_reason="length"),
+        ]
+        outcome, events = run_glm_stream(chunks, tools=_echo_registry())
+
+        assert outcome.disposition == TurnDisposition.TRUNCATED_PARTIAL_TOOL_USE
+        assert [call.id for call in outcome.tool_calls] == ["call_1"]
+        discarded = [e for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED and e.tool_call_id == "call_2"]
+        assert len(discarded) == 1
+
+    def test_first_call_incomplete_discards_everything(self):
+        chunks = [
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"address":'),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", tool_args_delta='{"address":8192}'),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_end=True),
+            StreamChunk(finish_reason="length"),
+        ]
+        outcome, events = run_glm_stream(chunks, tools=_echo_registry())
+
+        assert outcome.disposition == TurnDisposition.TRUNCATED_PARTIAL_TOOL_USE
+        assert outcome.tool_calls == []
+        discarded_ids = {e.tool_call_id for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED}
+        assert discarded_ids == {"call_1", "call_2"}
+
+    def test_glm_malformed_json_at_end_is_discarded_not_fallback_empty(self):
+        chunks = [
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"address":'),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+            StreamChunk(finish_reason="length"),
+        ]
+        outcome, events = run_glm_stream(chunks, tools=_echo_registry())
+
+        assert outcome.disposition == TurnDisposition.TRUNCATED_PARTIAL_TOOL_USE
+        assert outcome.tool_calls == []
+        discarded = [e for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED]
+        assert len(discarded) == 1
+        assert discarded[0].tool_call_id == "call_1"
+
+    def test_non_glm_keeps_malformed_json_fallback(self):
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState(provider_name="mock", model_name="mock-model")
+        registry = _echo_registry()
+        provider = MockProvider(
+            responses=[
+                [
+                    StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+                    StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"broken":'),
+                    StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+                    StreamChunk(finish_reason="stop"),
+                ],
+            ]
+        )
+        loop = AgentLoop(
+            provider=provider,
+            tool_registry=registry,
+            config=config,
+            session=session,
+        )
+        generator = loop._stream_llm_turn_inner("system", registry.to_provider_format())
+        events, outcome = _drain_generator_with_return(generator)
+
+        assert len(outcome.tool_calls) == 1
+        assert outcome.tool_calls[0].arguments == {}
+        warn_events = [e for e in events if e.type == TurnEventType.ERROR]
+        assert len(warn_events) >= 1
+        discarded = [e for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED]
+        assert len(discarded) == 0
+
+    def test_duplicate_end_chunk_does_not_double_discard(self):
+        chunks = [
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"address":'),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+            StreamChunk(finish_reason="length"),
+        ]
+        _outcome, events = run_glm_stream(chunks, tools=_echo_registry())
+
+        discarded = [e for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED and e.tool_call_id == "call_1"]
+        assert len(discarded) == 1
+
+    def test_completed_then_malformed_at_length_persists_safe_prefix(self):
+        chunks = [
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"address":4096}'),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", tool_args_delta='{"address":'),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_end=True),
+            StreamChunk(finish_reason="length"),
+        ]
+        outcome, events = run_glm_stream(chunks, tools=_echo_registry())
+
+        assert [call.id for call in outcome.tool_calls] == ["call_1"]
+        assert [call.arguments for call in outcome.tool_calls] == [{"address": 4096}]
+        discarded = {e.tool_call_id for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED}
+        assert discarded == {"call_2"}
+
+    def test_glm_all_calls_complete_no_discard(self):
+        chunks = [
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"address":4096}'),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", tool_args_delta='{"address":8192}'),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_end=True),
+            StreamChunk(finish_reason="tool_calls"),
+        ]
+        outcome, events = run_glm_stream(chunks, tools=_echo_registry())
+
+        assert outcome.disposition == TurnDisposition.TOOL_USE
+        assert [call.id for call in outcome.tool_calls] == ["call_1", "call_2"]
+        discarded = [e for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED]
+        assert len(discarded) == 0
+
+    def test_glm_tool_states_ordered_by_start_not_dict_order(self):
+        """Tool-call states must be tracked by start order, not dict
+        hash order.  call_2 starts first and is incomplete; the
+        contiguous safe prefix is empty regardless of call_1 completing."""
+        chunks = [
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"address":4096}'),
+            StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+            StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", tool_args_delta='{"address":'),
+            StreamChunk(finish_reason="length"),
+        ]
+        outcome, events = run_glm_stream(chunks, tools=_echo_registry())
+
+        # call_2 started first and is incomplete -> safe prefix is empty
+        assert outcome.tool_calls == []
+        discarded_ids = {e.tool_call_id for e in events if e.type == TurnEventType.TOOL_CALL_DISCARDED}
+        assert discarded_ids == {"call_1", "call_2"}
+
+
+class TestGLMPartialToolCallPersistence(unittest.TestCase):
+    """Verify that persisted assistant message and tool-result message
+    contain exactly the safe prefix -- one-to-one call/result pairing."""
+
+    def test_one_safe_call_plus_one_incomplete_persists_one_to_one(self):
+        registry = _echo_registry()
+        config = RikuganConfig()
+        config.auto_context = False
+        config.provider.extra = {
+            "dialect": "glm",
+            "degeneration_guard": {"reasoning_token_ceiling": 65536},
+        }
+        session = SessionState(provider_name="glm", model_name="glm-4.6")
+        provider = GLMMockProvider(
+            responses=[
+                [
+                    StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_start=True),
+                    StreamChunk(tool_call_id="call_1", tool_name="read_bytes", tool_args_delta='{"address":4096}'),
+                    StreamChunk(tool_call_id="call_1", tool_name="read_bytes", is_tool_call_end=True),
+                    StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", is_tool_call_start=True),
+                    StreamChunk(tool_call_id="call_2", tool_name="get_pseudocode", tool_args_delta='{"address":'),
+                    StreamChunk(finish_reason="length"),
+                ],
+            ]
+        )
+        loop = AgentLoop(
+            provider=provider,
+            tool_registry=registry,
+            config=config,
+            session=session,
+        )
+        tools_schema = registry.to_provider_format()
+
+        from rikugan.agent.modes.turn_helpers import execute_single_turn
+
+        list(execute_single_turn(loop, "system", tools_schema))
+
+        assistant_msgs = [m for m in session.messages if m.role == Role.ASSISTANT]
+        assert len(assistant_msgs) == 1
+        assistant = assistant_msgs[0]
+        assert [call.id for call in assistant.tool_calls] == ["call_1"]
+
+        tool_msgs = [m for m in session.messages if m.role == Role.TOOL]
+        assert len(tool_msgs) == 1
+        tool_message = tool_msgs[0]
+        assert [r.tool_call_id for r in tool_message.tool_results] == ["call_1"]
 
 
 class TestBackgroundAgentRunner(unittest.TestCase):
@@ -985,6 +1557,176 @@ class TestProfileEnforcement(unittest.TestCase):
         # Tool should be blocked with an error, not executed
         self.assertIn("denied by the active profile", tool_result_event.tool_result)
         self.assertNotIn("func1", tool_result_event.tool_result)
+
+
+class TestReasoningRunnerCoalescing(unittest.TestCase):
+    """Verify BackgroundAgentRunner keeps reasoning and text buffers separate
+    and flushes correctly on type switch, RECOVERY_START boundary, exception,
+    and finally path."""
+
+    def _run_sequence_under_backpressure(self, events: list[TurnEvent]) -> list[TurnEvent]:
+        """Feed events through a runner whose queue always reports full.
+
+        Uses a custom queue subclass that overrides ``full()`` to return
+        ``True``, forcing every delta into the buffer/coalescing branch
+        while ``put`` still succeeds normally. This deterministically
+        exercises the coalescing path without timing races.
+        """
+        import queue as queue_mod
+
+        class _AlwaysFullQueue(queue_mod.Queue):
+            """Queue that always reports full so deltas get buffered."""
+
+            def full(self) -> bool:  # type: ignore[override]
+                return True
+
+        provider = MockProvider(responses=[_text_response("x")])
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState()
+        loop = AgentLoop(provider, ToolRegistry(), config, session)
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = _AlwaysFullQueue(maxsize=1000)
+        runner.start("test")
+
+        collected: list[TurnEvent] = []
+        while True:
+            event = runner.get_event(timeout=5.0)
+            if event is None:
+                break
+            collected.append(event)
+        return collected
+
+    def test_reasoning_and_text_buffers_stay_separate(self):
+        events = [
+            TurnEvent.reasoning_event("r1"),
+            TurnEvent.reasoning_event("r2"),
+            TurnEvent.text_delta("v1"),
+            TurnEvent.recovery_start(
+                attempt=2,
+                reason="reasoning_degenerated",
+                discard_transient_reasoning=True,
+            ),
+        ]
+        emitted = self._run_sequence_under_backpressure(events)
+
+        types = [event.type for event in emitted]
+        # Reasoning deltas coalesce into one, text is separate, recovery
+        # is a hard boundary.
+        assert types == [
+            TurnEventType.REASONING_DELTA,
+            TurnEventType.TEXT_DELTA,
+            TurnEventType.RECOVERY_START,
+        ], f"unexpected order: {types}"
+        assert emitted[0].reasoning == "r1r2"
+
+    def test_reasoning_flushed_on_exception(self):
+        """When the loop raises after buffered reasoning, the reasoning
+        buffer must be flushed (or explicitly discarded) before the error
+        event reaches the queue."""
+
+        class _Exploder:
+            def __call__(self, user_message: str):
+                yield TurnEvent.reasoning_event("partial")
+                raise RuntimeError("boom")
+
+        events: list[TurnEvent] = []
+        provider = MockProvider(responses=[_text_response("x")])
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState()
+        loop = AgentLoop(provider, ToolRegistry(), config, session)
+        loop.run = _Exploder()  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.start("test")
+        while True:
+            event = runner.get_event(timeout=5.0)
+            if event is None:
+                break
+            events.append(event)
+
+        types = [e.type for e in events]
+        # The reasoning delta must appear before the error event
+        # (flushed in the except block).
+        if TurnEventType.REASONING_DELTA in types:
+            assert types.index(TurnEventType.REASONING_DELTA) < types.index(TurnEventType.ERROR)
+        # Error must be present
+        assert TurnEventType.ERROR in types
+
+    def test_text_delta_pass_through_low_latency(self):
+        """With a default-sized queue (not full), each TEXT_DELTA is
+        delivered individually — no buffering. The first text chunk
+        must be obtainable before TEXT_DONE arrives, proving streaming
+        latency is preserved."""
+        provider = MockProvider(responses=[_text_response("x")])
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState()
+        loop = AgentLoop(provider, ToolRegistry(), config, session)
+
+        chunks = [
+            TurnEvent.text_delta("chunk1"),
+            TurnEvent.text_delta("chunk2"),
+            TurnEvent.text_done("chunk1chunk2"),
+        ]
+        loop.run = lambda user_message: iter(chunks)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        # Default queue (500) — no backpressure.
+        runner.start("test")
+
+        first_event = runner.get_event(timeout=5.0)
+        assert first_event is not None
+        assert first_event.type == TurnEventType.TEXT_DELTA
+        assert first_event.text == "chunk1"
+
+        second_event = runner.get_event(timeout=5.0)
+        assert second_event is not None
+        assert second_event.type == TurnEventType.TEXT_DELTA
+        assert second_event.text == "chunk2"
+
+        third_event = runner.get_event(timeout=5.0)
+        assert third_event is not None
+        assert third_event.type == TurnEventType.TEXT_DONE
+
+        sentinel = runner.get_event(timeout=5.0)
+        assert sentinel is None
+
+    def test_control_events_never_dropped_under_backpressure(self):
+        """When the queue is full and a control event (TURN_END)
+        arrives, it must not be lost — the _safe_put helper retries
+        with timeout instead of blocking forever."""
+        import queue as queue_mod
+
+        provider = MockProvider(responses=[_text_response("x")])
+        config = RikuganConfig()
+        config.auto_context = False
+        session = SessionState()
+        loop = AgentLoop(provider, ToolRegistry(), config, session)
+
+        events = [
+            TurnEvent.text_delta("hello"),
+            TurnEvent.turn_end(1),
+        ]
+        loop.run = lambda user_message: iter(events)  # type: ignore[assignment]
+
+        runner = BackgroundAgentRunner(loop)
+        runner.event_queue = queue_mod.Queue(maxsize=1)
+        runner.start("test")
+
+        collected = []
+        while True:
+            event = runner.get_event(timeout=5.0)
+            if event is None:
+                break
+            collected.append(event)
+
+        types = [e.type for e in collected]
+        assert TurnEventType.TEXT_DELTA in types
+        assert TurnEventType.TURN_END in types
 
 
 if __name__ == "__main__":

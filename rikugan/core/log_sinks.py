@@ -196,6 +196,75 @@ class _FlushFileHandler(logging.FileHandler):
 # Structured JSON handler
 # ---------------------------------------------------------------------------
 
+#: Allowed scalar types for a structured attempt event.
+JSONScalar = str | int | float | bool | None
+
+#: Allowlist of keys permitted in a structured ``rikugan_event``.  Closed
+#: set: callers MUST NOT introduce new keys without an explicit review of
+#: the privacy/PII implications.  Every value MUST be a :data:`JSONScalar`
+#: (no nested dicts, no lists, no bytes).  This is the single defense
+#: against leaking reasoning content or other sensitive LLM-derived data
+#: into the JSONL telemetry stream.
+STRUCTURED_EVENT_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "provider",
+        "model",
+        "dialect",
+        "turn_number",
+        "attempt_number",
+        "transport_retry_index",
+        "thinking_mode",
+        "reasoning_effort",
+        "configured_max_tokens",
+        "effective_max_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "usage_provenance",
+        "reasoning_chars",
+        "visible_chars",
+        "tool_start_count",
+        "tool_end_count",
+        "finish_reason",
+        "disposition",
+        "guard_trigger",
+        "repetition_ratio_millis",
+        "recovery_result",
+        "discarded_attempt",
+    }
+)
+
+
+def _sanitize_structured_event(event: object) -> dict[str, JSONScalar]:
+    """Validate and sanitize a structured event dict for JSONL telemetry.
+
+    - Rejects unknown keys (raises :class:`KeyError`).
+    - Rejects non-:data:`JSONScalar` values (raises :class:`TypeError`).
+    - Strips injection markers and lone surrogates from every string value.
+
+    Returns a new dict (the input is left untouched).
+    """
+    if not isinstance(event, dict):
+        raise TypeError("Structured event must be a dict")
+    unknown = set(event) - STRUCTURED_EVENT_ALLOWLIST
+    if unknown:
+        raise KeyError(f"Unknown structured log keys: {sorted(unknown)}")
+    for key, value in event.items():
+        if not isinstance(value, (str, int, float, bool, type(None))):
+            raise TypeError(f"Structured log value for {key!r} must be a JSON scalar, got {type(value).__name__}")
+
+    # Local import to avoid a top-level cycle: sanitize.py imports from logging
+    # transitively through other modules in the same package.
+    from .sanitize import strip_injection_markers, strip_lone_surrogates
+
+    sanitized: dict[str, JSONScalar] = {}
+    for key, value in event.items():
+        if isinstance(value, str):
+            sanitized[key] = strip_lone_surrogates(strip_injection_markers(value))
+        else:
+            sanitized[key] = value
+    return sanitized
+
 
 class _JSONFormatter(logging.Formatter):
     """Formats log records as single-line JSON for machine parsing."""
@@ -209,4 +278,14 @@ class _JSONFormatter(logging.Formatter):
         }
         if record.exc_info and record.exc_info[1]:
             entry["exception"] = self.formatException(record.exc_info)
+        # Structured attempt event (provider-neutral telemetry).  Attached
+        # via ``extra={"rikugan_event": ...}`` on the logger call.  Skipped
+        # silently when absent or when sanitization fails — telemetry MUST
+        # NOT block the human-readable log path.
+        rikugan_event = getattr(record, "rikugan_event", None)
+        if rikugan_event is not None:
+            try:
+                entry["rikugan_event"] = _sanitize_structured_event(rikugan_event)
+            except (KeyError, TypeError):
+                pass
         return json.dumps(entry, default=str)

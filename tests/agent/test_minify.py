@@ -66,3 +66,69 @@ class TestMinifyMessages:
         msg = Message(role="assistant", content="hello")
         result = minify_messages([msg])
         assert result[0].role == "assistant"
+
+
+# ---------------------------------------------------------------------------
+# Context window compaction: reasoning rule
+# ---------------------------------------------------------------------------
+
+
+class TestCompactionReasoningRule:
+    """When ``compact_messages()`` summarizes older messages, only visible
+    ``content`` enters the summary — ``reasoning_content`` is dropped.
+    Tail messages are untouched, preserving recent reasoning.
+    """
+
+    def test_summary_omits_old_reasoning_content(self):
+        from rikugan.agent.context_window import ContextWindowManager
+        from rikugan.core.types import Message, Role
+
+        manager = ContextWindowManager()
+        # 1 system + 6 middle + 4 tail = 11 messages (> 6 threshold).
+        messages: list[Message] = [Message(role=Role.SYSTEM, content="system")]
+        # Middle assistant message with reasoning that must NOT survive.
+        messages.append(
+            Message(
+                role=Role.ASSISTANT,
+                content="visible answer",
+                reasoning_content="SECRET_REASONING_MUST_NOT_APPEAR",
+            )
+        )
+        # Fill remaining middle messages.
+        for i in range(5):
+            messages.append(Message(role=Role.USER, content=f"msg {i}"))
+        # Tail messages (last 4).
+        for i in range(4):
+            messages.append(Message(role=Role.USER, content=f"tail {i}"))
+
+        compacted = manager.compact_messages(messages)
+
+        # Find the summary message (second message after system).
+        summary_text = compacted[1].content
+        assert "SECRET_REASONING_MUST_NOT_APPEAR" not in summary_text
+
+    def test_tail_messages_retain_reasoning_content(self):
+        from rikugan.agent.context_window import ContextWindowManager
+        from rikugan.core.types import Message, Role
+
+        manager = ContextWindowManager()
+        messages: list[Message] = [Message(role=Role.SYSTEM, content="system")]
+        # Enough middle messages to trigger compaction.
+        for i in range(6):
+            messages.append(Message(role=Role.USER, content=f"middle {i}"))
+        # Tail with reasoning that MUST be preserved.
+        messages.append(
+            Message(
+                role=Role.ASSISTANT,
+                content="tail visible",
+                reasoning_content="RECENT_REASONING_PRESERVED",
+            )
+        )
+        for i in range(3):
+            messages.append(Message(role=Role.USER, content=f"tail {i}"))
+
+        compacted = manager.compact_messages(messages)
+
+        # The last messages must retain their reasoning_content unchanged.
+        tail_assistants = [m for m in compacted if m.role == Role.ASSISTANT and m.reasoning_content]
+        assert any("RECENT_REASONING_PRESERVED" in m.reasoning_content for m in tail_assistants)

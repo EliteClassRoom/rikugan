@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Generator
+from dataclasses import replace as dataclass_replace
 from typing import Any, NoReturn
 
 from ..core.logging import log_debug
@@ -13,6 +14,7 @@ from ..core.sanitize import (
     strip_lone_surrogates,
 )
 from ..core.types import (
+    LLMRequestContext,
     Message,
     ModelInfo,
     ProviderCapabilities,
@@ -104,8 +106,17 @@ class LLMProvider(ABC):
         temperature: float,
         max_tokens: int,
         system: str,
+        *,
+        request_context: LLMRequestContext | None = None,
     ) -> dict[str, Any]:
-        """Assemble the full request kwargs for the provider SDK call."""
+        """Assemble the full request kwargs for the provider SDK call.
+
+        ``request_context`` is keyword-only and is forwarded by
+        :meth:`chat` / :meth:`chat_stream` so providers can adapt the
+        payload to attempt-local state (e.g. GLM one-shot recovery).
+        Non-GLM providers MUST treat the context as a pure pass-through
+        — adding it MUST NOT change the wire payload.
+        """
 
     @abstractmethod
     def _call_api(self, client: Any, kwargs: dict[str, Any]) -> Any:
@@ -139,6 +150,83 @@ class LLMProvider(ABC):
         """
 
     # -- Concrete pipeline implementations -------------------------------------
+    #
+    # Both ``chat`` and ``chat_stream`` derive the ``system`` string and
+    # ``max_tokens`` int that flow into ``_build_request_kwargs`` from the
+    # optional ``LLMRequestContext``.  The merge happens here so the
+    # provider override sees a single, pre-resolved pair whether a context
+    # was supplied or not.
+    #
+    # Suffix separator policy
+    # -----------------------
+    # When the context supplies a ``system_suffix``, the base pipeline
+    # joins it onto ``safe_system`` with exactly ``"\n\n"`` so the result
+    # is a clean Markdown paragraph break — but ONLY when both halves are
+    # non-empty.  Concretely:
+    #
+    # * safe_system = "x", suffix = "y"  -> "x\n\ny"
+    # * safe_system = "",   suffix = "y"  -> "y"          (suffix alone)
+    # * safe_system = "x", suffix = ""    -> "x"          (system alone)
+    # * safe_system = "",   suffix = ""   -> ""           (both empty)
+    #
+    # This keeps non-GLM providers that supply neither value identical to
+    # the pre-context wire payload (effective_system == safe_system == "").
+    #
+    # Max tokens override
+    # -------------------
+    # ``context.max_tokens_override`` is treated as a strict override:
+    # ``None`` (or omitted) means "use the caller's ``max_tokens``", any
+    # positive int replaces it.  A 0 or negative override is invalid — the
+    # plan/global config minimum is 1, so 0 cannot mean "produce nothing"
+    # and a negative value would obviously never be honoured.  The pipeline
+    # raises ``ValueError`` with a clear message before building kwargs so
+    # the failure happens at the LLM call boundary, not deep inside an
+    # SDK's HTTP serialization layer.
+
+    _SUFFIX_SEPARATOR = "\n\n"
+
+    @classmethod
+    def _resolve_effective_kwargs(
+        cls,
+        request_context: LLMRequestContext | None,
+        max_tokens: int,
+        system: str,
+    ) -> tuple[str, int, LLMRequestContext]:
+        """Derive ``(effective_system, effective_max_tokens, context)``.
+
+        See the class-level comment above for the full separator /
+        override policy.  This helper is the single source of truth so
+        ``chat`` and ``chat_stream`` cannot drift.
+        """
+        context = request_context or LLMRequestContext()
+        safe_system = strip_lone_surrogates(system) if system else system
+
+        # Suffix separator: insert ``"\n\n"`` only when both halves are
+        # non-empty; suffix alone or system alone are passed through.
+        suffix = context.system_suffix
+        if suffix and safe_system:
+            effective_system = safe_system + cls._SUFFIX_SEPARATOR + suffix
+        else:
+            effective_system = safe_system + suffix  # suffix alone / system alone / both empty
+
+        # Explicit None handling: ``None`` (or absent) means "use the
+        # caller's ``max_tokens``".  A 0 or negative override is invalid
+        # and rejected with a clear message — the plan/global config
+        # minimum is 1, so 0 cannot mean "produce nothing".
+        if context.max_tokens_override is None:
+            effective_max_tokens = max_tokens
+        else:
+            if context.max_tokens_override <= 0:
+                raise ValueError(
+                    f"LLMRequestContext.max_tokens_override must be a positive "
+                    f"integer (got {context.max_tokens_override!r}); the plan/"
+                    f"global config minimum is 1 and 0 cannot mean 'produce "
+                    f"nothing'. Pass `None` to use the caller's `max_tokens` "
+                    f"instead."
+                )
+            effective_max_tokens = context.max_tokens_override
+
+        return effective_system, effective_max_tokens, context
 
     def chat(
         self,
@@ -147,6 +235,8 @@ class LLMProvider(ABC):
         temperature: float = 0.3,
         max_tokens: int = 4096,
         system: str = "",
+        *,
+        request_context: LLMRequestContext | None = None,
     ) -> Message:
         """Non-streaming chat completion.
 
@@ -158,11 +248,28 @@ class LLMProvider(ABC):
         provider SDK's HTTP body encoding (``str.encode('utf-8')``) raises
         ``UnicodeEncodeError: surrogates not allowed`` and aborts the turn.
         See :func:`rikugan.core.sanitize.sanitize_messages_for_provider`.
+
+        ``request_context`` (optional) carries attempt-local state
+        (attempt number, recovery flag, system suffix, max_tokens override,
+        disable_thinking).  The effective ``system`` and ``max_tokens``
+        passed to :meth:`_build_request_kwargs` are derived from the
+        context here so non-GLM providers receive identical kwargs when no
+        context is supplied.  See :meth:`_resolve_effective_kwargs` for
+        the separator / override policy.
         """
         client = self._get_client()
         safe_messages = sanitize_messages_for_provider(messages)
-        safe_system = strip_lone_surrogates(system) if system else system
-        kwargs = self._build_request_kwargs(safe_messages, tools, temperature, max_tokens, safe_system)
+        effective_system, effective_max_tokens, context = self._resolve_effective_kwargs(
+            request_context, max_tokens, system
+        )
+        kwargs = self._build_request_kwargs(
+            safe_messages,
+            tools,
+            temperature,
+            effective_max_tokens,
+            effective_system,
+            request_context=context,
+        )
         try:
             raw = self._call_api(client, kwargs)
         except Exception as e:
@@ -177,6 +284,8 @@ class LLMProvider(ABC):
         max_tokens: int = 4096,
         system: str = "",
         cancel_event: threading.Event | None = None,
+        *,
+        request_context: LLMRequestContext | None = None,
     ) -> Generator[StreamChunk, None, None]:
         """Streaming chat completion.
 
@@ -190,11 +299,32 @@ class LLMProvider(ABC):
 
         Lone surrogates are stripped from messages and the system prompt
         before serialization (see ``chat`` docstring for rationale).
+
+        ``request_context`` (optional) is forwarded to
+        :meth:`_build_request_kwargs` so providers can adapt the payload
+        to attempt-local state (e.g. GLM one-shot recovery).  Effective
+        ``system`` and ``max_tokens`` are derived here; non-GLM providers
+        receive identical kwargs when no context is supplied.  See
+        :meth:`_resolve_effective_kwargs` for the separator / override
+        policy.
         """
         client = self._get_client()
         safe_messages = sanitize_messages_for_provider(messages)
-        safe_system = strip_lone_surrogates(system) if system else system
-        kwargs = self._build_request_kwargs(safe_messages, tools, temperature, max_tokens, safe_system)
+        effective_system, effective_max_tokens, context = self._resolve_effective_kwargs(
+            request_context, max_tokens, system
+        )
+        # Mark the context as streaming so providers can gate
+        # transport-only wire fields (e.g. GLM ``tool_stream``) — the
+        # field must not appear on non-streaming ``chat()`` calls.
+        context = dataclass_replace(context, streaming=True)
+        kwargs = self._build_request_kwargs(
+            safe_messages,
+            tools,
+            temperature,
+            effective_max_tokens,
+            effective_system,
+            request_context=context,
+        )
         yield from self._stream_chunks(client, kwargs, cancel_event=cancel_event)
 
     # -- Concrete shared implementations ---------------------------------------

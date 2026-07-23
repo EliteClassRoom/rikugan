@@ -62,7 +62,7 @@ class MockProvider(LLMProvider):
     def _normalize_response(self, raw):
         return raw
 
-    def _build_request_kwargs(self, messages, tools, temperature, max_tokens, system):
+    def _build_request_kwargs(self, messages, tools, temperature, max_tokens, system, **kwargs):
         return {}
 
     def _call_api(self, client, kwargs):
@@ -74,7 +74,7 @@ class MockProvider(LLMProvider):
     def _stream_chunks(self, client, kwargs, cancel_event=None):
         yield from ()
 
-    def chat(self, messages, tools=None, temperature=0.3, max_tokens=4096, system=""):
+    def chat(self, messages, tools=None, temperature=0.3, max_tokens=4096, system="", **kwargs):
         return Message(role=Role.ASSISTANT, content="mock response")
 
     def chat_stream(
@@ -85,6 +85,9 @@ class MockProvider(LLMProvider):
         max_tokens=4096,
         system="",
         cancel_event=None,
+        *,
+        request_context=None,
+        **kwargs,
     ):
         if self._call_count < len(self._responses):
             chunks = self._responses[self._call_count]

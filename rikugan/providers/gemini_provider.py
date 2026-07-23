@@ -17,6 +17,7 @@ from ..core.errors import (
 )
 from ..core.logging import log_debug
 from ..core.types import (
+    LLMRequestContext,
     Message,
     ModelInfo,
     ProviderCapabilities,
@@ -260,8 +261,18 @@ class GeminiProvider(LLMProvider):
         temperature: float,
         max_tokens: int,
         system: str,
+        *,
+        request_context: LLMRequestContext | None = None,
     ) -> dict[str, Any]:
-        """Build kwargs dict for Gemini generate_content / generate_content_stream."""
+        """Build kwargs dict for Gemini generate_content / generate_content_stream.
+
+        ``request_context`` is keyword-only and a pure pass-through for
+        this provider — the base :meth:`LLMProvider.chat` already merges
+        ``context.system_suffix`` into ``system`` and applies any
+        ``max_tokens_override`` before this hook is reached, so the wire
+        payload is identical with or without a context.
+        """
+        del request_context  # explicitly unused on the Gemini wire
         return {
             "model": self.model,
             "contents": self._build_contents(messages),

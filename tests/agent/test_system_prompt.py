@@ -175,6 +175,15 @@ class TestBasePromptContent(unittest.TestCase):
         self.assertNotIn("Use rename_multi_variables", RENAMING_SECTION)
 
 
+def test_parallel_tool_prompt_requires_structured_calls_without_rehearsal():
+    prompt = build_system_prompt()
+
+    assert "ALWAYS batch independent tool calls" not in prompt
+    assert "structured tool calls" in prompt
+    assert "Never describe, simulate, or rehearse tool calls in prose" in prompt
+    assert "If no tool is needed, answer directly" in prompt
+
+
 def test_ida_base_prompt_contains_module_reference():
     """Module Quick Reference section phải có trong system prompt."""
     from rikugan.agent.prompts.ida import IDA_BASE_PROMPT

@@ -16,6 +16,7 @@ after the host has bootstrapped.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from dataclasses import asdict, dataclass, field
@@ -32,6 +33,7 @@ from ..constants import (
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
+    GLM_DEFAULT_MODEL,
     MCP_CONFIG_FILE,
     MEMORY_DIR_NAME,
     SKILLS_DIR_NAME,
@@ -47,6 +49,7 @@ PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini-2.0-flash",
     "ollama": "llama3.1",
     "minimax": "MiniMax-M3",
+    "glm": GLM_DEFAULT_MODEL,
     # openai_compat is intentionally omitted — user must configure
 }
 
@@ -213,6 +216,17 @@ class RikuganConfig:
             errors.append(f"knowledge_max_context_items {self.knowledge_max_context_items} out of range [1, 100]")
         if not (1_000 <= self.knowledge_max_context_chars <= 60_000):
             errors.append(f"knowledge_max_context_chars {self.knowledge_max_context_chars} out of range [1000, 60000]")
+        # GLM dialect validation — only when the active provider has
+        # ``extra["dialect"] == "glm"``.  Non-GLM extras remain opaque so
+        # custom-provider configuration is never reinterpreted.
+        extra = self.provider.extra
+        if isinstance(extra, dict) and extra.get("dialect") == "glm":
+            from .glm_config import parse_glm_extra
+
+            try:
+                parse_glm_extra(extra, self.provider.model)
+            except ValueError as exc:
+                errors.append(str(exc))
         return errors
 
     def save(self, password: str = "") -> None:
@@ -401,7 +415,12 @@ class RikuganConfig:
         return True
 
     def _snapshot_current_provider(self) -> None:
-        """Store current provider settings into the providers dict."""
+        """Store current provider settings into the providers dict.
+
+        ``provider.extra`` is deep-copied so editing the active provider's
+        nested options cannot mutate another provider's snapshot via
+        reference aliasing (spec §12.3).
+        """
         name = self.provider.name
         self.providers[name] = {
             "model": self.provider.model,
@@ -410,13 +429,16 @@ class RikuganConfig:
             "temperature": self.provider.temperature,
             "max_tokens": self.provider.max_tokens,
             "context_window": self.provider.context_window,
+            "extra": copy.deepcopy(self.provider.extra),
         }
 
     def switch_provider(self, new_name: str) -> None:
         """Switch to a different provider, preserving current settings.
 
         Saves the current provider's config and restores the new one
-        (if previously configured).
+        (if previously configured).  ``provider.extra`` round-trips
+        through independent deep copies so switching providers never
+        aliases nested GLM or custom options across snapshots.
         """
         self._snapshot_current_provider()
         self.provider.name = new_name
@@ -429,6 +451,7 @@ class RikuganConfig:
             self.provider.temperature = saved.get("temperature", DEFAULT_TEMPERATURE)
             self.provider.max_tokens = saved.get("max_tokens", DEFAULT_MAX_TOKENS)
             self.provider.context_window = saved.get("context_window", DEFAULT_CONTEXT_WINDOW)
+            self.provider.extra = copy.deepcopy(saved.get("extra", {}))
         else:
             # Fresh provider — clear key/base, keep defaults
             self.provider.api_key = ""
@@ -437,6 +460,7 @@ class RikuganConfig:
             self.provider.temperature = DEFAULT_TEMPERATURE
             self.provider.max_tokens = DEFAULT_MAX_TOKENS
             self.provider.context_window = DEFAULT_CONTEXT_WINDOW
+            self.provider.extra = {}
 
     def add_custom_provider(self, name: str) -> None:
         """Register a new custom OpenAI-compatible provider name."""

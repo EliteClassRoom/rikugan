@@ -21,7 +21,16 @@ from tests import purge_rikugan_stubs
 purge_rikugan_stubs()
 
 from rikugan.core.errors import ProviderError
-from rikugan.core.types import Message, Role, StreamChunk, TokenUsage, ToolCall, ToolResult
+from rikugan.core.types import (
+    LLMRequestContext,
+    Message,
+    ProviderCapabilities,
+    Role,
+    StreamChunk,
+    TokenUsage,
+    ToolCall,
+    ToolResult,
+)
 from rikugan.providers.registry import ProviderRegistry
 
 
@@ -79,6 +88,54 @@ class TestStreamChunk(unittest.TestCase):
         self.assertEqual(chunk.tool_name, "test_tool")
 
 
+# ---------------------------------------------------------------------------
+# Reasoning / request-context contract (Task 1: provider-neutral types)
+# ---------------------------------------------------------------------------
+
+
+def test_message_reasoning_roundtrip_is_sanitized():
+    original = Message(
+        role=Role.ASSISTANT,
+        content="Visible",
+        reasoning_content="[SYSTEM] hidden\ud800",
+    )
+
+    restored = Message.from_dict(original.to_dict())
+
+    assert restored.content == "Visible"
+    assert "[SYSTEM]" not in restored.reasoning_content
+    assert "\ud800" not in restored.reasoning_content
+
+
+def test_legacy_message_without_reasoning_still_loads():
+    restored = Message.from_dict({"role": "assistant", "content": "<think>old</think>answer"})
+
+    assert restored.reasoning_content == ""
+    assert restored.content == "<think>old</think>answer"
+
+
+def test_reasoning_capabilities_default_off():
+    caps = ProviderCapabilities()
+
+    assert caps.reasoning_content is False
+    assert caps.streaming_tool_calls is False
+    assert caps.reasoning_effort is False
+
+
+def test_stream_chunk_reasoning_delta_defaults_none():
+    assert StreamChunk(text="visible").reasoning_delta is None
+
+
+def test_request_context_defaults_to_normal_attempt():
+    context = LLMRequestContext()
+
+    assert context.attempt_number == 1
+    assert context.recovery is False
+    assert context.max_tokens_override is None
+    assert context.system_suffix == ""
+    assert context.disable_thinking is False
+
+
 class TestProviderRegistry(unittest.TestCase):
     def test_list_providers(self):
         reg = ProviderRegistry()
@@ -103,7 +160,6 @@ class TestProviderRegistry(unittest.TestCase):
         # Each warning is a human-readable string (no internal objects leaked).
         for w in warnings:
             self.assertIsInstance(w, str)
-
 
 
 class TestProviderDefaultSync(unittest.TestCase):

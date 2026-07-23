@@ -191,6 +191,15 @@ class EventBroker:
                         run.final_text = event.text
                     elif event.type == TurnEventType.TEXT_DELTA and event.text:
                         pass  # deltas captured in the buffer
+                    elif event.type in (
+                        TurnEventType.REASONING_DELTA,
+                        TurnEventType.RECOVERY_START,
+                        TurnEventType.TOOL_CALL_DISCARDED,
+                    ):
+                        # GLM reasoning/recovery events: pass through without
+                        # mutating final_text, errors, or exit_code.  Already
+                        # captured in event_buffer via to_dict() above.
+                        pass
 
                     self._state.condition.notify_all()
         finally:

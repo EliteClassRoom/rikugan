@@ -12,11 +12,12 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.types import Message, Role, ToolCall, ToolResult
+from rikugan.core.types import LLMRequestContext, Message, Role, ToolCall, ToolResult
 
 
 def _make_provider():
     from rikugan.providers.anthropic_provider import AnthropicProvider
+
     return AnthropicProvider(api_key="test-key", model="claude-test")
 
 
@@ -43,11 +44,13 @@ class TestAnthropicFormatMessages(unittest.TestCase):
 
     def test_assistant_with_tool_calls(self):
         p = _make_provider()
-        msgs = [Message(
-            role=Role.ASSISTANT,
-            content="Let me check",
-            tool_calls=[ToolCall(id="tc_1", name="get_info", arguments={"x": 1})],
-        )]
+        msgs = [
+            Message(
+                role=Role.ASSISTANT,
+                content="Let me check",
+                tool_calls=[ToolCall(id="tc_1", name="get_info", arguments={"x": 1})],
+            )
+        ]
         result = p._format_messages(msgs)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["role"], "assistant")
@@ -63,13 +66,15 @@ class TestAnthropicFormatMessages(unittest.TestCase):
     def test_tool_results_become_user_messages(self):
         """Anthropic maps tool results to user messages with tool_result content."""
         p = _make_provider()
-        msgs = [Message(
-            role=Role.TOOL,
-            tool_results=[
-                ToolResult(tool_call_id="tc_1", name="get_info", content="result1"),
-                ToolResult(tool_call_id="tc_2", name="get_more", content="result2", is_error=True),
-            ],
-        )]
+        msgs = [
+            Message(
+                role=Role.TOOL,
+                tool_results=[
+                    ToolResult(tool_call_id="tc_1", name="get_info", content="result1"),
+                    ToolResult(tool_call_id="tc_2", name="get_more", content="result2", is_error=True),
+                ],
+            )
+        ]
         result = p._format_messages(msgs)
         self.assertEqual(len(result), 2)
         for r in result:
@@ -86,10 +91,10 @@ class TestAnthropicFormatMessages(unittest.TestCase):
         p = _make_provider()
         msgs = [
             Message(role=Role.USER, content="Hello"),
-            Message(role=Role.ASSISTANT, content="Hi there",
-                    tool_calls=[ToolCall(id="tc_1", name="test", arguments={})]),
-            Message(role=Role.TOOL,
-                    tool_results=[ToolResult(tool_call_id="tc_1", name="test", content="done")]),
+            Message(
+                role=Role.ASSISTANT, content="Hi there", tool_calls=[ToolCall(id="tc_1", name="test", arguments={})]
+            ),
+            Message(role=Role.TOOL, tool_results=[ToolResult(tool_call_id="tc_1", name="test", content="done")]),
             Message(role=Role.ASSISTANT, content="All done"),
         ]
         result = p._format_messages(msgs)
@@ -103,14 +108,16 @@ class TestAnthropicFormatMessages(unittest.TestCase):
 class TestAnthropicFormatTools(unittest.TestCase):
     def test_converts_openai_format_to_anthropic(self):
         p = _make_provider()
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "test_tool",
-                "description": "A test tool",
-                "parameters": {"type": "object", "properties": {"x": {"type": "integer"}}},
-            },
-        }]
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "test_tool",
+                    "description": "A test tool",
+                    "parameters": {"type": "object", "properties": {"x": {"type": "integer"}}},
+                },
+            }
+        ]
         result = p._format_tools(tools)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["name"], "test_tool")
@@ -124,8 +131,10 @@ class TestAnthropicNormalizeResponse(unittest.TestCase):
         response = SimpleNamespace(
             content=[SimpleNamespace(type="text", text="Hello world")],
             usage=SimpleNamespace(
-                input_tokens=10, output_tokens=5,
-                cache_read_input_tokens=0, cache_creation_input_tokens=0,
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=0,
             ),
         )
         msg = p._normalize_response(response)
@@ -142,8 +151,10 @@ class TestAnthropicNormalizeResponse(unittest.TestCase):
                 SimpleNamespace(type="tool_use", id="tc_1", name="get_info", input={"key": "val"}),
             ],
             usage=SimpleNamespace(
-                input_tokens=20, output_tokens=10,
-                cache_read_input_tokens=5, cache_creation_input_tokens=2,
+                input_tokens=20,
+                output_tokens=10,
+                cache_read_input_tokens=5,
+                cache_creation_input_tokens=2,
             ),
         )
         msg = p._normalize_response(response)
@@ -158,12 +169,14 @@ class TestAnthropicNormalizeResponse(unittest.TestCase):
 class TestAnthropicHandleApiError(unittest.TestCase):
     def test_generic_error_raises_provider_error(self):
         from rikugan.core.errors import ProviderError
+
         p = _make_provider()
         with self.assertRaises(ProviderError):
             p._handle_api_error(RuntimeError("something broke"))
 
     def test_context_length_error(self):
         from rikugan.core.errors import ProviderError
+
         p = _make_provider()
         with self.assertRaises(ProviderError):
             p._handle_api_error(RuntimeError("context window exceeded token limit"))
@@ -174,18 +187,21 @@ class TestAnthropicAuthResolution(unittest.TestCase):
 
     def test_explicit_api_key(self):
         from rikugan.providers.anthropic_provider import resolve_anthropic_auth
+
         token, auth_type = resolve_anthropic_auth("sk-ant-api03-test")
         self.assertEqual(token, "sk-ant-api03-test")
         self.assertEqual(auth_type, "api_key")
 
     def test_explicit_oauth_token(self):
         from rikugan.providers.anthropic_provider import resolve_anthropic_auth
+
         token, auth_type = resolve_anthropic_auth("sk-ant-oat01-test")
         self.assertEqual(token, "sk-ant-oat01-test")
         self.assertEqual(auth_type, "oauth")
 
     def test_env_var_api_key(self):
         from rikugan.providers.anthropic_provider import resolve_anthropic_auth
+
         old = os.environ.get("ANTHROPIC_API_KEY")
         try:
             os.environ["ANTHROPIC_API_KEY"] = "sk-from-env"
@@ -200,6 +216,7 @@ class TestAnthropicAuthResolution(unittest.TestCase):
 
     def test_empty_returns_empty(self):
         from rikugan.providers.anthropic_provider import resolve_anthropic_auth
+
         old_api = os.environ.pop("ANTHROPIC_API_KEY", None)
         old_oauth = os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
         try:
@@ -215,16 +232,46 @@ class TestAnthropicAuthResolution(unittest.TestCase):
 
     def test_auth_status_with_key(self):
         from rikugan.providers.anthropic_provider import AnthropicProvider
+
         p = AnthropicProvider(api_key="sk-test", model="test")
         label, status = p.auth_status()
         self.assertEqual(status, "ok")
 
     def test_auth_status_oauth(self):
         from rikugan.providers.anthropic_provider import AnthropicProvider
+
         p = AnthropicProvider(api_key="sk-ant-oat01-test", model="test")
         label, status = p.auth_status()
         self.assertEqual(status, "ok")
         self.assertEqual(label, "OAuth")
+
+
+# ---------------------------------------------------------------------------
+# Task 5: payload equivalence.
+# ---------------------------------------------------------------------------
+
+
+class TestAnthropicRequestContextPayloadEquivalence(unittest.TestCase):
+    def test_request_context_does_not_change_anthropic_payload(self) -> None:
+        provider = _make_provider()
+        messages = [Message(role=Role.USER, content="hello")]
+        baseline = provider._build_request_kwargs(messages, None, 0.3, 4096, "system")
+        contextual = provider._build_request_kwargs(
+            messages,
+            None,
+            0.3,
+            4096,
+            "system",
+            request_context=LLMRequestContext(recovery=True),
+        )
+
+        self.assertEqual(
+            contextual,
+            baseline,
+            "Anthropic payload differs when request_context is provided — "
+            "the context must be a pure pass-through for non-GLM "
+            "providers.",
+        )
 
 
 if __name__ == "__main__":

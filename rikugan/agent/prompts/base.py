@@ -33,17 +33,10 @@ ANTI_REDUNDANCY_SECTION = """\
 """
 
 PARALLEL_BATCHING_SECTION = """\
-## Parallel Tool Batching
-ALWAYS batch independent tool calls in a single parallel block.
-Anti-pattern (WRONG): call decompile(A), wait, then call decompile(B).
-Correct: call decompile(A) + decompile(B) simultaneously if B does not
-depend on A.
+## Parallel Tool Calls
 
-Examples of batchable calls:
-- Multiple decompile_function calls on different addresses
-- xrefs_to on several different targets
-- rename_function + set_comment on different addresses
-- list_imports + list_strings in recon phase
+When multiple independent structured tool calls are needed, prefer emitting
+them together in the same assistant turn. Never describe, simulate, or rehearse tool calls in prose. If no tool is needed, answer directly.
 """
 
 RENAMING_SECTION = """\

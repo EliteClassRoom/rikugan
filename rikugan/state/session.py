@@ -116,12 +116,32 @@ class SessionState:
             # preparation below.
             self._message_token_cache[id(msg)] = _estimate_tokens(msg)
             if msg.token_usage:
-                self.total_usage.prompt_tokens += msg.token_usage.prompt_tokens
-                self.total_usage.completion_tokens += msg.token_usage.completion_tokens
-                self.total_usage.total_tokens += msg.token_usage.total_tokens
-                # Track the last prompt size as current context usage
-                if msg.token_usage.prompt_tokens > 0:
-                    self.last_prompt_tokens = msg.token_usage.context_tokens
+                self._record_usage_locked(msg.token_usage)
+
+    def record_usage(self, usage: TokenUsage) -> None:
+        """Record token usage from a discarded (non-persisted) attempt.
+
+        Used by the GLM one-shot recovery transaction to account for the
+        degenerated first attempt's tokens without storing its assistant
+        message.  Successful persisted messages still account through
+        :meth:`add_message`, which calls the same internal helper — so the
+        two paths can never double-count.
+        """
+        with self._lock:
+            self._record_usage_locked(usage)
+
+    def _record_usage_locked(self, usage: TokenUsage) -> None:
+        """Internal: accumulate usage into ``total_usage``.
+
+        Caller MUST hold ``self._lock``.
+        """
+        self.total_usage.prompt_tokens += usage.prompt_tokens
+        self.total_usage.completion_tokens += usage.completion_tokens
+        self.total_usage.total_tokens += usage.total_tokens
+        self.total_usage.cache_read_tokens += usage.cache_read_tokens
+        self.total_usage.cache_creation_tokens += usage.cache_creation_tokens
+        if usage.prompt_tokens > 0:
+            self.last_prompt_tokens = usage.context_tokens
 
     def clear(self) -> None:
         with self._lock:

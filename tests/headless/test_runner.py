@@ -73,9 +73,7 @@ class _FakeController:
         if self.error_on_start is not None:
             return self.error_on_start
 
-        self._runner = _FakeRunner(
-            agent_loop=getattr(self, "_agent_loop", None)
-        )
+        self._runner = _FakeRunner(agent_loop=getattr(self, "_agent_loop", None))
         self._is_running = True
 
         pending = self._pending_events
@@ -125,12 +123,8 @@ class TestRunPrompt(unittest.TestCase):
 
         ctrl = _FakeController()
         events = [
-            TurnEvent(
-                type=TurnEventType.TEXT_DELTA, text="Hello", turn_number=1
-            ),
-            TurnEvent(
-                type=TurnEventType.TEXT_DELTA, text=" world", turn_number=1
-            ),
+            TurnEvent(type=TurnEventType.TEXT_DELTA, text="Hello", turn_number=1),
+            TurnEvent(type=TurnEventType.TEXT_DELTA, text=" world", turn_number=1),
             TurnEvent(
                 type=TurnEventType.TEXT_DONE,
                 text="Hello world",
@@ -153,9 +147,7 @@ class TestRunPrompt(unittest.TestCase):
                 error="Decompilation failed",
                 turn_number=1,
             ),
-            TurnEvent(
-                type=TurnEventType.TEXT_DONE, text="Sorry", turn_number=1
-            ),
+            TurnEvent(type=TurnEventType.TEXT_DONE, text="Sorry", turn_number=1),
         ]
         ctrl._set_events(events)
         result = run_prompt(ctrl, "test prompt")
@@ -200,9 +192,7 @@ class TestRunPrompt(unittest.TestCase):
 
         events = [
             TurnEvent(type=TurnEventType.PLAN_GENERATED, turn_number=1),
-            TurnEvent(
-                type=TurnEventType.SAVE_APPROVAL_REQUEST, turn_number=2
-            ),
+            TurnEvent(type=TurnEventType.SAVE_APPROVAL_REQUEST, turn_number=2),
             TurnEvent(type=TurnEventType.USER_QUESTION, turn_number=3),
         ]
         ctrl._set_events(events, agent_loop=agent_loop)
@@ -218,3 +208,77 @@ class TestRunPrompt(unittest.TestCase):
         result = run_prompt(ctrl, "test prompt")
         self.assertEqual(result.exit_code, EXIT_GENERIC_ERROR)
         self.assertTrue(ctrl._finished_called)
+
+
+# ---------------------------------------------------------------------------
+# Pass-through: reasoning/recovery events must not change final_text/exit_code
+# ---------------------------------------------------------------------------
+
+
+def _run_with_events(events: list, *, json_events: bool = True):
+    """Drive *events* through run_prompt and return the RunResult."""
+    ctrl = _FakeController()
+    ctrl._set_events(events)
+    return run_prompt(ctrl, "test prompt", json_events=json_events)
+
+
+class TestReasoningRecoveryPassThrough(unittest.TestCase):
+    """GLM reasoning/recovery events must pass through the headless runner
+    without changing final_text, exit_code, or status.  They are captured in
+    the JSON event buffer via ``to_dict()`` so downstream consumers can
+    observe the recovery lifecycle.
+    """
+
+    def test_reasoning_and_recovery_events_do_not_change_final_text_or_exit_code(self):
+        from rikugan.agent.turn import TurnEvent
+
+        result = _run_with_events(
+            [
+                TurnEvent.reasoning_event("hidden"),
+                TurnEvent.recovery_start(
+                    attempt=2,
+                    reason="reasoning_degenerated",
+                    discard_transient_reasoning=True,
+                ),
+                TurnEvent.text_done("visible"),
+            ]
+        )
+
+        self.assertEqual(result.final_text, "visible")
+        self.assertEqual(result.exit_code, EXIT_SUCCESS)
+        event_types = [event["type"] for event in result.events]
+        self.assertEqual(event_types[:2], ["reasoning_delta", "recovery_start"])
+
+    def test_tool_call_discarded_does_not_mutate_status(self):
+        from rikugan.agent.turn import TurnEvent
+
+        result = _run_with_events(
+            [
+                TurnEvent.tool_call_start("call_1", "read_bytes"),
+                TurnEvent.tool_call_discarded("call_1", "read_bytes", "truncated"),
+                TurnEvent.text_done("done"),
+            ]
+        )
+
+        self.assertEqual(result.final_text, "done")
+        self.assertEqual(result.exit_code, EXIT_SUCCESS)
+        event_types = [event["type"] for event in result.events]
+        self.assertIn("tool_call_discarded", event_types)
+
+    def test_recovery_failure_error_is_preserved_as_failure(self):
+        """Recovery failure emits a real ERROR event — that IS a failure."""
+        from rikugan.agent.turn import TurnEvent
+
+        result = _run_with_events(
+            [
+                TurnEvent.recovery_start(
+                    attempt=2,
+                    reason="reasoning_degenerated",
+                    discard_transient_reasoning=True,
+                ),
+                TurnEvent.error_event("Reasoning degeneration persisted after recovery attempt."),
+            ]
+        )
+
+        self.assertEqual(result.exit_code, EXIT_TOOL_FAILURE)
+        self.assertTrue(any("degeneration persisted" in e for e in result.errors))

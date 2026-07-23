@@ -7,8 +7,20 @@ import queue
 import threading
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from ..core.config import RikuganConfig
+from ..core.glm_config import (
+    GLM_DIALECT,
+    REASONING_EFFORT_VALUES,
+    REASONING_TOKEN_CEILING_DEFAULT,
+    REASONING_TOKEN_CEILING_MAX,
+    REASONING_TOKEN_CEILING_MIN,
+    RECOVERY_MAX_TOKENS_DEFAULT,
+    RECOVERY_MAX_TOKENS_MAX,
+    RECOVERY_MAX_TOKENS_MIN,
+    get_glm_model_metadata,
+)
 from ..core.log_sinks import set_host_log_level
 from ..core.logging import log_debug, log_error
 from ..core.types import ModelInfo
@@ -66,6 +78,35 @@ _PROVIDER_DEFAULT_KEYS = {"ollama"}
 
 # Backwards-compatible alias (tests and external code may reference the old name)
 _resolve_auth_cached = resolve_auth_cached
+
+#: Hostname of Z.AI's API endpoint.  The one-time migration prompt
+#: fires only when ``urlparse(api_base).hostname`` is exactly this value.
+_ZAI_HOSTNAME = "api.z.ai"
+
+
+def _prompt_zai_migration(parent: Any = None) -> bool:
+    """Show a one-time modal asking the user to opt into the GLM dialect.
+
+    Returns ``True`` on accept (user wants GLM dialect), ``False`` on
+    decline or dismiss.  The dialog text explicitly says the current
+    connection will be treated as OpenAI-compatible until the user opts in.
+    """
+    from .qt_compat import QMessageBox
+
+    result = QMessageBox.question(
+        parent,
+        "Enable GLM Dialect?",
+        (
+            "This connection targets api.z.ai, which serves GLM-4.7 / GLM-5.x models.\n\n"
+            "Enable the GLM dialect for reasoning-content support, thinking\n"
+            "preservation, and degeneration-guard recovery?\n\n"
+            "If you decline, the connection continues as a generic\n"
+            "OpenAI-compatible endpoint."
+        ),
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    return result == QMessageBox.StandardButton.Yes
 
 
 class _ModelFetcher:
@@ -301,7 +342,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         self._tabs = QTabWidget()
 
-        # Tab 0: Provider (existing 3 group boxes)
+        # Tab 0: Provider (existing 3 group boxes + GLM group)
         provider_tab = QWidget()
         playout = QVBoxLayout(provider_tab)
         self._provider_group = self._build_provider_group()
@@ -310,8 +351,14 @@ class SettingsDialog(QDialog):
         playout.addWidget(self._generation_group)
         self._behavior_group = self._build_behavior_group()
         playout.addWidget(self._behavior_group)
+        self._glm_group = self._build_glm_group()
+        playout.addWidget(self._glm_group)
         playout.addStretch()
         self._tabs.addTab(provider_tab, "Provider")
+
+        # Initialise GLM controls from config and set visibility.
+        self._load_glm_controls_from_config()
+        self._refresh_glm_controls()
 
         # Tab: Appearance
         appearance_tab = QWidget()
@@ -736,6 +783,265 @@ class SettingsDialog(QDialog):
 
         return appearance_group
 
+    # --- GLM Settings (Task 13) -------------------------------------------
+
+    def _build_glm_group(self) -> QGroupBox:
+        """Build the GLM reasoning resilience controls group.
+
+        Visible only when the active provider has
+        ``extra["dialect"] == "glm"``.  Exposes product-level controls
+        only (thinking on/off/effort, preserve, guard enable/ceiling/
+        recovery).  Repetition/window/meta thresholds are not exposed.
+        """
+        glm_group = QGroupBox("GLM Reasoning Resilience")
+        glm_form = QFormLayout(glm_group)
+
+        # Thinking mode: Adaptive (enabled) or Disabled
+        self._glm_thinking_combo = QComboBox()
+        self._glm_thinking_combo.addItem("Adaptive", True)
+        self._glm_thinking_combo.addItem("Disabled", False)
+        self._glm_thinking_combo.setToolTip(
+            "Adaptive: GLM reasoning/thinking is enabled for requests.\nDisabled: thinking is turned off entirely."
+        )
+        glm_form.addRow("Thinking:", self._glm_thinking_combo)
+
+        # Reasoning effort — only meaningful for GLM-5.2, but we always
+        # show the combo and disable it for models that don't advertise
+        # ``reasoning_effort`` support.
+        self._glm_effort_combo = QComboBox()
+        for effort in sorted(REASONING_EFFORT_VALUES):
+            self._glm_effort_combo.addItem(effort, effort)
+        self._glm_effort_combo.setToolTip(
+            "Reasoning effort sent to the GLM endpoint.\n"
+            "GLM-5.2 supports: max, xhigh, high, medium, low, minimal, none.\n"
+            "Other GLM models use the default 'max' and cannot change it."
+        )
+        glm_form.addRow("Reasoning effort:", self._glm_effort_combo)
+
+        # Preserve thinking context across turns
+        self._glm_preserve_cb = QCheckBox("Preserve reasoning context across turns")
+        self._glm_preserve_cb.setToolTip(
+            "When checked, prior reasoning_content is replayed in\nmulti-turn conversations so GLM maintains context."
+        )
+        glm_form.addRow(self._glm_preserve_cb)
+
+        # Degeneration guard
+        self._glm_guard_cb = QCheckBox("Enable degeneration guard")
+        self._glm_guard_cb.setToolTip(
+            "When checked, detects reasoning loops and triggers\n"
+            "one-shot recovery (retry without thinking, then with\n"
+            "a capped recovery budget)."
+        )
+        glm_form.addRow(self._glm_guard_cb)
+
+        # Reasoning token ceiling
+        self._glm_ceiling_spin = QSpinBox()
+        self._glm_ceiling_spin.setRange(REASONING_TOKEN_CEILING_MIN, REASONING_TOKEN_CEILING_MAX)
+        self._glm_ceiling_spin.setValue(REASONING_TOKEN_CEILING_DEFAULT)
+        self._glm_ceiling_spin.setSuffix(" tokens")
+        self._glm_ceiling_spin.setToolTip(
+            "Estimated reasoning-token hard limit. Aborts a turn before\nit consumes the full max_tokens budget."
+        )
+        glm_form.addRow("Reasoning token ceiling:", self._glm_ceiling_spin)
+
+        # Recovery max tokens
+        self._glm_recovery_spin = QSpinBox()
+        self._glm_recovery_spin.setRange(RECOVERY_MAX_TOKENS_MIN, RECOVERY_MAX_TOKENS_MAX)
+        self._glm_recovery_spin.setValue(RECOVERY_MAX_TOKENS_DEFAULT)
+        self._glm_recovery_spin.setSuffix(" tokens")
+        self._glm_recovery_spin.setToolTip(
+            "Total output-token cap for the one-shot recovery request.\n"
+            "Clamped to the selected model's max output tokens at dispatch."
+        )
+        glm_form.addRow("Recovery token cap:", self._glm_recovery_spin)
+
+        # Hidden by default until a GLM-dialect provider is active.
+        glm_group.setVisible(False)
+        return glm_group
+
+    def _load_glm_controls_from_config(self) -> None:
+        """Populate GLM UI controls from ``config.provider.extra``.
+
+        Called on initial build and whenever the provider changes.  If
+        the extra dict lacks GLM keys (or is not a GLM dialect), the
+        controls are left at their defaults.
+        """
+        extra = self._config.provider.extra
+        if not isinstance(extra, dict) or extra.get("dialect") != GLM_DIALECT:
+            return
+
+        thinking = extra.get("thinking") or {}
+        if thinking.get("enabled", True):
+            self._glm_thinking_combo.setCurrentIndex(0)  # Adaptive
+        else:
+            self._glm_thinking_combo.setCurrentIndex(1)  # Disabled
+
+        effort = thinking.get("reasoning_effort", "max")
+        idx = self._glm_effort_combo.findData(effort)
+        if idx >= 0:
+            self._glm_effort_combo.setCurrentIndex(idx)
+
+        self._glm_preserve_cb.setChecked(thinking.get("preserve", True))
+
+        guard = extra.get("degeneration_guard") or {}
+        self._glm_guard_cb.setChecked(guard.get("enabled", True))
+        self._glm_ceiling_spin.setValue(guard.get("reasoning_token_ceiling", REASONING_TOKEN_CEILING_DEFAULT))
+        self._glm_recovery_spin.setValue(guard.get("recovery_max_tokens", RECOVERY_MAX_TOKENS_DEFAULT))
+
+        # Clamp recovery spin to the selected model's max_output_tokens.
+        self._clamp_glm_recovery_to_model()
+
+    def _sync_glm_controls_to_config(self) -> None:
+        """Write GLM UI control values back into ``config.provider.extra``.
+
+        Called from ``_sync_config_from_ui`` and ``_on_accept``.  Only
+        fires when the active provider has ``dialect == "glm"``.
+        """
+        extra = self._config.provider.extra
+        if not isinstance(extra, dict) or extra.get("dialect") != GLM_DIALECT:
+            return
+
+        # Read thinking combo (index 0 = Adaptive/enabled, 1 = Disabled)
+        thinking_enabled = self._glm_thinking_combo.currentData()
+        if thinking_enabled is None:
+            thinking_enabled = True
+
+        effort = self._glm_effort_combo.currentData() or "max"
+
+        preserve = self._glm_preserve_cb.isChecked()
+        guard_enabled = self._glm_guard_cb.isChecked()
+        ceiling = self._glm_ceiling_spin.value()
+        recovery = self._glm_recovery_spin.value()
+
+        # Build a fresh extra dict with the exact GLM schema.  We keep
+        # the dialect key and replace thinking/guard sub-dicts entirely
+        # so stale keys from a previous config version cannot survive.
+        self._config.provider.extra = {
+            "dialect": GLM_DIALECT,
+            "thinking": {
+                "enabled": bool(thinking_enabled),
+                "reasoning_effort": str(effort),
+                "preserve": bool(preserve),
+            },
+            "degeneration_guard": {
+                "enabled": bool(guard_enabled),
+                "reasoning_token_ceiling": int(ceiling),
+                "retry_without_thinking": True,
+                "recovery_max_tokens": int(recovery),
+            },
+        }
+
+    def _refresh_glm_controls(self) -> None:
+        """Show/hide the GLM group based on the active dialect.
+
+        Called on initial build, provider changes, and model changes.
+        """
+        extra = self._config.provider.extra
+        is_glm = isinstance(extra, dict) and extra.get("dialect") == GLM_DIALECT
+        self._glm_group.setVisible(is_glm)
+        if is_glm:
+            # Update effort combo enabled state based on model metadata.
+            model_id = self._config.provider.model
+            metadata = get_glm_model_metadata(model_id)
+            self._glm_effort_combo.setEnabled(metadata.reasoning_effort)
+            self._clamp_glm_recovery_to_model()
+
+    def _clamp_glm_recovery_to_model(self) -> None:
+        """Clamp the recovery spin box maximum to the selected model's
+        ``max_output_tokens`` (if known).  Falls back to the parser's
+        hard limit when model metadata is unavailable."""
+        model_id = self._config.provider.model
+        metadata = get_glm_model_metadata(model_id)
+        # The recovery cap cannot exceed the model's max output tokens.
+        effective_max = min(metadata.max_output_tokens, RECOVERY_MAX_TOKENS_MAX)
+        self._glm_recovery_spin.setMaximum(effective_max)
+        if self._glm_recovery_spin.value() > effective_max:
+            self._glm_recovery_spin.setValue(effective_max)
+
+    def _maybe_prompt_zai_migration(self) -> None:
+        """One-time explicit migration for ``api.z.ai`` custom providers.
+
+        Fires only when ALL of:
+        - hostname of ``api_base`` is exactly ``api.z.ai``
+        - provider is a custom (non-builtin) connection
+        - no dialect is already saved in ``provider.extra``
+        - migration has not been previously prompted for this provider
+
+        Accept sets ``extra.dialect = "glm"`` and re-registers the
+        provider's dialect in the registry.  Decline (or dismiss) leaves
+        ``extra`` untouched so the provider continues as
+        OpenAI-compatible.
+
+        The ``glm_migration_prompted`` marker is durable: it survives
+        Cancel by being written to both the live config and the
+        construction-time snapshot.  The dialect change itself follows
+        normal Cancel semantics (reverted by
+        ``_restore_config_from_snapshot``).
+        """
+        provider_name = self._config.provider.name
+        # Only for custom (non-builtin) providers.
+        if not self._config.is_custom_provider(provider_name):
+            return
+        # Already has a dialect — don't prompt.
+        extra = self._config.provider.extra
+        if isinstance(extra, dict) and extra.get("dialect"):
+            return
+        # Already prompted — don't re-prompt.
+        cp = self._config.custom_providers.get(provider_name, {})
+        if cp.get("glm_migration_prompted"):
+            return
+        # Check hostname.
+        api_base = self._config.provider.api_base or ""
+        try:
+            hostname = urlparse(api_base).hostname
+        except Exception:
+            hostname = ""
+        if hostname != _ZAI_HOSTNAME:
+            return
+
+        # Prompt the user.
+        accepted = _prompt_zai_migration(parent=self)
+
+        # Record the durable marker regardless of accept/decline.
+        # Write to BOTH the live config and the construction snapshot so
+        # the marker survives Cancel (_restore_config_from_snapshot
+        # replaces custom_providers from the snapshot).  The dialect
+        # change (if accepted) follows normal Cancel semantics and will
+        # be reverted by the snapshot restore.
+        self._config.custom_providers.setdefault(provider_name, {})
+        self._config.custom_providers[provider_name]["glm_migration_prompted"] = True
+        # Mirror to the snapshot so Cancel does not undo the marker.
+        snap_cp = self._config_snapshot.custom_providers.get(provider_name)
+        if snap_cp is None:
+            self._config_snapshot.custom_providers[provider_name] = {"glm_migration_prompted": True}
+        else:
+            snap_cp["glm_migration_prompted"] = True
+
+        if accepted:
+            # Set the GLM dialect on the active provider.
+            new_extra = dict(extra) if isinstance(extra, dict) else {}
+            new_extra["dialect"] = GLM_DIALECT
+            self._config.provider.extra = new_extra
+
+            # Re-register provider dialects in the registry so the GLM
+            # adapter is used for this custom connection.
+            dialects = {}
+            for name, _cp_data in self._config.custom_providers.items():
+                saved = self._config.providers.get(name, {})
+                saved_extra = saved.get("extra", {})
+                if isinstance(saved_extra, dict) and saved_extra.get("dialect") == GLM_DIALECT:
+                    dialects[name] = GLM_DIALECT
+                elif name == provider_name:
+                    dialects[name] = GLM_DIALECT
+            self._registry.register_custom_providers(
+                list(self._config.custom_providers.keys()),
+                dialects=dialects,
+            )
+
+            # Load GLM controls from the newly-set config and refresh.
+            self._load_glm_controls_from_config()
+            self._refresh_glm_controls()
+
     def _on_theme_changed(self) -> None:
         """Apply the selected theme to the live ThemeManager and persist it."""
         try:
@@ -971,6 +1277,9 @@ class SettingsDialog(QDialog):
         self._config.provider.temperature = snap.provider.temperature
         self._config.provider.max_tokens = snap.provider.max_tokens
         self._config.provider.context_window = snap.provider.context_window
+        # Restore extra (GLM dialect settings) via deep-copy so the
+        # restored dict cannot alias the snapshot's nested structures.
+        self._config.provider.extra = copy.deepcopy(snap.provider.extra)
         self._config.providers = copy.deepcopy(snap.providers)
         self._config.custom_providers = copy.deepcopy(snap.custom_providers)
         self._config.active_profile = snap.active_profile
@@ -1049,6 +1358,13 @@ class SettingsDialog(QDialog):
         self._populate_builtin_models()
         self._model_status.setText("Click Refresh to fetch live models.")
         self._model_status.setStyleSheet(get_hint_status_style())
+
+        # Load GLM controls from the (possibly restored) config and
+        # refresh visibility based on the new provider's dialect.
+        self._load_glm_controls_from_config()
+        self._refresh_glm_controls()
+        # Check for one-time Z.AI migration prompt.
+        self._maybe_prompt_zai_migration()
 
     def _on_key_edited(self) -> None:
         # Capture the user's currently-selected / typed model BEFORE we
@@ -1333,6 +1649,8 @@ class SettingsDialog(QDialog):
         self._config.provider.temperature = self._temp_spin.value()
         self._config.provider.max_tokens = self._max_tokens_spin.value()
         self._config.provider.context_window = self._context_spin.value()
+        # Sync GLM controls back to extra if the active provider is GLM.
+        self._sync_glm_controls_to_config()
 
     # --- Accept ---
 
@@ -1404,6 +1722,8 @@ class SettingsDialog(QDialog):
         self._config.provider.temperature = self._temp_spin.value()
         self._config.provider.max_tokens = self._max_tokens_spin.value()
         self._config.provider.context_window = self._context_spin.value()
+        # Sync GLM controls back to extra before persisting.
+        self._sync_glm_controls_to_config()
         self._config.auto_context = self._auto_context_cb.isChecked()
         self._config.checkpoint_auto_save = self._auto_save_cb.isChecked()
         self._config.exploration_turn_limit = self._explore_turns_spin.value()

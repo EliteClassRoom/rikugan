@@ -392,3 +392,23 @@ class TestApplyProviderOverrides:
         assert cfg.provider.name == "minimax"
         # switch_provider uses saved model or falls back to provider default
         assert cfg.provider.model == "MiniMax-M3"
+
+
+# ---------------------------------------------------------------------------
+# Provider extras deep-copy persistence (Task 4 of GLM resilience plan)
+# ---------------------------------------------------------------------------
+
+
+def test_switch_provider_preserves_nested_extra_without_aliasing():
+    from rikugan.core.config import RikuganConfig
+
+    cfg = RikuganConfig()
+    cfg.provider.name = "glm"
+    cfg.provider.extra = {"dialect": "glm", "thinking": {"enabled": True}}
+
+    cfg.switch_provider("openai")
+    cfg.switch_provider("glm")
+
+    assert cfg.provider.extra["thinking"]["enabled"] is True
+    cfg.provider.extra["thinking"]["enabled"] = False
+    assert cfg.providers["glm"]["extra"]["thinking"]["enabled"] is True

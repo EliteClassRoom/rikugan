@@ -723,6 +723,30 @@ class ToolCallWidget(QFrame):
             self._status_label.setText("✓")
             self._status_label.setStyleSheet(f"color: {tool_colors['status_success']}; font-size: inherit;")
 
+    def mark_discarded(self, reason: str = "discarded") -> None:
+        """Stop the spinner and set a neutral terminal glyph without result.
+
+        Called when a partial tool call is dropped instead of executed
+        (truncated args, degenerated JSON). Shows a short status line
+        so the user understands why the call has no result.
+        """
+        self._stop_spinner()
+        tool_colors = get_tool_colors()
+        self._status_label.setText("⊘")
+        self._status_label.setStyleSheet(
+            f"color: {tool_colors.get('status_warning', tool_colors.get('preview', '#888'))}; font-size: inherit;"
+        )
+        self._bullet.setStyleSheet(
+            f"color: {tool_colors.get('status_warning', tool_colors.get('preview', '#888'))}; font-size: inherit;"
+        )
+        self._result_header.setVisible(True)
+        self._result_label.setText(f"({reason})")
+        self._result_label.setStyleSheet(
+            f"color: {tool_colors.get('preview', '#888')}; font-style: italic; font-size: inherit;"
+        )
+        self._result_label.setVisible(True)
+        self._result_label.pin_height()
+
     def hide_preview(self) -> None:
         """Hide the args preview (used when preview budget exhausted)."""
         self._preview_label.setVisible(False)
@@ -1686,6 +1710,31 @@ class ExecutePythonWidget(QFrame):
             tool_colors = get_tool_colors()
             self._status_icon.setText("✓")
             self._status_icon.setStyleSheet(f"color: {tool_colors['status_success']}; font-size: inherit;")
+
+    def mark_discarded(self, reason: str = "discarded") -> None:
+        """Stop the lifecycle and set a neutral terminal glyph without result.
+
+        Same terminal semantics as ``ToolCallWidget.mark_discarded``:
+        the call was started but dropped (truncated args, degenerated
+        JSON) instead of executed.
+        """
+        tool_colors = get_tool_colors()
+        self._status_icon.setText("⊘")
+        self._status_icon.setStyleSheet(
+            f"color: {tool_colors.get('status_warning', tool_colors.get('preview', '#888'))}; font-size: inherit;"
+        )
+        self._bullet.setStyleSheet(
+            f"color: {tool_colors.get('status_warning', tool_colors.get('preview', '#888'))}; font-size: inherit;"
+        )
+        # Hide approval buttons — no result will arrive.
+        self._buttons_visible = False
+        if hasattr(self, "_buttons_container"):
+            self._buttons_container.setVisible(False)
+        # Show a short status line instead of a result.
+        self._result_header_label.setVisible(True)
+        self._result_edit.setPlainText(f"({reason})")
+        self._result_edit.setStyleSheet(f"color: {tool_colors.get('preview', '#888')}; font-style: italic;")
+        self._result_block.setVisible(True)
 
     def hide_preview(self) -> None:
         """No-op retained for ChatView tool-grouping compatibility.

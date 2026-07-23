@@ -45,6 +45,7 @@ from .styles import (
     get_history_nav_button_style,
     get_history_nav_frame_style,
     get_history_nav_label_style,
+    get_tool_colors,
     is_host_theme,
 )
 from .tool_widgets import ExecutePythonWidget, ToolApprovalWidget, ToolCallWidget, ToolGroupWidget
@@ -125,6 +126,10 @@ class MessageSpec:
     question_options: tuple[str, ...] = ()
     # TOOL side: list of ToolSpec (call + result)
     tool_specs: tuple[ToolSpec, ...] = ()
+    # Provider reasoning trace (GLM thinking, OpenAI o-series, etc.).
+    # When non-empty, the renderer creates a _ThinkingBlock from this
+    # field directly, bypassing legacy ``_split_thinking`` parsing.
+    reasoning_content: str = ""
     # Estimated pixel height of the widget once it is laid out at the
     # current viewport width.  Used for MessagePlaceholder sizing.
     estimated_height: int = 60
@@ -341,9 +346,20 @@ class RestoreWorker(QThread):
             # a 677-message restore. ``content_html`` carries the rendered
             # HTML; ``content`` stays as the raw source for set_text_deferred
             # callers that did not opt in (kept for the sync restore path).
+            #
+            # When ``reasoning_content`` is present (GLM thinking, OpenAI
+            # o-series), it is carried directly on the spec so the renderer
+            # bypasses legacy ``_split_thinking`` parsing. The visible
+            # ``content`` is used as-is (no <think> stripping needed).
+            reasoning_content = msg.reasoning_content or ""
             visible_text = ""
             if content:
-                _thinking, visible_text = _split_thinking(content)
+                if reasoning_content:
+                    # New field wins — content is already the visible text.
+                    visible_text = content
+                else:
+                    # Legacy: strip <think> tags from content.
+                    _thinking, visible_text = _split_thinking(content)
             render_source = visible_text if visible_text else content
             content_html = md_to_html(render_source) if render_source else ""
             return (
@@ -353,6 +369,7 @@ class RestoreWorker(QThread):
                     content=content,
                     content_html=content_html,
                     tool_specs=tuple(tool_specs),
+                    reasoning_content=reasoning_content,
                     estimated_height=estimated or _estimate_assistant_height(content),
                 ),
                 consumed,
@@ -811,10 +828,31 @@ class ChatView(QScrollArea):
             # status line. Routed here (not in ``_handle_tool_event``)
             # because it never carries args/result/approval semantics.
             self._handle_docs_gate_status(event)
+        elif etype == TurnEventType.REASONING_DELTA:
+            self._handle_reasoning_delta(event)
+        elif etype == TurnEventType.RECOVERY_START:
+            self._handle_recovery_start(event)
+        elif etype == TurnEventType.TOOL_CALL_DISCARDED:
+            self._handle_tool_call_discarded(event)
+
+    def _finalize_reasoning_block(self) -> None:
+        """Switch the transient reasoning block from 'Thinking...' to 'Thinking'.
+
+        Called when visible text begins (TEXT_DELTA/TEXT_DONE) or at
+        TURN_END so the spinner indicator stops on the reasoning block.
+        """
+        if self._message_thinking is not None:
+            self._message_thinking.set_thinking(
+                self._message_thinking._source_text,
+                in_progress=False,
+            )
 
     def _handle_text_event(self, event: TurnEvent) -> None:
         self._hide_thinking()
         self._reset_tool_run()
+        # Finalize any in-progress reasoning block now that visible text
+        # has started arriving.
+        self._finalize_reasoning_block()
         if event.type == TurnEventType.TEXT_DELTA:
             text = event.text
 
@@ -1046,6 +1084,70 @@ class ChatView(QScrollArea):
             )
             self._scroll_to_bottom()
 
+    def _handle_reasoning_delta(self, event: TurnEvent) -> None:
+        """Append reasoning text to the transient _ThinkingBlock.
+
+        Creates the block lazily on the first delta and appends
+        subsequent deltas to the same block's source text. Never
+        touches ``_current_assistant`` — reasoning must not enter
+        the visible assistant buffer.
+        """
+        delta = event.reasoning
+        if not delta:
+            return
+        if self._message_thinking is None:
+            self._message_thinking = _ThinkingBlock()
+            self._insert_widget(self._message_thinking)
+        existing = self._message_thinking._source_text
+        self._message_thinking.set_thinking(existing + delta, in_progress=True)
+        self._scroll_to_bottom()
+
+    def _handle_recovery_start(self, event: TurnEvent) -> None:
+        """Remove the transient reasoning block and show one compact status.
+
+        This is a hard boundary: the transient ``_ThinkingBlock`` is
+        hidden, removed from the layout, and scheduled for deletion
+        exactly once (reference set to ``None``). A single compact
+        status label is inserted. Subsequent recovery events each
+        insert their own label — no coalescing.
+        """
+        md = event.metadata or {}
+        attempt = md.get("attempt", 0)
+        reason = md.get("reason", "")
+        # Properly tear down the transient reasoning block.
+        if self._message_thinking is not None:
+            old = self._message_thinking
+            self._message_thinking = None
+            old.hide()
+            self._layout.removeWidget(old)
+            old.deleteLater()
+        # Insert one compact status label.
+        status_text = f"Recovery (attempt {attempt})"
+        if reason:
+            status_text += f": {reason}"
+        status_label = QLabel(status_text)
+        status_label.setObjectName("recovery_status")
+        tool_colors = get_tool_colors()
+        status_label.setStyleSheet(
+            f"color: {tool_colors.get('preview', '#888')}; font-style: italic; font-size: 0.9em; padding: 2px 8px;"
+        )
+        self._insert_widget(status_label)
+        self._scroll_to_bottom()
+
+    def _handle_tool_call_discarded(self, event: TurnEvent) -> None:
+        """Mark a tool widget as discarded (terminal state, no result).
+
+        Looks up the widget by ``tool_call_id`` and calls
+        ``mark_discarded`` so its spinner stops and a neutral glyph
+        replaces the spinner. If no widget exists (orphan event),
+        the signal is dropped silently.
+        """
+        tw = self._tool_widgets.get(event.tool_call_id)
+        if tw is not None and hasattr(tw, "mark_discarded"):
+            reason = (event.metadata or {}).get("reason", "discarded")
+            tw.mark_discarded(reason)
+            self._scroll_to_bottom()
+
     def _handle_lifecycle_event(self, event: TurnEvent) -> None:
         etype = event.type
         if etype == TurnEventType.TURN_START:
@@ -1056,6 +1158,7 @@ class ChatView(QScrollArea):
             self._scroll_to_bottom()
         elif etype == TurnEventType.TURN_END:
             self._hide_thinking()
+            self._finalize_reasoning_block()
             self._reset_tool_run()
             self._current_assistant = None
         elif etype == TurnEventType.CANCELLED:
@@ -1377,8 +1480,25 @@ class ChatView(QScrollArea):
                 self._insert_user_message_widget(msg.content)
             elif msg.role == Role.ASSISTANT:
                 self._reset_tool_run()
-                if msg.content:
-                    thinking_text, visible_text = _split_thinking(msg.content)
+                # Prefer structured reasoning_content over legacy tags.
+                reasoning_content = msg.reasoning_content or ""
+                content = msg.content or ""
+                if reasoning_content:
+                    # New field: render thinking directly, content as-is.
+                    tb = _ThinkingBlock()
+                    tb.set_thinking(reasoning_content, in_progress=False)
+                    self._insert_widget(tb)
+                    if content:
+                        w = AssistantMessageWidget(parent=self._container)
+                        w.set_text_deferred(content)
+                        self._insert_widget(w)
+                    else:
+                        # Reasoning-only message: still emit a spacer widget
+                        # for any tool calls that follow.
+                        w = AssistantMessageWidget(parent=self._container)
+                        self._insert_widget(w)
+                elif content:
+                    thinking_text, visible_text = _split_thinking(content)
 
                     if thinking_text:
                         tb = _ThinkingBlock()
@@ -1386,7 +1506,7 @@ class ChatView(QScrollArea):
                         self._insert_widget(tb)
 
                     w = AssistantMessageWidget(parent=self._container)
-                    w.set_text_deferred(visible_text if visible_text else msg.content)
+                    w.set_text_deferred(visible_text if visible_text else content)
                     self._insert_widget(w)
                 else:
                     w = AssistantMessageWidget()
@@ -2124,12 +2244,16 @@ class ChatView(QScrollArea):
             content = spec.content or ""
             visible_text = ""
             thinking_text = ""
-            if content:
+            # Prefer structured reasoning_content over legacy <think> tags.
+            if spec.reasoning_content:
+                thinking_text = spec.reasoning_content
+                visible_text = content
+            elif content:
                 thinking_text, visible_text = _split_thinking(content)
-                if thinking_text:
-                    tb = _ThinkingBlock(parent=self._container)
-                    tb.set_thinking(thinking_text, in_progress=False)
-                    widgets.append(tb)
+            if thinking_text:
+                tb = _ThinkingBlock(parent=self._container)
+                tb.set_thinking(thinking_text, in_progress=False)
+                widgets.append(tb)
             # Mirror the sync path: always emit an
             # ``AssistantMessageWidget`` for an ASSISTANT message,
             # even when the content is empty (the widget acts as a

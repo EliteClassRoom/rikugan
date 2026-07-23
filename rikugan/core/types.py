@@ -6,7 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 
 def _safe_persisted_text(value: object) -> str:
@@ -138,6 +138,54 @@ class TokenUsage:
         return self.prompt_tokens + self.cache_read_tokens + self.cache_creation_tokens
 
 
+@dataclass(frozen=True)
+class LLMRequestContext:
+    attempt_number: int = 1
+    recovery: bool = False
+    max_tokens_override: int | None = None
+    system_suffix: str = ""
+    disable_thinking: bool = False
+    # Transport hint: True when the request is dispatched through the
+    # streaming pipeline (``chat_stream``).  Providers use this to gate
+    # transport-only wire fields (e.g. GLM ``tool_stream``) so they are
+    # not sent on non-streaming ``chat()`` calls.  Defaults to False to
+    # preserve payload equivalence for non-GLM providers and non-stream
+    # callers.
+    streaming: bool = False
+
+
+@dataclass(frozen=True)
+class AttemptUsage:
+    usage: TokenUsage
+    provenance: Literal["authoritative", "estimated"]
+
+
+class TurnDisposition(str, Enum):
+    COMPLETED = "completed"
+    TOOL_USE = "tool_use"
+    TRUNCATED_TEXT = "truncated_text"
+    TRUNCATED_PARTIAL_TOOL_USE = "truncated_partial_tool_use"
+    DEGENERATED = "degenerated"
+    FILTERED = "filtered"
+    STREAM_BROKEN = "stream_broken"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
+@dataclass
+class TurnOutcome:
+    visible_text: str = ""
+    reasoning_content: str = ""
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: TokenUsage | None = None
+    raw_parts: Any = None
+    finish_reason: str | None = None
+    disposition: TurnDisposition = TurnDisposition.FAILED
+    attempt_usage: AttemptUsage | None = None
+    guard_trigger: str = ""
+    repetition_ratio_millis: int = 0
+
+
 @dataclass
 class Message:
     role: Role
@@ -149,6 +197,11 @@ class Message:
     timestamp: float = field(default_factory=time.time)
     token_usage: TokenUsage | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    # Provider-neutral reasoning trace (OpenAI o-series, GLM thinking, etc.).
+    # Persisted to JSON only when non-empty so legacy sessions stay compatible.
+    # Sanitized on load through ``_safe_persisted_text`` to neutralize
+    # injection markers and lone surrogates before re-entering the prompt.
+    reasoning_content: str = ""
     # Provider-specific raw response data (e.g. Gemini parts with thought_signatures).
     # Not serialized to JSON — only kept in-memory for the current session.
     _raw_parts: Any = field(default=None, repr=False)
@@ -185,6 +238,8 @@ class Message:
                 "cache_read_tokens": self.token_usage.cache_read_tokens,
                 "cache_creation_tokens": self.token_usage.cache_creation_tokens,
             }
+        if self.reasoning_content:
+            d["reasoning_content"] = self.reasoning_content
         return d
 
     @classmethod
@@ -249,6 +304,7 @@ class Message:
             timestamp=d.get("timestamp", time.time()),
             token_usage=usage,
             id=_safe_persisted_identifier(d.get("id")) or uuid.uuid4().hex[:12],
+            reasoning_content=_safe_persisted_text(d.get("reasoning_content")),
         )
 
 
@@ -261,6 +317,13 @@ class ProviderCapabilities:
     max_output_tokens: int = 4096
     supports_system_prompt: bool = True
     supports_cache_control: bool = False
+    # Provider can surface a separate reasoning channel (OpenAI o-series,
+    # GLM thinking, Anthropic extended thinking, etc.).
+    reasoning_content: bool = False
+    # Provider streams tool-call argument deltas as they arrive (vs. only at end).
+    streaming_tool_calls: bool = False
+    # Provider accepts an explicit reasoning-effort knob (low/medium/high).
+    reasoning_effort: bool = False
 
 
 @dataclass
@@ -286,6 +349,10 @@ class StreamChunk:
     usage: TokenUsage | None = None
     is_tool_call_start: bool = False
     is_tool_call_end: bool = False
+    # Incremental reasoning/thinking text from the provider (separate from
+    # the user-visible ``text`` channel). None when the provider does not
+    # stream reasoning.
+    reasoning_delta: str | None = None
     # Provider-specific raw response parts (e.g. Gemini parts with thought_signatures).
     raw_parts: Any = None
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import os
 import queue
 import threading
 import time
 import traceback
 from collections.abc import Generator
+from dataclasses import dataclass, field
 from typing import Any
 
 from .. import constants
@@ -29,7 +31,18 @@ from ..core.sanitize import (
     strip_iocs,
     strip_lone_surrogates,
 )
-from ..core.types import Message, Role, TokenUsage, ToolCall, ToolResult, coerce_token_count
+from ..core.types import (
+    AttemptUsage,
+    LLMRequestContext,
+    Message,
+    Role,
+    TokenUsage,
+    ToolCall,
+    ToolResult,
+    TurnDisposition,
+    TurnOutcome,
+    coerce_token_count,
+)
 from ..providers.base import LLMProvider
 from ..skills.registry import SkillRegistry
 from ..state.session import SessionState
@@ -46,6 +59,7 @@ from .exploration_mode import (
     KnowledgeBase,
     PatchRecord,
 )
+from .glm_guard import GLMGuardSnapshot, GLMReasoningGuard
 from .loop_commands import (
     ACTIVE_GOAL_METADATA_KEY,
     _handle_doctor_command,
@@ -96,6 +110,30 @@ _VERIFY_MUTATION_TOOLS: frozenset[str] = frozenset(
         "set_pseudocode_comment",
     }
 )
+
+
+@dataclass
+class _StreamToolState:
+    """Ordered per-tool-call state during streaming.
+
+    Tracks the lifecycle of each tool call by **start order** (the order
+    in which ``is_tool_call_start`` arrived).  At stream finalisation
+    time we walk this list to find the contiguous safe prefix: every
+    state before the first incomplete/errored state is safe; the broken
+    state and all states after it are discarded.
+
+    For GLM providers, malformed JSON does NOT fall back to ``{}`` --
+    ``parse_error`` is set and the call is discarded.  For non-GLM
+    providers the existing ``{}`` + warning fallback is preserved.
+    """
+
+    id: str
+    name: str = ""
+    raw_args: list[str] = field(default_factory=list)
+    started: bool = False
+    ended: bool = False
+    parsed_arguments: dict[str, Any] | None = None
+    parse_error: str = ""
 
 
 _FAILURE_PREFIXES = (
@@ -658,14 +696,22 @@ class AgentLoop:
         system_prompt: str,
         tools_schema: list | None,
         max_retries: int = 0,
-    ) -> Generator[TurnEvent, None, tuple[str, list[ToolCall], TokenUsage | None, Any]]:
+        request_context: LLMRequestContext | None = None,
+    ) -> Generator[TurnEvent, None, TurnOutcome]:
         """Stream one LLM call, yielding events. Retries on transient errors.
 
-        Returns ``(text, tool_calls, usage, raw_parts)`` where *raw_parts* is
-        provider-specific opaque data (e.g. Gemini parts with thought_signatures)
-        that should be stored on the :class:`Message` for faithful history replay.
+        Returns a :class:`TurnOutcome` carrying visible text, reasoning
+        content, tool calls, usage, raw parts, finish reason, disposition,
+        and guard trigger info.
 
         *max_retries* of 0 (default) reads from ``config.max_retries``.
+
+        *request_context* carries attempt-local state (attempt number,
+        recovery flag, system suffix, max_tokens override, disable_thinking)
+        so the provider can adapt the payload (e.g. GLM one-shot recovery).
+        When ``None``, the provider receives a default context (no suffix,
+        no override, thinking enabled) and the wire payload is identical
+        to the pre-context behaviour.
         """
         if max_retries <= 0:
             max_retries = self.config.max_retries or 3
@@ -675,7 +721,9 @@ class AgentLoop:
         for attempt in range(max_retries):
             self._check_cancelled()
             try:
-                result = yield from self._stream_llm_turn_inner(system_prompt, tools_schema)
+                result = yield from self._stream_llm_turn_inner(
+                    system_prompt, tools_schema, request_context=request_context
+                )
                 return result
             except (RateLimitError, ProviderError) as e:
                 is_rate_limit = isinstance(e, RateLimitError)
@@ -881,12 +929,29 @@ class AgentLoop:
         self,
         system_prompt: str,
         tools_schema: list | None,
-    ) -> Generator[TurnEvent, None, tuple[str, list[ToolCall], TokenUsage | None, Any]]:
-        """Stream one LLM call, yielding events (no retry logic)."""
+        *,
+        request_context: LLMRequestContext | None = None,
+    ) -> Generator[TurnEvent, None, TurnOutcome]:
+        """Stream one LLM call, yielding events (no retry logic).
+
+        Returns a :class:`TurnOutcome` with classified disposition.
+
+        *request_context* is forwarded to :meth:`provider.chat_stream` so
+        the provider can adapt the payload (e.g. GLM one-shot recovery with
+        disabled thinking and capped max_tokens).
+        """
         assistant_text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         current_tool_arg_parts: dict[str, list[str]] = {}
         current_tool_names: dict[str, str] = {}
+        # Ordered tool-call states by **start order** (the order
+        # ``is_tool_call_start`` chunks arrived).  Dicts are insertion-
+        # ordered in CPython 3.7+, but we use an explicit list to make
+        # the ordering guarantee self-documenting and to allow indexing
+        # the contiguous safe prefix at finalisation time.
+        tool_states: list[_StreamToolState] = []
+        # Map tool_call_id -> index into ``tool_states`` for O(1) lookup.
+        tool_state_index: dict[str, int] = {}
         last_usage: TokenUsage | None = None
         raw_parts: Any = None
         # Guard against duplicate tool-call completions.  Some
@@ -906,6 +971,20 @@ class AgentLoop:
         # the dedup branch in the test body and could silently
         # diverge from production).
         completed_tool_call_ids: set[str] = set()
+        reasoning_parts: list[str] = []
+
+        # Determine if the GLM reasoning guard should be active for this turn.
+        # The guard fires only when:
+        #   1. The provider is GLM (via extra["dialect"] == "glm" or provider.name == "glm")
+        #   2. Tools are exposed (guarding reasoning that degenerates before tool calls)
+        #   3. The guard is enabled in parsed GLM config
+        guard: GLMReasoningGuard | None = self._maybe_create_guard(tools_schema)
+
+        # Determine whether this provider uses GLM strict partial-tool-call
+        # semantics.  GLM providers reject malformed/incomplete tool args
+        # instead of falling back to ``{}``; non-GLM providers keep the
+        # existing ``{}`` + warning fallback unchanged.
+        is_glm = self.config.provider.extra.get("dialect") == "glm" or self.provider.name == "glm"
 
         provider_messages, estimated_prompt_tokens, estimated_usage = self._prepare_provider_messages(system_prompt)
         # Do not emit a pre-stream estimate — it causes the display to jump
@@ -918,6 +997,7 @@ class AgentLoop:
             max_tokens=self.config.provider.max_tokens,
             system=system_prompt,
             cancel_event=self._cancelled,
+            request_context=request_context,
         )
 
         chunk_count = 0
@@ -933,6 +1013,11 @@ class AgentLoop:
         # sees streamed text vanish and the session gains a silent gap (the
         # "chat bị ngắt đột ngột" symptom).
         stream_broke: bool = False
+        guard_triggered: bool = False
+        # Track whether the provider actually emitted usage chunks
+        # (vs estimated_usage from pre-stream estimation). This is needed
+        # to set the correct provenance on AttemptUsage.
+        provider_emitted_usage: bool = False
         try:
             for chunk in stream:
                 self._check_cancelled()
@@ -941,11 +1026,29 @@ class AgentLoop:
                 if chunk.text:
                     assistant_text_parts.append(chunk.text)
                     yield TurnEvent.text_delta(chunk.text)
+                    if guard is not None:
+                        guard.on_visible_delta(chunk.text)
+
+                if chunk.reasoning_delta:
+                    reasoning_parts.append(chunk.reasoning_delta)
+                    yield TurnEvent.reasoning_event(chunk.reasoning_delta)
+                    if guard is not None:
+                        guard.on_reasoning_delta(chunk.reasoning_delta)
 
                 if chunk.is_tool_call_start and chunk.tool_call_id:
                     current_tool_arg_parts[chunk.tool_call_id] = []
                     current_tool_names[chunk.tool_call_id] = chunk.tool_name or ""
+                    # Track in ordered list for contiguous-safe-prefix logic.
+                    state = _StreamToolState(
+                        id=chunk.tool_call_id,
+                        name=chunk.tool_name or "",
+                        started=True,
+                    )
+                    tool_states.append(state)
+                    tool_state_index[chunk.tool_call_id] = len(tool_states) - 1
                     yield TurnEvent.tool_call_start(chunk.tool_call_id, chunk.tool_name or "")
+                    if guard is not None:
+                        guard.on_tool_call_start()
 
                 if chunk.tool_args_delta and chunk.tool_call_id:
                     if not chunk.is_tool_call_end:
@@ -963,17 +1066,46 @@ class AgentLoop:
                     try:
                         args = json.loads(raw_args) if raw_args else {}
                     except json.JSONDecodeError as je:
+                        if is_glm:
+                            # GLM strict mode: do NOT fall back to {}.
+                            # Record the parse error and skip appending
+                            # to tool_calls.  The contiguous-safe-prefix
+                            # logic at finalisation will discard this
+                            # state and all later states.
+                            log_error(
+                                f"GLM malformed tool arguments for {tc_name} "
+                                f"(id={tc_id}): {je}. Raw: {raw_args[:200]}. "
+                                "Call will be discarded."
+                            )
+                            idx = tool_state_index.get(tc_id)
+                            if idx is not None:
+                                st = tool_states[idx]
+                                st.ended = True
+                                st.parse_error = str(je)
+                            # Do NOT append to tool_calls.
+                            # Do NOT emit tool_call_done -- the call is
+                            # discarded at finalisation with TOOL_CALL_DISCARDED.
+                            continue
+                        # Non-GLM: preserve the existing {} fallback + warning.
                         log_error(f"Malformed tool arguments for {tc_name} (id={tc_id}): {je}. Raw: {raw_args[:200]}")
                         args = {}
                         yield TurnEvent.error_event(
                             f"Warning: malformed arguments for tool '{tc_name}'. "
                             "The tool call will proceed with empty arguments."
                         )
+                    # Record successful parse on the state.
+                    idx = tool_state_index.get(tc_id)
+                    if idx is not None:
+                        st = tool_states[idx]
+                        st.ended = True
+                        st.parsed_arguments = args
+                        st.raw_args = list(current_tool_arg_parts.get(tc_id, []))
                     tool_calls.append(ToolCall(id=tc_id, name=tc_name, arguments=args))
                     yield TurnEvent.tool_call_done(tc_id, tc_name, raw_args)
 
                 if chunk.usage:
                     last_usage = self._accumulate_chunk_usage(last_usage, chunk.usage)
+                    provider_emitted_usage = True
                     self._context_manager.update_usage(last_usage)
                     # Do not yield per-chunk updates — emit one final update after the stream
 
@@ -986,6 +1118,14 @@ class AgentLoop:
                 # stream is fully consumed.
                 if chunk.finish_reason:
                     finish_reason = chunk.finish_reason
+
+                # Check guard after processing each chunk. When the guard
+                # triggers, close the stream generator immediately — we stop
+                # consuming provider output and finalize with DEGENERATED.
+                if guard is not None and guard.should_abort():
+                    guard_triggered = True
+                    stream.close()
+                    break
         except CancellationError:
             # Cancellation must propagate unchanged so the outer try/except
             # in run() converts it into a CANCELLED event.
@@ -1030,11 +1170,214 @@ class AgentLoop:
                 yield TurnEvent.error_event(warning)
 
         assistant_text = "".join(assistant_text_parts)
+        reasoning_content = "".join(reasoning_parts)
+
+        # ------------------------------------------------------------------
+        # Contiguous safe-prefix finalisation for GLM strict mode.
+        #
+        # Walk ``tool_states`` in **start order**.  The first state that
+        # is not fully ended-and-parsed (either never got ``is_tool_call_end``,
+        # or got it but JSON parse failed) is the "gap".  Every state at
+        # or after the gap is discarded; only the contiguous prefix
+        # before the gap survives.  Discarded states get a
+        # ``TOOL_CALL_DISCARDED`` event so the UI can render a closed
+        # lifecycle, and the corresponding ``ToolCall`` (if it was
+        # appended for non-GLM fallback) is removed from ``tool_calls``.
+        #
+        # For non-GLM providers this logic is a no-op: malformed JSON
+        # already fell back to ``{}`` and the call was appended with
+        # ``parsed_arguments`` set, so no state has ``parse_error``.
+        # ------------------------------------------------------------------
+        if is_glm and tool_states:
+            safe_prefix_len = len(tool_states)
+            for i, st in enumerate(tool_states):
+                is_complete = st.ended and st.parse_error == "" and st.parsed_arguments is not None
+                if not is_complete:
+                    safe_prefix_len = i
+                    break
+            # Emit TOOL_CALL_DISCARDED for states at/after the gap and
+            # remove their ToolCalls from the tool_calls list.
+            if safe_prefix_len < len(tool_states):
+                discarded_ids: set[str] = set()
+                for st in tool_states[safe_prefix_len:]:
+                    discarded_ids.add(st.id)
+                    reason = st.parse_error or "incomplete (truncated)"
+                    yield TurnEvent.tool_call_discarded(st.id, st.name, reason)
+                # Filter tool_calls to keep only the safe prefix.
+                tool_calls = [tc for tc in tool_calls if tc.id not in discarded_ids]
+                log_debug(
+                    f"GLM strict: safe prefix={safe_prefix_len}/{len(tool_states)} "
+                    f"tool states, discarded={sorted(discarded_ids)}"
+                )
+
         broke_tag = " (stream broke — partial)" if stream_broke else ""
+        guard_tag = " (guard triggered)" if guard_triggered else ""
         log_debug(
-            f"Stream done: {chunk_count} chunks, {len(assistant_text)} chars, {len(tool_calls)} tool calls{broke_tag}"
+            f"Stream done: {chunk_count} chunks, {len(assistant_text)} chars, "
+            f"{len(tool_calls)} tool calls{broke_tag}{guard_tag}"
         )
-        return (assistant_text, tool_calls, last_usage, raw_parts)
+
+        # Build the guard trigger info if applicable.
+        guard_trigger_str = ""
+        guard_snapshot: GLMGuardSnapshot | None = None
+        if guard is not None:
+            guard_snapshot = guard.snapshot()
+            if guard_triggered:
+                guard_trigger_str = guard_snapshot.trigger
+
+        # Classify the disposition of this turn using deterministic precedence.
+        # ``has_open_tool_calls`` covers two cases:
+        #   1. A tool call started but never received ``is_tool_call_end``
+        #      (truncated mid-args).
+        #   2. A GLM tool call received ``is_tool_call_end`` but JSON parse
+        #      failed — the call is in ``completed_tool_call_ids`` but was
+        #      discarded and removed from ``tool_calls``.
+        # Both signal that tool calls were attempted but incomplete.
+        has_open = bool(current_tool_arg_parts) and not all(
+            tc_id in completed_tool_call_ids and not any(st.id == tc_id and st.parse_error for st in tool_states)
+            for tc_id in current_tool_arg_parts
+        )
+        # Also: if any tool states were started at all (even if all discarded),
+        # and the turn is truncated, it should be TRUNCATED_PARTIAL_TOOL_USE.
+        had_any_tool_starts = bool(tool_states)
+        disposition = self._classify_turn_outcome(
+            guard_triggered=guard_triggered,
+            filtered=False,
+            has_open_tool_calls=has_open or had_any_tool_starts,
+            truncated=finish_reason in ("length", "max_tokens", "content_filter"),
+            stream_broke=stream_broke,
+            tool_calls=tool_calls,
+            visible_text=assistant_text,
+        )
+
+        # Build AttemptUsage with provenance (spec section 9.3).
+        #
+        # If the provider emitted usage before the guard fired (or the
+        # stream completed normally), preserve it as authoritative.
+        # Otherwise estimate completion_tokens with the same
+        # ceil((reasoning_utf8_bytes + visible_utf8_bytes +
+        #       tool_argument_utf8_bytes) / 3) rule, set prompt_tokens to
+        # the latest known prompt usage, and mark estimated.
+        attempt_usage: AttemptUsage | None = None
+        if provider_emitted_usage and last_usage is not None:
+            provenance = "authoritative"
+            attempt_usage = AttemptUsage(usage=last_usage, provenance=provenance)
+        else:
+            # Estimate completion from the content that was generated.
+            reasoning_bytes = len(reasoning_content.encode("utf-8"))
+            visible_bytes = len(assistant_text.encode("utf-8"))
+            tool_arg_bytes = sum(len("".join(parts).encode("utf-8")) for parts in current_tool_arg_parts.values())
+            est_completion = math.ceil((reasoning_bytes + visible_bytes + tool_arg_bytes) / 3)
+
+            # Prompt tokens: use the pre-stream estimate if available,
+            # otherwise fall back to zero.
+            est_prompt = coerce_token_count(estimated_usage.prompt_tokens) if estimated_usage else 0
+            est_total = est_prompt + est_completion
+            est_usage = TokenUsage(
+                prompt_tokens=est_prompt,
+                completion_tokens=est_completion,
+                total_tokens=est_total,
+            )
+            attempt_usage = AttemptUsage(usage=est_usage, provenance="estimated")
+
+        # Repetition ratio millis from guard snapshot.
+        rep_ratio_millis = guard_snapshot.repetition_ratio_millis if guard_snapshot else 0
+
+        return TurnOutcome(
+            visible_text=assistant_text,
+            reasoning_content=reasoning_content,
+            tool_calls=tool_calls,
+            usage=last_usage,
+            raw_parts=raw_parts,
+            finish_reason=finish_reason,
+            disposition=disposition,
+            attempt_usage=attempt_usage,
+            guard_trigger=guard_trigger_str,
+            repetition_ratio_millis=rep_ratio_millis,
+        )
+
+    @staticmethod
+    def _classify_turn_outcome(
+        *,
+        guard_triggered: bool,
+        filtered: bool,
+        has_open_tool_calls: bool,
+        truncated: bool,
+        stream_broke: bool,
+        tool_calls: list[ToolCall],
+        visible_text: str,
+    ) -> TurnDisposition:
+        """Classify the disposition of a completed stream.
+
+        Precedence (highest first):
+        - DEGENERATED: GLM reasoning guard fired
+        - FILTERED: content filter suppressed output
+        - TRUNCATED_PARTIAL_TOOL_USE: truncated AND tool calls present
+        - TRUNCATED_TEXT: truncated with text but no tool calls
+        - STREAM_BROKEN: stream broke mid-generation
+        - TOOL_USE: has tool calls (normal turn handoff)
+        - COMPLETED: normal text-only completion
+        - FAILED: no usable partial data at all
+        """
+        if guard_triggered:
+            return TurnDisposition.DEGENERATED
+        if filtered:
+            return TurnDisposition.FILTERED
+        if truncated and (tool_calls or has_open_tool_calls):
+            return TurnDisposition.TRUNCATED_PARTIAL_TOOL_USE
+        if truncated:
+            return TurnDisposition.TRUNCATED_TEXT
+        if stream_broke:
+            return TurnDisposition.STREAM_BROKEN
+        if tool_calls:
+            return TurnDisposition.TOOL_USE
+        if visible_text:
+            return TurnDisposition.COMPLETED
+        return TurnDisposition.FAILED
+
+    def _maybe_create_guard(self, tools_schema: list | None) -> GLMReasoningGuard | None:
+        """Create a GLM reasoning guard if this is a GLM+tools request.
+
+        Returns ``None`` when the guard should not be active:
+        - Provider is not GLM
+        - No tools are exposed
+        - Guard is disabled in config
+        """
+        is_glm = self.config.provider.extra.get("dialect") == "glm" or self.provider.name == "glm"
+        if not is_glm:
+            return None
+        if not tools_schema:
+            return None
+
+        # Parse GLM config to check guard.enabled and ceiling.
+        # Only the lazy import itself may fail silently (e.g. circular
+        # import edge case) -- invalid GLM extra values must surface as
+        # ValueError, not be swallowed, so the user knows their config
+        # is broken rather than silently losing the guard.
+        try:
+            from ..core.glm_config import parse_glm_extra
+        except ImportError:
+            log_debug("GLM guard: glm_config module unavailable, skipping guard")
+            return None
+
+        parsed_glm_config = parse_glm_extra(self.config.provider.extra, self.config.provider.model)
+
+        if not parsed_glm_config.guard.enabled:
+            return None
+
+        # Extract exposed tool names from the schema for meta-intent detection.
+        exposed_tool_names: list[str] = []
+        for entry in tools_schema:
+            if isinstance(entry, dict):
+                func = entry.get("function", {})
+                name = func.get("name", "")
+                if name:
+                    exposed_tool_names.append(name)
+
+        return GLMReasoningGuard(
+            exposed_tool_names=exposed_tool_names,
+            ceiling_tokens=parsed_glm_config.guard.reasoning_token_ceiling,
+        )
 
     @staticmethod
     def _finish_reason_warning(finish_reason: str | None) -> str | None:
@@ -2415,48 +2758,106 @@ class BackgroundAgentRunner:
         self._thread.start()
 
     def _run(self, user_message: str) -> None:
-        pending_text: list[str] = []
+        """Symmetric coalescing runner with low-latency pass-through.
+
+        Maintains a single pending delta type and one buffer. When the
+        queue has room, each delta is delivered immediately (low latency).
+        Only when the queue is full does the buffer absorb backpressure,
+        coalescing consecutive same-type deltas. On type switch, the
+        pending buffer is flushed as a single coalesced event before the
+        new type begins. This keeps REASONING_DELTA and TEXT_DELTA
+        buffers separate.
+
+        RECOVERY_START is a hard boundary: the pending buffer is flushed
+        (or discarded if ``discard_transient_reasoning`` is set and the
+        pending buffer is reasoning) before it is enqueued, and it is
+        never coalesced itself.
+
+        Control events and the sentinel are never dropped — ``_safe_put``
+        uses ``timeout=1`` with ``except queue.Full`` to avoid deadlock.
+        """
+        pending_type: TurnEventType | None = None
+        pending_buffer: list[str] = []
+
+        def _flush_pending() -> None:
+            """Emit the buffered deltas as one coalesced event."""
+            nonlocal pending_type
+            if not pending_buffer:
+                pending_type = None
+                return
+            if pending_type == TurnEventType.TEXT_DELTA:
+                evt = TurnEvent.text_delta("".join(pending_buffer))
+            elif pending_type == TurnEventType.REASONING_DELTA:
+                evt = TurnEvent.reasoning_event("".join(pending_buffer))
+            else:
+                pending_buffer.clear()
+                pending_type = None
+                return
+            try:
+                self.event_queue.put(evt, timeout=1)
+            except queue.Full:
+                log_debug(f"Event queue full, dropping coalesced {pending_type.value}")
+            pending_buffer.clear()
+            pending_type = None
+
+        def _safe_put(event: TurnEvent) -> None:
+            """Put without blocking indefinitely on a full queue.
+
+            Used for control events and sentinel — these must never
+            deadlock the producer thread.
+            """
+            try:
+                self.event_queue.put(event, timeout=1)
+            except queue.Full:
+                log_debug(f"Event queue full, dropping {event.type.value}")
+
         try:
             for event in self.agent_loop.run(user_message):
                 if event.type == TurnEventType.TEXT_DELTA:
+                    if pending_type is not None and pending_type != TurnEventType.TEXT_DELTA:
+                        _flush_pending()
+                    pending_type = TurnEventType.TEXT_DELTA
                     if self.event_queue.full():
-                        # Coalesce: buffer text deltas when queue is full
-                        pending_text.append(event.text)
-                        continue
-                    if pending_text:
-                        # Flush buffered text as a single coalesced delta
-                        pending_text.append(event.text)
-                        event = TurnEvent.text_delta("".join(pending_text))
-                        pending_text.clear()
-                    self.event_queue.put(event)
+                        # Backpressure: buffer for coalescing.
+                        pending_buffer.append(event.text)
+                    else:
+                        # Low latency: deliver immediately.
+                        if pending_buffer:
+                            pending_buffer.append(event.text)
+                            event = TurnEvent.text_delta("".join(pending_buffer))
+                            pending_buffer.clear()
+                            pending_type = None
+                        self.event_queue.put(event)
+                elif event.type == TurnEventType.REASONING_DELTA:
+                    if pending_type is not None and pending_type != TurnEventType.REASONING_DELTA:
+                        _flush_pending()
+                    pending_type = TurnEventType.REASONING_DELTA
+                    if self.event_queue.full():
+                        pending_buffer.append(event.reasoning)
+                    else:
+                        if pending_buffer:
+                            pending_buffer.append(event.reasoning)
+                            event = TurnEvent.reasoning_event("".join(pending_buffer))
+                            pending_buffer.clear()
+                            pending_type = None
+                        self.event_queue.put(event)
+                elif event.type == TurnEventType.RECOVERY_START:
+                    discard = event.metadata.get("discard_transient_reasoning", False)
+                    if discard and pending_type == TurnEventType.REASONING_DELTA:
+                        pending_buffer.clear()
+                        pending_type = None
+                    else:
+                        _flush_pending()
+                    _safe_put(event)
                 else:
-                    # Flush any pending text before non-delta events
-                    if pending_text:
-                        coalesced = TurnEvent.text_delta("".join(pending_text))
-                        pending_text.clear()
-                        self.event_queue.put(coalesced)
-                    self.event_queue.put(event)
+                    _flush_pending()
+                    _safe_put(event)
         except Exception as e:
             log_error(f"BackgroundAgentRunner error: {e}\n{traceback.format_exc()}")
-            if pending_text:
-                try:
-                    self.event_queue.put(
-                        TurnEvent.text_delta("".join(pending_text)),
-                        timeout=1,
-                    )
-                except queue.Full:
-                    log_debug("Event queue full, dropping pending text before error event")
-                pending_text.clear()
-            self.event_queue.put(TurnEvent.error_event(str(e)))
+            _flush_pending()
+            _safe_put(TurnEvent.error_event(str(e)))
         finally:
-            if pending_text:
-                try:
-                    self.event_queue.put(
-                        TurnEvent.text_delta("".join(pending_text)),
-                        timeout=1,
-                    )
-                except queue.Full:
-                    log_debug("Event queue full, dropping pending text in finally block")
+            _flush_pending()
             self.event_queue.put(None)  # Sentinel
 
     def cancel(self) -> None:

@@ -13,11 +13,18 @@ from tests.mocks.ida_mock import install_ida_mocks
 
 install_ida_mocks()
 
-from rikugan.core.types import Message, Role, ToolCall, ToolResult  # noqa: E402
+from rikugan.core.types import (
+    LLMRequestContext,
+    Message,
+    Role,
+    ToolCall,
+    ToolResult,
+)  # noqa: E402
 
 
 def _make_provider():
     from rikugan.providers.openai_provider import OpenAIProvider
+
     return OpenAIProvider(api_key="test-key", model="gpt-test")
 
 
@@ -42,11 +49,13 @@ class TestOpenAIFormatMessages(unittest.TestCase):
 
     def test_assistant_with_tool_calls(self):
         p = _make_provider()
-        msgs = [Message(
-            role=Role.ASSISTANT,
-            content="Checking",
-            tool_calls=[ToolCall(id="tc_1", name="get_info", arguments={"x": 1})],
-        )]
+        msgs = [
+            Message(
+                role=Role.ASSISTANT,
+                content="Checking",
+                tool_calls=[ToolCall(id="tc_1", name="get_info", arguments={"x": 1})],
+            )
+        ]
         result = p._format_messages(msgs)
         self.assertEqual(result[0]["role"], "assistant")
         self.assertEqual(result[0]["content"], "Checking")
@@ -111,12 +120,14 @@ class TestOpenAIToolCallIdRewriteAndDedupe(unittest.TestCase):
         request does not reference a non-existent tool_call.
         """
         p = _make_provider()
-        msgs = [Message(
-            role=Role.TOOL,
-            tool_results=[
-                ToolResult(tool_call_id="orphan_1", name="get_info", content="r"),
-            ],
-        )]
+        msgs = [
+            Message(
+                role=Role.TOOL,
+                tool_results=[
+                    ToolResult(tool_call_id="orphan_1", name="get_info", content="r"),
+                ],
+            )
+        ]
         result = p._format_messages(msgs)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["role"], "tool")
@@ -207,8 +218,7 @@ class TestOpenAIToolCallIdRewriteAndDedupe(unittest.TestCase):
         self.assertEqual(
             result[0]["tool_calls"][0]["id"],
             result[1]["tool_call_id"],
-            "Rewritten tool_call_id on the assistant side and the "
-            "matching tool result must agree.",
+            "Rewritten tool_call_id on the assistant side and the matching tool result must agree.",
         )
 
     def test_dedup_does_not_mutate_input_messages(self) -> None:
@@ -242,9 +252,11 @@ class TestOpenAINormalizeResponse(unittest.TestCase):
     def test_text_response(self):
         p = _make_provider()
         response = SimpleNamespace(
-            choices=[SimpleNamespace(
-                message=SimpleNamespace(content="Hello", tool_calls=None),
-            )],
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Hello", tool_calls=None),
+                )
+            ],
             usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         )
         msg = p._normalize_response(response)
@@ -255,18 +267,22 @@ class TestOpenAINormalizeResponse(unittest.TestCase):
     def test_tool_call_response(self):
         p = _make_provider()
         response = SimpleNamespace(
-            choices=[SimpleNamespace(
-                message=SimpleNamespace(
-                    content=None,
-                    tool_calls=[SimpleNamespace(
-                        id="tc_1",
-                        function=SimpleNamespace(
-                            name="test_tool",
-                            arguments='{"key": "val"}',
-                        ),
-                    )],
-                ),
-            )],
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="tc_1",
+                                function=SimpleNamespace(
+                                    name="test_tool",
+                                    arguments='{"key": "val"}',
+                                ),
+                            )
+                        ],
+                    ),
+                )
+            ],
             usage=SimpleNamespace(prompt_tokens=20, completion_tokens=10, total_tokens=30),
         )
         msg = p._normalize_response(response)
@@ -278,9 +294,11 @@ class TestOpenAINormalizeResponse(unittest.TestCase):
     def test_no_usage(self):
         p = _make_provider()
         response = SimpleNamespace(
-            choices=[SimpleNamespace(
-                message=SimpleNamespace(content="OK", tool_calls=None),
-            )],
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="OK", tool_calls=None),
+                )
+            ],
             usage=None,
         )
         msg = p._normalize_response(response)
@@ -290,12 +308,14 @@ class TestOpenAINormalizeResponse(unittest.TestCase):
 class TestOpenAIHandleApiError(unittest.TestCase):
     def test_generic_error_raises_provider_error(self):
         from rikugan.core.errors import ProviderError
+
         p = _make_provider()
         with self.assertRaises(ProviderError):
             p._handle_api_error(RuntimeError("something broke"))
 
     def test_context_length_string(self):
         from rikugan.core.errors import ProviderError
+
         p = _make_provider()
         with self.assertRaises(ProviderError):
             p._handle_api_error(RuntimeError("maximum context length exceeded"))
@@ -369,7 +389,7 @@ class TestOpenAIStreamLateIdArgsReplay(unittest.TestCase):
             # Delta 2: index 0, id arrives with the second arg fragment.
             _delta_chunk(
                 tool_calls=[
-                    _tc_delta(index=0, id="call_1", arguments=': 1}'),
+                    _tc_delta(index=0, id="call_1", arguments=": 1}"),
                 ],
             ),
             # Final chunk: tool_calls finish.
@@ -413,7 +433,7 @@ class TestOpenAIStreamLateIdArgsReplay(unittest.TestCase):
             ),
             _delta_chunk(
                 tool_calls=[
-                    _tc_delta(index=0, id="call_1", arguments=': 1}'),
+                    _tc_delta(index=0, id="call_1", arguments=": 1}"),
                 ],
             ),
             _delta_chunk(finish_reason="tool_calls"),
@@ -444,7 +464,7 @@ class TestOpenAIStreamLateIdArgsReplay(unittest.TestCase):
             ),
             _delta_chunk(
                 tool_calls=[
-                    _tc_delta(index=0, id="call_1", name="do_thing", arguments=': 1}'),
+                    _tc_delta(index=0, id="call_1", name="do_thing", arguments=": 1}"),
                 ],
             ),
             _delta_chunk(
@@ -465,7 +485,7 @@ class TestOpenAIStreamLateIdArgsReplay(unittest.TestCase):
         chunks = [
             _delta_chunk(
                 tool_calls=[
-                    _tc_delta(index=0, id="call_1", name="do_thing", arguments='{}'),
+                    _tc_delta(index=0, id="call_1", name="do_thing", arguments="{}"),
                 ],
             ),
             _delta_chunk(finish_reason="tool_calls"),
@@ -490,6 +510,38 @@ class TestOpenAIStreamLateIdArgsReplay(unittest.TestCase):
         usage_chunks = [c for c in emitted if c.usage is not None]
         self.assertEqual(len(usage_chunks), 1, "duplicate usage must be suppressed")
         self.assertEqual(usage_chunks[0].usage.total_tokens, 15)
+
+
+# ---------------------------------------------------------------------------
+# Task 5: payload equivalence.
+#
+# Threading an ``LLMRequestContext`` through the pipeline must not change
+# the wire payload for non-GLM providers.  This regression pin guarantees
+# that adding the keyword-only argument is a pure pass-through.
+# ---------------------------------------------------------------------------
+
+
+class TestOpenAIRequestContextPayloadEquivalence(unittest.TestCase):
+    def test_request_context_does_not_change_openai_payload(self) -> None:
+        provider = _make_provider()
+        messages = [Message(role=Role.USER, content="hello")]
+        baseline = provider._build_request_kwargs(messages, None, 0.3, 4096, "system")
+        contextual = provider._build_request_kwargs(
+            messages,
+            None,
+            0.3,
+            4096,
+            "system",
+            request_context=LLMRequestContext(recovery=True),
+        )
+
+        self.assertEqual(
+            contextual,
+            baseline,
+            "OpenAI payload differs when request_context is provided — "
+            "the context must be a pure pass-through for non-GLM "
+            "providers.",
+        )
 
 
 if __name__ == "__main__":

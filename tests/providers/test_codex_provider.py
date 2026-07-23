@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rikugan.core.errors import AuthenticationError
-from rikugan.core.types import Message, Role
+from rikugan.core.types import LLMRequestContext, Message, Role
 from rikugan.providers.codex_provider import CodexProvider, _id_token_info, codex_auth_status
 
 
@@ -185,6 +185,34 @@ class TestCodexRequestPayload(unittest.TestCase):
         self.assertEqual(kwargs["tool_choice"], "auto")
         self.assertTrue(kwargs["parallel_tool_calls"])
         self.assertEqual(kwargs["tools"][0]["name"], "lookup")
+
+
+# ---------------------------------------------------------------------------
+# Task 5: payload equivalence.
+# ---------------------------------------------------------------------------
+
+
+class TestCodexRequestContextPayloadEquivalence(unittest.TestCase):
+    def test_request_context_does_not_change_codex_payload(self) -> None:
+        provider = CodexProvider(model="gpt-5-codex")
+        messages = [Message(role=Role.USER, content="hello")]
+        baseline = provider._build_request_kwargs(messages, None, 0.3, 4096, "system")
+        contextual = provider._build_request_kwargs(
+            messages,
+            None,
+            0.3,
+            4096,
+            "system",
+            request_context=LLMRequestContext(recovery=True),
+        )
+
+        self.assertEqual(
+            contextual,
+            baseline,
+            "Codex payload differs when request_context is provided — "
+            "the context must be a pure pass-through for non-GLM "
+            "providers.",
+        )
 
 
 if __name__ == "__main__":

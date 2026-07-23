@@ -61,6 +61,13 @@ class ContextWindowManager:
         # Build summary of middle messages.
         # Snippets are sanitized to prevent injection payloads from surviving
         # compaction into the summary.
+        #
+        # REASONING RULE: Only visible ``content`` enters the summary source.
+        # ``reasoning_content`` (GLM thinking, OpenAI o-series) is deliberately
+        # excluded — old reasoning traces are transient and should not survive
+        # compaction into the summary.  Tail messages are untouched, so recent
+        # reasoning remains available for follow-up turns and unresolved
+        # tool-call/result pairs stay intact.
         summary_parts = ["[Context summary of earlier conversation:]"]
         for msg in middle:
             if msg.role == Role.USER:

@@ -39,6 +39,19 @@ _APPROVAL_EVENT_TYPES: frozenset[TurnEventType] = frozenset(
     }
 )
 
+# GLM reasoning-resilience events that pass through the headless runner
+# without mutating final_text, errors, status, or exit_code.  They are
+# still captured in the JSON event buffer via ``to_dict()`` so downstream
+# consumers (CLI, control server, analytics) can observe the recovery
+# lifecycle.
+_PASS_THROUGH_EVENT_TYPES: frozenset[TurnEventType] = frozenset(
+    {
+        TurnEventType.REASONING_DELTA,
+        TurnEventType.RECOVERY_START,
+        TurnEventType.TOOL_CALL_DISCARDED,
+    }
+)
+
 
 @dataclasses.dataclass
 class RunResult:
@@ -150,6 +163,12 @@ def run_prompt(
                     exit_code = EXIT_APPROVAL_REQUIRED
                 # Unblock the agent so it does not hang on approval queues.
                 _auto_deny_approval(runner, event.type)
+            elif event.type in _PASS_THROUGH_EVENT_TYPES:
+                # GLM reasoning/recovery events pass through without
+                # mutating final_text, errors, status, or exit_code.
+                # They are already captured in the JSON event buffer via
+                # the to_dict() call above.
+                pass
 
     except KeyboardInterrupt:
         exit_code = EXIT_CANCELLED

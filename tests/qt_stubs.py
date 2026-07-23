@@ -46,6 +46,12 @@ def _qt_class(name: str) -> type:
     def _visible_setter(self, val):
         self._visible = val
 
+    def _checked_getter(self):
+        return getattr(self, "_checked", False)
+
+    def _checked_setter(self, val):
+        self._checked = bool(val)
+
     def _hidden_getter(self):
         return not getattr(self, "_visible", True)
 
@@ -340,7 +346,8 @@ def _qt_class(name: str) -> type:
         "setMaximumHeight": _max_h_setter,
         "maximumHeight": _max_h_getter,
         "setCheckable": _noop,
-        "setChecked": _noop,
+        "setChecked": _checked_setter,
+        "isChecked": _checked_getter,
         "setText": _text_setter,
         "setAlignment": _noop,
         "setStatusTip": _noop,
@@ -1471,6 +1478,10 @@ def ensure_pyside6_stubs() -> None:
             def setSizeAdjustPolicy(self, p):
                 return None
 
+            def insertSeparator(self, index):
+                # Stub no-op — real Qt inserts a visual separator item.
+                return None
+
             def view(self):
                 return None
 
@@ -1488,10 +1499,127 @@ def ensure_pyside6_stubs() -> None:
                 self._items.clear()
                 self._current = -1
 
+            def setEnabled(self, enabled):
+                self._enabled = bool(enabled)
+
+            def isEnabled(self):
+                return getattr(self, "_enabled", True)
+
         return _QComboBox
 
     sys.modules["PySide6.QtWidgets"].QTabWidget = _make_qtabwidget_stub()
     sys.modules["PySide6.QtWidgets"].QComboBox = _make_qcombobox_stub()
+
+    def _make_qspinbox_stub() -> type:
+        """Build a minimal QSpinBox stub with value/range tracking.
+
+        The generic widget stub does not track ``value()`` / ``maximum()``,
+        but the GLM settings controls and the Max Output Tokens spin box
+        depend on those for clamping and round-trip.
+        """
+        _Base = _qt_class("QSpinBoxBase")
+
+        class _QSpinBox(_Base):
+            def __init__(self, parent=None):
+                super().__init__()
+                self._value = 0
+                self._minimum = 0
+                self._maximum = 99
+                self._suffix = ""
+                self._single_step = 1
+
+            def value(self):
+                return self._value
+
+            def setValue(self, v):
+                v = int(v)
+                if v > self._maximum:
+                    v = self._maximum
+                if v < self._minimum:
+                    v = self._minimum
+                self._value = v
+
+            def minimum(self):
+                return self._minimum
+
+            def setMinimum(self, m):
+                self._minimum = int(m)
+
+            def maximum(self):
+                return self._maximum
+
+            def setMaximum(self, m):
+                self._maximum = int(m)
+                if self._value > self._maximum:
+                    self._value = self._maximum
+
+            def setRange(self, lo, hi):
+                self._minimum = int(lo)
+                self._maximum = int(hi)
+                if self._value > self._maximum:
+                    self._value = self._maximum
+                if self._value < self._minimum:
+                    self._value = self._minimum
+
+            def setSingleStep(self, s):
+                self._single_step = int(s)
+
+            def setSuffix(self, s):
+                self._suffix = str(s)
+
+        return _QSpinBox
+
+    sys.modules["PySide6.QtWidgets"].QSpinBox = _make_qspinbox_stub()
+
+    def _make_qdoublespinbox_stub() -> type:
+        """Build a QDoubleSpinBox stub with value/range/decimals tracking."""
+        _Base = _qt_class("QDoubleSpinBoxBase")
+
+        class _QDoubleSpinBox(_Base):
+            def __init__(self, parent=None):
+                super().__init__()
+                self._value = 0.0
+                self._minimum = 0.0
+                self._maximum = 99.0
+                self._single_step = 1.0
+                self._decimals = 2
+
+            def value(self):
+                return self._value
+
+            def setValue(self, v):
+                v = float(v)
+                if v > self._maximum:
+                    v = self._maximum
+                if v < self._minimum:
+                    v = self._minimum
+                self._value = v
+
+            def minimum(self):
+                return self._minimum
+
+            def setMinimum(self, m):
+                self._minimum = float(m)
+
+            def maximum(self):
+                return self._maximum
+
+            def setMaximum(self, m):
+                self._maximum = float(m)
+
+            def setRange(self, lo, hi):
+                self._minimum = float(lo)
+                self._maximum = float(hi)
+
+            def setSingleStep(self, s):
+                self._single_step = float(s)
+
+            def setDecimals(self, d):
+                self._decimals = int(d)
+
+        return _QDoubleSpinBox
+
+    sys.modules["PySide6.QtWidgets"].QDoubleSpinBox = _make_qdoublespinbox_stub()
 
     def _make_qstackedwidget_stub() -> type:
         """Build a minimal QStackedWidget stub.

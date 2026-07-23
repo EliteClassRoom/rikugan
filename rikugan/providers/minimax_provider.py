@@ -19,7 +19,7 @@ from ..core.errors import (
     RateLimitError,
 )
 from ..core.logging import log_debug
-from ..core.types import ModelInfo, ProviderCapabilities
+from ..core.types import LLMRequestContext, ModelInfo, ProviderCapabilities
 from .anthropic_provider import AnthropicProvider
 from .base import LLMProvider
 
@@ -197,6 +197,8 @@ class MiniMaxProvider(AnthropicProvider):
         temperature: float,
         max_tokens: int,
         system: str,
+        *,
+        request_context: LLMRequestContext | None = None,
     ) -> dict[str, Any]:
         """Build request kwargs, stripping cache_control (not supported by MiniMax).
 
@@ -204,8 +206,21 @@ class MiniMaxProvider(AnthropicProvider):
         MiniMax Anthropic-compatible API docs: ``thinking: {"type": "adaptive"}``).
         M2.x models already have thinking permanently enabled and cannot disable
         it, so no explicit ``thinking`` payload is added for them.
+
+        ``request_context`` is keyword-only and a pure pass-through for
+        this provider — the base :meth:`LLMProvider.chat` already merges
+        ``context.system_suffix`` into ``system`` and applies any
+        ``max_tokens_override`` before this hook is reached, so the wire
+        payload is identical with or without a context.
         """
-        kwargs = super()._build_request_kwargs(messages, tools, temperature, max_tokens, system)
+        kwargs = super()._build_request_kwargs(
+            messages,
+            tools,
+            temperature,
+            max_tokens,
+            system,
+            request_context=request_context,
+        )
 
         # System prompt: strip cache_control from blocks
         if isinstance(kwargs.get("system"), list):

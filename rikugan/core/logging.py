@@ -20,8 +20,10 @@ import threading
 import time
 
 from .log_sinks import (  # noqa: F401 — re-exported for tests
+    STRUCTURED_EVENT_ALLOWLIST,
     HostOutputHandler,
     IDAHandler,
+    JSONScalar,
     _FlushFileHandler,
     _JSONFormatter,
     _log_file_path,
@@ -106,3 +108,28 @@ def log_trace(label: str) -> None:
     logger = get_logger()
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"TRACE {label}")
+
+
+def log_structured(event: dict[str, JSONScalar]) -> None:
+    """Emit a structured attempt event to the JSONL telemetry stream.
+
+    The event payload MUST use only keys from :data:`STRUCTURED_EVENT_ALLOWLIST`
+    and MUST contain only :data:`JSONScalar` values (str / int / float / bool /
+    None).  Any deviation raises :class:`KeyError` or :class:`TypeError` so a
+    bad call site fails fast at the producer — it is never acceptable to
+    silently drop a misused key, because that would let untrusted content
+    flow into the structured log via a different (unknown) field name.
+
+    On success, the event is emitted via the standard logging pipeline at
+    INFO level with message ``"agent_attempt"``.  The JSON formatter reads
+    ``record.rikugan_event`` and emits a single ``rikugan_event`` JSON
+    object after sanitizing every string value (injection markers and
+    lone surrogates are stripped).  The human-readable log line is left
+    untouched.
+    """
+    unknown = set(event) - STRUCTURED_EVENT_ALLOWLIST
+    if unknown:
+        raise KeyError(f"Unknown structured log keys: {sorted(unknown)}")
+    if any(not isinstance(value, (str, int, float, bool, type(None))) for value in event.values()):
+        raise TypeError("Structured log values must be JSON scalars")
+    get_logger().info("agent_attempt", extra={"rikugan_event": dict(event)})

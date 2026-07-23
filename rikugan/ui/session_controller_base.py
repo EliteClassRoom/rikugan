@@ -101,7 +101,10 @@ class SessionControllerBase:
         self.config = config
         self.host_name = host_name
         self._provider_registry = ProviderRegistry()
-        self._provider_registry.register_custom_providers(list(config.custom_providers.keys()))
+        self._provider_registry.register_custom_providers(
+            list(config.custom_providers.keys()),
+            dialects=self._compute_custom_dialects(config),
+        )
         # Build the tool registry eagerly on the IDA/main thread.
         #
         # The factory typically imports the host's tool module tree
@@ -421,6 +424,22 @@ class SessionControllerBase:
                 log_warning(f"Failed to reset deferred tool state: {e}")
         self._advanced_tools_registered = False
 
+    @staticmethod
+    def _compute_custom_dialects(config: Any) -> dict[str, str]:
+        """Extract the dialect identifier for each custom provider.
+
+        Reads ``config.providers[name]["extra"]["dialect"]`` (the saved
+        snapshot) so GLM-dialect custom providers route to
+        :class:`GLMProvider` instead of the generic OpenAI-compat adapter.
+        """
+        dialects: dict[str, str] = {}
+        for name in config.custom_providers:
+            saved = config.providers.get(name, {})
+            extra = saved.get("extra", {}) if isinstance(saved, dict) else {}
+            dialect = extra.get("dialect", "") if isinstance(extra, dict) else ""
+            dialects[name] = str(dialect)
+        return dialects
+
     def _create_provider(self) -> Any:
         """Create (or fetch) an LLMProvider instance for the current config.
 
@@ -439,11 +458,16 @@ class SessionControllerBase:
             resolve_auth_cached(self.config.provider.api_key or "")
         except Exception as exc:
             log_debug(f"Session auth cache warm-up failed: {exc}")
+        # Deep-copy the provider's ``extra`` dict so the GLM provider
+        # (or any future dialect-aware provider) cannot mutate the live
+        # config's nested options via reference aliasing (spec §12.3).
+        extra = copy.deepcopy(self.config.provider.extra) if self.config.provider.extra else None
         provider = self._provider_registry.get_or_create(
             self.config.provider.name,
             api_key=self.config.provider.api_key,
             api_base=self.config.provider.api_base,
             model=self.config.provider.model,
+            extra=extra,
         )
         # Let ``ensure_ready`` raise: ``start_agent`` and ``get_provider``
         # both wrap this call in a try/except and surface the failure as
@@ -902,7 +926,10 @@ class SessionControllerBase:
 
     def update_settings(self) -> None:
         # Re-register custom providers in case user added/removed one
-        self._provider_registry.register_custom_providers(list(self.config.custom_providers.keys()))
+        self._provider_registry.register_custom_providers(
+            list(self.config.custom_providers.keys()),
+            dialects=self._compute_custom_dialects(self.config),
+        )
         # Clear provider instances cache to force fresh creation with new credentials.
         # Without this, get_or_create() may return a cached instance from
         # _ModelFetcher in Settings dialog with stale internal state (e.g. cached
