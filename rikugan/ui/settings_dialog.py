@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
+from ..constants import GLM_DEFAULT_MODEL
 from ..core.config import RikuganConfig
 from ..core.glm_config import (
     GLM_DIALECT,
@@ -71,7 +72,11 @@ _MANUAL_MAX_TOKENS = 2_000_000
 _PROVIDER_BASES = {
     "ollama": DEFAULT_OLLAMA_URL,
     "minimax": _DEFAULT_MINIMAX_URL,
+    "glm": "https://api.z.ai/api/paas/v4",
 }
+
+# Z.AI's official Chat Completions endpoint for the GLM family.
+_ZAI_API_BASE = "https://api.z.ai/api/paas/v4"
 
 # Placeholder/default keys that should be cleared on provider switch
 _PROVIDER_DEFAULT_KEYS = {"ollama"}
@@ -181,6 +186,7 @@ class _ModelFetcher:
 _BUILTIN_PROVIDERS = [
     "anthropic",
     "openai",
+    "glm",
     "gemini",
     "ollama",
     "minimax",
@@ -1337,6 +1343,19 @@ class SettingsDialog(QDialog):
         # Auto-fill API base for providers that need it
         if provider == "ollama" and not self._api_base_edit.text().strip():
             self._api_base_edit.setText(_PROVIDER_BASES["ollama"])
+
+        # Built-in GLM: auto-set dialect + Z.AI base URL + default model so
+        # GLM controls appear and the provider is immediately usable without
+        # the user having to know the dialect/base/model details.
+        if provider == "glm":
+            if not self._config.provider.extra.get("dialect"):
+                self._config.provider.extra = {"dialect": GLM_DIALECT}
+            if not self._api_base_edit.text().strip():
+                self._api_base_edit.setText(_ZAI_API_BASE)
+                self._config.provider.api_base = _ZAI_API_BASE
+            if not self._config.provider.model.strip():
+                self._set_manual_model_text(GLM_DEFAULT_MODEL)
+                self._config.provider.model = GLM_DEFAULT_MODEL
 
         # OAuth checkbox only visible for Anthropic
         self._oauth_cb.setVisible(provider == "anthropic")
