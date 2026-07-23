@@ -33,3 +33,22 @@ def test_portalocker_runtime_dependency_is_in_all_manifests() -> None:
     assert expected in project_deps
     assert expected in plugin_deps
     assert expected in requirements
+
+
+def test_unicorn_runtime_dependency_is_in_all_manifests() -> None:
+    root = Path(__file__).resolve().parents[2]
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    plugin = json.loads((root / "ida-plugin.json").read_text(encoding="utf-8"))
+    requirements = {
+        line.strip()
+        for line in (root / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    project_deps = set(pyproject["project"]["dependencies"])
+    plugin_deps = set(plugin["plugin"]["pythonDependencies"])
+    expected = "unicorn>=2.1.0,<3"
+
+    assert expected in project_deps, "unicorn must appear in pyproject [project].dependencies"
+    assert expected in plugin_deps, "unicorn must appear in ida-plugin.json plugin.pythonDependencies"
+    assert expected in requirements, "unicorn must appear in requirements.txt"
