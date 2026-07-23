@@ -98,6 +98,12 @@ class GLMProvider(OpenAIProvider):
         ``"no-key"`` placeholder so the SDK does not read
         ``OPENAI_API_KEY`` from the environment.  Timeout is kept at 120
         seconds (same as the base OpenAI provider).
+
+        Base URL resolution: if the caller set an explicit ``api_base``, it
+        wins (user override).  Otherwise the endpoint type from the GLM
+        config picks the correct Z.AI base URL — ``standard`` vs
+        ``coding_plan`` — because the two endpoints require
+        non-interchangeable API keys and route to different Z.AI backends.
         """
         if self._client is None:
             try:
@@ -108,16 +114,17 @@ class GLMProvider(OpenAIProvider):
                     provider=self._provider_name,
                 ) from exc
             client_kwargs: dict[str, Any] = {"timeout": 120.0}
+            effective_base = self.api_base or self._glm_config.base_url
             if self.api_key:
                 client_kwargs["api_key"] = self.api_key
-            elif self.api_base:
+            elif effective_base:
                 # Custom endpoint without explicit key — use a placeholder
                 # to prevent the SDK from reading OPENAI_API_KEY env var.
                 client_kwargs["api_key"] = "no-key"
             else:
                 client_kwargs["api_key"] = self.api_key
-            if self.api_base:
-                client_kwargs["base_url"] = self.api_base
+            if effective_base:
+                client_kwargs["base_url"] = effective_base
             self._client = openai.OpenAI(**client_kwargs)
         return self._client
 

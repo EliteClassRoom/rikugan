@@ -233,6 +233,7 @@ class TestGLMControlsPersistence(unittest.TestCase):
                 config.provider.extra,
                 {
                     "dialect": "glm",
+                    "endpoint_type": "standard",
                     "thinking": {"enabled": False, "reasoning_effort": "none", "preserve": True},
                     "degeneration_guard": {
                         "enabled": True,
@@ -311,8 +312,64 @@ class TestGLMControlsPersistence(unittest.TestCase):
             dlg.done(0)
 
 
-# ---------------------------------------------------------------------------
-# Z.AI migration tests
+class TestGLMEndpointType(unittest.TestCase):
+    """Endpoint type combo (Standard vs Coding Plan) persists and drives
+    the API base URL.  The two Z.AI endpoints use non-interchangeable keys."""
+
+    def setUp(self) -> None:
+        _ensure_qapplication()
+
+    def _build_dialog(self):
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        config = RikuganConfig()
+        config.provider.extra = {"dialect": "glm"}
+        return SettingsDialog(config), config
+
+    def test_default_endpoint_is_standard(self) -> None:
+        dlg, _ = self._build_dialog()
+        try:
+            self.assertEqual(dlg._glm_endpoint_combo.currentData(), "standard")
+        finally:
+            dlg.done(0)
+
+    def test_endpoint_round_trips(self) -> None:
+        """Endpoint saved to extra loads back into the combo."""
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        config = RikuganConfig()
+        config.provider.extra = {"dialect": "glm", "endpoint_type": "coding_plan"}
+        dlg = SettingsDialog(config)
+        try:
+            self.assertEqual(dlg._glm_endpoint_combo.currentData(), "coding_plan")
+        finally:
+            dlg.done(0)
+
+    def test_endpoint_change_updates_base_url(self) -> None:
+        """Switching to Coding Plan updates api_base from the standard URL
+        to the coding-plan URL."""
+        from rikugan.ui.settings_dialog import SettingsDialog
+
+        from rikugan.core.glm_config import GLM_ENDPOINT_BASE_URLS
+
+        config = RikuganConfig()
+        config.provider.extra = {"dialect": "glm"}
+        config.provider.api_base = GLM_ENDPOINT_BASE_URLS["standard"]
+        dlg = SettingsDialog(config)
+        try:
+            # Simulate user selecting Coding Plan.
+            idx = dlg._glm_endpoint_combo.findData("coding_plan")
+            dlg._glm_endpoint_combo.setCurrentIndex(idx)
+            # _on_glm_endpoint_changed fires on currentIndexChanged.
+            self.assertEqual(
+                dlg._api_base_edit.text().strip(),
+                GLM_ENDPOINT_BASE_URLS["coding_plan"],
+            )
+        finally:
+            dlg.done(0)
+
+
+
 # ---------------------------------------------------------------------------
 
 

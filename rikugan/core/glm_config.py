@@ -70,13 +70,33 @@ KNOWN_GLM_CONTEXT_WINDOW = 200_000
 #: is True for the selected model.
 REASONING_EFFORT_VALUES: frozenset[str] = frozenset({"max", "xhigh", "high", "medium", "low", "minimal", "none"})
 
+#: Z.AI endpoint types.  The "standard" endpoint serves the general-purpose
+#: PaaS API (per-token billing); the "coding_plan" endpoint serves Z.AI's
+#: Coding Plan subscription ($18/mo+) and requires a non-interchangeable
+#: Plan API key.  The two base URLs are distinct per Z.AI docs:
+#:   standard:     https://api.z.ai/api/paas/v4
+#:   coding_plan:  https://api.z.ai/api/coding/paas/v4
+#: Plan keys are rejected by the standard endpoint and vice-versa, so this
+#: must be stored alongside the GLM config so the provider sends requests
+#: to the correct base URL.
+GLM_ENDPOINT_STANDARD = "standard"
+GLM_ENDPOINT_CODING_PLAN = "coding_plan"
+GLM_ENDPOINT_VALUES: frozenset[str] = frozenset({GLM_ENDPOINT_STANDARD, GLM_ENDPOINT_CODING_PLAN})
+
+#: Default base URLs per endpoint type.  ``GLMProvider._get_client`` falls
+#: back to these when the user has not set an explicit ``api_base``.
+GLM_ENDPOINT_BASE_URLS: dict[str, str] = {
+    GLM_ENDPOINT_STANDARD: "https://api.z.ai/api/paas/v4",
+    GLM_ENDPOINT_CODING_PLAN: "https://api.z.ai/api/coding/paas/v4",
+}
+
 #: Exact key sets so we can reject unknown nested keys with the field path
 #: in the error string.
 _THINKING_KEYS: frozenset[str] = frozenset({"enabled", "reasoning_effort", "preserve"})
 _GUARD_KEYS: frozenset[str] = frozenset(
     {"enabled", "reasoning_token_ceiling", "retry_without_thinking", "recovery_max_tokens"}
 )
-_EXTRA_KEYS: frozenset[str] = frozenset({"dialect", "thinking", "degeneration_guard"})
+_EXTRA_KEYS: frozenset[str] = frozenset({"dialect", "thinking", "degeneration_guard", "endpoint_type"})
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +154,12 @@ class GLMConfig:
 
     thinking: GLMThinkingConfig
     guard: GLMGuardConfig
+    endpoint_type: str = GLM_ENDPOINT_STANDARD
+
+    @property
+    def base_url(self) -> str:
+        """The default API base URL for the configured endpoint type."""
+        return GLM_ENDPOINT_BASE_URLS.get(self.endpoint_type, GLM_ENDPOINT_BASE_URLS[GLM_ENDPOINT_STANDARD])
 
 
 # ---------------------------------------------------------------------------
@@ -320,4 +346,12 @@ def parse_glm_extra(extra: Mapping[str, Any], model_id: str) -> GLMConfig:
     thinking = _parse_thinking(extra, model_metadata)
     guard = _parse_guard(extra)
 
-    return GLMConfig(thinking=thinking, guard=guard)
+    endpoint_type = extra.get("endpoint_type", GLM_ENDPOINT_STANDARD)
+    if not isinstance(endpoint_type, str):
+        raise ValueError(f"provider.extra.endpoint_type must be a string, got {type(endpoint_type).__name__}")
+    if endpoint_type not in GLM_ENDPOINT_VALUES:
+        raise ValueError(
+            f"provider.extra.endpoint_type must be one of {sorted(GLM_ENDPOINT_VALUES)}, got {endpoint_type!r}"
+        )
+
+    return GLMConfig(thinking=thinking, guard=guard, endpoint_type=endpoint_type)

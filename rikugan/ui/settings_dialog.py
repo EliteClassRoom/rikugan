@@ -13,6 +13,9 @@ from ..constants import GLM_DEFAULT_MODEL
 from ..core.config import RikuganConfig
 from ..core.glm_config import (
     GLM_DIALECT,
+    GLM_ENDPOINT_BASE_URLS,
+    GLM_ENDPOINT_CODING_PLAN,
+    GLM_ENDPOINT_STANDARD,
     REASONING_EFFORT_VALUES,
     REASONING_TOKEN_CEILING_DEFAULT,
     REASONING_TOKEN_CEILING_MAX,
@@ -77,6 +80,14 @@ _PROVIDER_BASES = {
 
 # Z.AI's official Chat Completions endpoint for the GLM family.
 _ZAI_API_BASE = "https://api.z.ai/api/paas/v4"
+
+# GLM endpoint-type → base URL.  Mirror of GLM_ENDPOINT_BASE_URLS in
+# glm_config, kept here as a module-level constant so the settings dialog
+# can resolve base URLs without re-importing the core module in the handler.
+_PROVIDER_BASES_GLM: dict[str, str] = {
+    GLM_ENDPOINT_STANDARD: GLM_ENDPOINT_BASE_URLS[GLM_ENDPOINT_STANDARD],
+    GLM_ENDPOINT_CODING_PLAN: GLM_ENDPOINT_BASE_URLS[GLM_ENDPOINT_CODING_PLAN],
+}
 
 # Placeholder/default keys that should be cleared on provider switch
 _PROVIDER_DEFAULT_KEYS = {"ollama"}
@@ -861,6 +872,21 @@ class SettingsDialog(QDialog):
         )
         glm_form.addRow("Recovery token cap:", self._glm_recovery_spin)
 
+        # Endpoint type: Standard API vs Coding Plan.
+        # The two Z.AI endpoints use non-interchangeable API keys and
+        # different base URLs, so this must match the key the user pastes.
+        self._glm_endpoint_combo = QComboBox()
+        self._glm_endpoint_combo.addItem("Standard API", "standard")
+        self._glm_endpoint_combo.addItem("Coding Plan", "coding_plan")
+        self._glm_endpoint_combo.setToolTip(
+            "Standard API: general-purpose Z.AI endpoint (per-token billing).\n"
+            "Coding Plan: Z.AI Coding Plan subscription ($18/mo+); requires a\n"
+            "Plan API key, which is NOT interchangeable with a standard key.\n"
+            "Changing this updates the API Base URL automatically."
+        )
+        self._glm_endpoint_combo.currentIndexChanged.connect(self._on_glm_endpoint_changed)
+        glm_form.addRow("Endpoint:", self._glm_endpoint_combo)
+
         # Hidden by default until a GLM-dialect provider is active.
         glm_group.setVisible(False)
         return glm_group
@@ -894,6 +920,14 @@ class SettingsDialog(QDialog):
         self._glm_ceiling_spin.setValue(guard.get("reasoning_token_ceiling", REASONING_TOKEN_CEILING_DEFAULT))
         self._glm_recovery_spin.setValue(guard.get("recovery_max_tokens", RECOVERY_MAX_TOKENS_DEFAULT))
 
+        # Endpoint type (Standard vs Coding Plan).  Default to standard.
+        endpoint_type = extra.get("endpoint_type", "standard")
+        endpoint_idx = self._glm_endpoint_combo.findData(endpoint_type)
+        if endpoint_idx >= 0:
+            self._glm_endpoint_combo.blockSignals(True)
+            self._glm_endpoint_combo.setCurrentIndex(endpoint_idx)
+            self._glm_endpoint_combo.blockSignals(False)
+
         # Clamp recovery spin to the selected model's max_output_tokens.
         self._clamp_glm_recovery_to_model()
 
@@ -922,8 +956,10 @@ class SettingsDialog(QDialog):
         # Build a fresh extra dict with the exact GLM schema.  We keep
         # the dialect key and replace thinking/guard sub-dicts entirely
         # so stale keys from a previous config version cannot survive.
+        endpoint_type = self._glm_endpoint_combo.currentData() or "standard"
         self._config.provider.extra = {
             "dialect": GLM_DIALECT,
+            "endpoint_type": str(endpoint_type),
             "thinking": {
                 "enabled": bool(thinking_enabled),
                 "reasoning_effort": str(effort),
@@ -936,6 +972,41 @@ class SettingsDialog(QDialog):
                 "recovery_max_tokens": int(recovery),
             },
         }
+
+    def _on_glm_endpoint_changed(self, _index: int | None = None) -> None:
+        """Update API base URL when the GLM endpoint type changes.
+
+        The two Z.AI endpoints (standard vs coding_plan) use distinct base
+        URLs and non-interchangeable API keys.  When the user switches the
+        endpoint combo, we update both the UI field and the live config so
+        the next provider instance builds against the correct URL.  If the
+        user has set a custom non-Z.AI base URL, we do not clobber it.
+        """
+        endpoint_type = self._glm_endpoint_combo.currentData()
+        from .qt_compat import QMessageBox
+
+        base_url = _PROVIDER_BASES_GLM.get(endpoint_type)
+        if base_url is None:
+            return
+        current_base = self._api_base_edit.text().strip()
+        # Only update if the current base is empty or matches one of the
+        # known Z.AI endpoints — don't clobber a custom endpoint.
+        known_zai = set(_PROVIDER_BASES_GLM.values())
+        if current_base in known_zai or not current_base:
+            self._api_base_edit.setText(base_url)
+            self._config.provider.api_base = base_url
+            # Clear the key field — the endpoint change means the old key
+            # is almost certainly wrong for the new endpoint.
+            if self._api_key_edit.text().strip():
+                reply = QMessageBox.question(
+                    self,
+                    "Clear API Key?",
+                    "Switching GLM endpoint type requires a different API key.\n\nClear the current key?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._api_key_edit.clear()
 
     def _refresh_glm_controls(self) -> None:
         """Show/hide the GLM group based on the active dialect.
@@ -1347,9 +1418,14 @@ class SettingsDialog(QDialog):
         # Built-in GLM: auto-set dialect + Z.AI base URL + default model so
         # GLM controls appear and the provider is immediately usable without
         # the user having to know the dialect/base/model details.
+        # Default endpoint is "standard"; user can switch to "coding_plan"
+        # in the GLM controls group, which updates the base URL.
         if provider == "glm":
             if not self._config.provider.extra.get("dialect"):
-                self._config.provider.extra = {"dialect": GLM_DIALECT}
+                self._config.provider.extra = {
+                    "dialect": GLM_DIALECT,
+                    "endpoint_type": GLM_ENDPOINT_STANDARD,
+                }
             if not self._api_base_edit.text().strip():
                 self._api_base_edit.setText(_ZAI_API_BASE)
                 self._config.provider.api_base = _ZAI_API_BASE
