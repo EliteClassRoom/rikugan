@@ -435,7 +435,7 @@ class A2ABridgeWidget(QWidget):
         # Task text
         self._task_edit = QPlainTextEdit()
         self._task_edit.setPlaceholderText(
-            "Describe what the external agent should do. Be specific — the external agent has no Rikugan tool access."
+            "Describe what the external agent should do. Be specific — the external agent has no Luc Nhan tool access."
         )
         self._task_edit.setMinimumHeight(80)
         layout.addWidget(self._task_edit, 1)

@@ -1,6 +1,6 @@
 # Luc Nhan
 
-![Version](https://img.shields.io/badge/version-1.10.1-blue)
+![Version](https://img.shields.io/badge/version-1.13.3-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 A reverse-engineering agent for **IDA Pro** that integrates a multi-provider LLM directly into your analysis UI. Luc Nhan has its own agentic loop, in-process tool orchestration, streaming chat, multi-tab sessions, subagents, MCP, headless automation, and undoable mutation workflows — all built around the binary you are reversing.
@@ -16,11 +16,13 @@ A reverse-engineering agent for **IDA Pro** that integrates a multi-provider LLM
 Auto-detects IDA Pro.
 
 **Linux / macOS:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 irm https://raw.githubusercontent.com/buzzer-re/Rikugan/main/install.ps1 | iex
 ```
@@ -54,7 +56,7 @@ The agent really ***lives*** and ***breaths*** reversing.
 
 **60+ native tools** covering navigation, functions, database (segments, imports, exports), strings, xrefs, disassembly, decompiler, annotations, types, microcode, scripting, and IDAPython docs lookup. The agent always asks permission before running scripts and will never execute the target binary. Full tool reference in the [docs](https://rikugan.reversing.codes/docs.html).
 
-**Multi-tab sessions with persistent memory** — Each tab is an independent conversation with its own token tracking. Findings are saved to a per-binary central memory workspace (SQLite structured facts + `MEMORY.md` manual notes under your Rikugan user directory), persisting across sessions and re-injected into future prompts.
+**Multi-tab sessions with persistent memory** — Each tab is an independent conversation with its own token tracking. Findings are saved to a per-binary central memory workspace (SQLite structured facts + `MEMORY.md` manual notes under your Luc Nhan user directory), persisting across sessions and re-injected into future prompts.
 
 **Plan / explore / modify workflows** — `/plan`, `/modify`, and `/explore` enter structured workflows with approval gates. Every mutating tool records a `MutationRecord` so changes can be undone with `/undo` or via the Mutation Log panel.
 
@@ -85,7 +87,7 @@ The agent really ***lives*** and ***breaths*** reversing.
 **Skills & MCP** — 11 built-in skills, custom skill support (Markdown files with YAML frontmatter), and MCP server integration. Reuse skills and MCP servers from Claude Code and Codex.
 
 | Skill | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `/ctf` | Capture-the-flag reverse engineering — find the flag efficiently |
 | `/deobfuscation` | Remove control flow flattening, opaque predicates, MBA expressions, junk code |
 | `/driver-analysis` | Windows kernel driver analysis — DriverEntry, dispatch table, IOCTL handlers |
@@ -107,7 +109,7 @@ Profiles let you customize the agent to fit your analysis needs. They give you g
 ## Recommended Providers
 
 | Provider | Notes |
-|----------|-------|
+| ---------- | ------- |
 | **MiniMax M3** | Recommended for strong malware reverse engineering and long session context thanks to a 1M-token context window, 524,288-token output limit, and automatic adaptive thinking. Low cost, generous limits. |
 | **Claude Opus / Sonnet** | Strong reasoning and prompt caching. OAuth (Claude Pro/Max) and API key both supported. |
 | **Codex (GPT-5.x)** | OpenAI's Codex backend via ChatGPT OAuth device flow. Use the in-plugin "Setup Codex" button to authenticate. |

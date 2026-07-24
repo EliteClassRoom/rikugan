@@ -214,7 +214,7 @@ def set_database_instance_id(instance_id: str) -> bool:
             node.supset(0, instance_id)
             return True
         except Exception as e:
-            sys.stderr.write(f"[Rikugan] set_database_instance_id IDA failed: {e}\n")
+            sys.stderr.write(f"[Lục nhãn] set_database_instance_id IDA failed: {e}\n")
             return False
 
     return False

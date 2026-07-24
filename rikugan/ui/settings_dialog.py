@@ -301,7 +301,7 @@ class SettingsDialog(QDialog):
         self._shown = False
         self._closed = False
         self.encryption_password: str = ""
-        self.setWindowTitle("Rikugan Settings")
+        self.setWindowTitle("Luc Nhan Settings")
         screen = QApplication.primaryScreen()
         if screen:
             avail = screen.availableGeometry()
@@ -668,7 +668,7 @@ class SettingsDialog(QDialog):
         self._knowledge_enabled_cb = QCheckBox("Enable raw knowledge memory")
         self._knowledge_enabled_cb.setChecked(bool(getattr(self._config, "knowledge_enabled", True)))
         self._knowledge_enabled_cb.setToolTip(
-            "When enabled, Rikugan writes structured analysis knowledge to\n"
+            "When enabled, Luc Nhan writes structured analysis knowledge to\n"
             "``.rikugan-kb/`` (memories, entities, relations, observations) and\n"
             "report Markdown under ``notes/reports/`` next to the IDB. Disable\n"
             "to skip writes entirely and hide the Knowledge tab banner."
@@ -682,7 +682,7 @@ class SettingsDialog(QDialog):
         self._encrypt_keys_cb.setChecked(self._config.encrypt_api_keys)
         self._encrypt_keys_cb.setEnabled(crypto_available())
         self._encrypt_keys_cb.setToolTip(
-            "Encrypt all stored API keys with a password.\nYou must enter this password each time Rikugan starts."
+            "Encrypt all stored API keys with a password.\nYou must enter this password each time Luc Nhan starts."
             if crypto_available()
             else "Requires the 'cryptography' package (pip install cryptography)."
         )
@@ -721,8 +721,8 @@ class SettingsDialog(QDialog):
             self._ida_output_log_combo.setCurrentIndex(idx)
         self._ida_output_log_combo.setToolTip(
             "Minimum severity shown in IDA's Output window.\n"
-            "'Off' silences Rikugan entirely; full DEBUG output is always "
-            "available in 'rikugan_debug.log' under the Rikugan config "
+            "'Off' silences Luc Nhan entirely; full DEBUG output is always "
+            "available in 'rikugan_debug.log' under the Luc Nhan config "
             "directory regardless of this setting."
         )
         behavior_form.addRow("IDA Output verbosity:", self._ida_output_log_combo)
@@ -792,7 +792,7 @@ class SettingsDialog(QDialog):
                 break
         self._theme_combo.setToolTip(
             "Select the colour theme. Auto derives from the host palette; "
-            "Dark/Light use Rikugan's bundled palettes; IDA native follows "
+            "Dark/Light use Luc Nhan's bundled palettes; IDA native follows "
             "IDA's current Qt palette (no effect when not running in IDA)."
         )
         self._theme_combo.currentIndexChanged.connect(lambda _idx: self._on_theme_changed())

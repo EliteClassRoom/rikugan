@@ -45,7 +45,7 @@ class ToolsPanel(QWidget):
         _t0 = time.monotonic()
         super().__init__(parent)
         self.setObjectName("tools_panel")
-        self.setWindowTitle("Rikugan Tools")
+        self.setWindowTitle("Luc Nhan Tools")
         self.setStyleSheet(get_tools_panel_style())
         # No minimum size — this widget is embedded in IDA dockable forms
         # and IDA sidebars, which can be any size.

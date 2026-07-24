@@ -69,7 +69,7 @@ def _log_teardown(context: str, exc: BaseException) -> None:
     message log instead of being silently swallowed.
     """
     try:
-        ida_kernwin.msg(f"[Rikugan] {context}: {type(exc).__name__}: {exc}\n")
+        ida_kernwin.msg(f"[Lục nhãn] {context}: {type(exc).__name__}: {exc}\n")
     except Exception:
         pass  # IDA message log itself unavailable — nothing more to do.
 
@@ -638,7 +638,7 @@ class RikuganPanel(idaapi.PluginForm):
 
     def show(self):
         return self.Show(
-            "Rikugan",
+            "Luc Nhan",
             options=(idaapi.PluginForm.WOPN_TAB | idaapi.PluginForm.WOPN_PERSIST),
         )
 

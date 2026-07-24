@@ -93,24 +93,24 @@ class RikuganToolsForm(idaapi.PluginForm):
     def show(self) -> None:
         if not self._shown:
             self.Show(
-                "Rikugan Tools",
+                "Luc Nhan Tools",
                 options=(idaapi.PluginForm.WOPN_TAB | idaapi.PluginForm.WOPN_PERSIST),
             )
             self._shown = True
         else:
-            widget = idaapi.find_widget("Rikugan Tools")
+            widget = idaapi.find_widget("Luc Nhan Tools")
             if widget:
                 idaapi.activate_widget(widget, True)
 
     def hide(self) -> None:
-        widget = idaapi.find_widget("Rikugan Tools")
+        widget = idaapi.find_widget("Luc Nhan Tools")
         if widget:
             idaapi.close_widget(widget, 0)
         self._shown = False
 
     @property
     def is_visible(self) -> bool:
-        widget = idaapi.find_widget("Rikugan Tools")
+        widget = idaapi.find_widget("Luc Nhan Tools")
         return widget is not None and self._shown
 
     def set_tab(self, index: int) -> None:

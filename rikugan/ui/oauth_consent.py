@@ -31,7 +31,7 @@ def show_oauth_consent(parent: QWidget | None = None) -> str:
     layout = QVBoxLayout(dlg)
 
     warning = QLabel(
-        "<b>Use your Claude Code OAuth token with Rikugan?</b>"
+        "<b>Use your Claude Code OAuth token with Luc Nhan?</b>"
         "<br><br>"
         "Using this token with third-party tools carries risk. "
         "Please read Anthropic's policy before proceeding:"
@@ -39,7 +39,7 @@ def show_oauth_consent(parent: QWidget | None = None) -> str:
         f'<a href="{_POLICY_URL}" style="color: #4ec9b0;">{_POLICY_URL}</a>'
         "<br><br>"
         "By clicking <b>Ok</b> below, you acknowledge the risk and allow "
-        "Rikugan to use this token. This choice is saved and won't be asked again."
+        "Luc Nhan to use this token. This choice is saved and won't be asked again."
     )
     warning.setWordWrap(True)
     warning.setOpenExternalLinks(True)

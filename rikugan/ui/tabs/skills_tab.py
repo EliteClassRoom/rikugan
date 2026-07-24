@@ -54,7 +54,7 @@ class SkillsTab(QWidget):
 
     def _build_rikugan_group(self, skills: list[SkillDefinition]) -> QGroupBox:
         """Build the Rikugan skills group box."""
-        group = QGroupBox("Rikugan Skills")
+        group = QGroupBox("Luc Nhan Skills")
         layout = QVBoxLayout(group)
 
         disabled_set = set(self._config.disabled_skills)

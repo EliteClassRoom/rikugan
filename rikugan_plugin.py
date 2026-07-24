@@ -27,6 +27,7 @@ try:
 except Exception as _el_exc:  # pragma: no cover — defensive
     try:
         import sys as _sys
+
         _fallback_dir = os.path.join(os.path.expanduser("~"), ".idapro", "rikugan")
         os.makedirs(_fallback_dir, exist_ok=True)
         with open(os.path.join(_fallback_dir, "early_startup.log"), "a", encoding="utf-8") as _fallback_fh:
@@ -35,7 +36,7 @@ except Exception as _el_exc:  # pragma: no cover — defensive
             )
     except Exception:
         pass
-    _sys.stderr.write(f"[Rikugan] early_log import failed: {_el_exc}\n")
+    _sys.stderr.write(f"[Lục nhãn] early_log import failed: {_el_exc}\n")
     _el = None  # type: ignore[assignment]
 
 import idaapi
@@ -127,7 +128,7 @@ class RikuganPlugmod(idaapi.plugmod_t):
             try:
                 panel.close()
             except Exception as e:
-                idaapi.msg(f"[Rikugan] Panel close error: {e}\n")
+                idaapi.msg(f"[Lục nhãn] Panel close error: {e}\n")
         # Flush deferred widget deletions while Python is still alive.
         # Without this, orphaned Qt-wrapped QFrames survive until
         # QApplication::~QApplication() where their C++ destructors call
@@ -139,7 +140,7 @@ class RikuganPlugmod(idaapi.plugmod_t):
         except Exception as exc:
             import sys
 
-            sys.stderr.write(f"[Rikugan] QApplication.processEvents failed: {exc}\n")
+            sys.stderr.write(f"[Lục nhãn] QApplication.processEvents failed: {exc}\n")
 
     def _toggle_panel(self) -> None:
         # Reinstall the Shiboken import guard before any panel import —
@@ -200,7 +201,7 @@ class RikuganPlugmod(idaapi.plugmod_t):
                             _skipped += 1
                             import sys
 
-                            sys.stderr.write(f"[Rikugan] Skipping {modname}: {e}\n")
+                            sys.stderr.write(f"[Lục nhãn] Skipping {modname}: {e}\n")
 
                 saved_import = builtins.__import__
                 builtins.__import__ = importlib.__import__
@@ -247,7 +248,7 @@ class RikuganPlugmod(idaapi.plugmod_t):
             except Exception as exc:
                 import sys
 
-                sys.stderr.write(f"[Rikugan] timing flush failed: {exc}\n")
+                sys.stderr.write(f"[Lục nhãn] timing flush failed: {exc}\n")
         except Exception as e:
             import sys
             import traceback
@@ -259,32 +260,32 @@ class RikuganPlugmod(idaapi.plugmod_t):
                 _el._early_log_crash(e)
 
             tb_str = traceback.format_exc()
-            idaapi.msg(f"[Rikugan] Failed to open panel: {e}\n{tb_str}\n")
+            idaapi.msg(f"[Lục nhãn] Failed to open panel: {e}\n{tb_str}\n")
             try:
                 importlib.import_module("rikugan.core.logging").log_error(f"Failed to open panel: {e}\n{tb_str}")
             except Exception:
                 try:
                     log_path = os.path.join(os.path.expanduser("~"), ".idapro", "rikugan", "rikugan_debug.log")
                     with open(log_path, "a") as f:
-                        f.write(f"[Rikugan CRASH] {e}\n{tb_str}\n")
+                        f.write(f"[Lục nhãn CRASH] {e}\n{tb_str}\n")
                         f.flush()
                         os.fsync(f.fileno())
                 except Exception:
-                    print(f"[Rikugan CRASH] {e}\n{tb_str}", file=sys.stderr)
+                    print(f"[Lục nhãn CRASH] {e}\n{tb_str}", file=sys.stderr)
 
 
 class RikuganPlugin(idaapi.plugin_t):
     flags = idaapi.PLUGIN_MULTI | idaapi.PLUGIN_FIX
     comment = "Intelligent Reverse-engineering Integrated System"
     help = ""
-    wanted_name = "Rikugan"
+    wanted_name = "Luc Nhan"
     wanted_hotkey = "Ctrl+Shift+I"
 
     def init(self) -> idaapi.plugmod_t:
         if _el is not None:
             _el._early_log("plugin_init:entry")
         _ver = importlib.import_module("rikugan.constants").PLUGIN_VERSION
-        idaapi.msg(f"[Rikugan] Plugin loaded (v{_ver})\n")
+        idaapi.msg(f"[Lục nhãn] Plugin loaded (v{_ver})\n")
         return RikuganPlugmod()
 
 
@@ -306,7 +307,7 @@ def _log(msg: str) -> None:
     verbose = os.environ.get("RIKUGAN_BOOTSTRAP_VERBOSE", "") in ("1", "yes", "true")
     if verbose:
         try:
-            idaapi.msg(f"[Rikugan] {msg}\n")
+            idaapi.msg(f"[Lục nhãn] {msg}\n")
         except Exception:
             pass
     cached = getattr(_log, "_cached_log_trace", None)
@@ -316,7 +317,7 @@ def _log(msg: str) -> None:
         except Exception as e:
             import sys
 
-            sys.stderr.write(f"[Rikugan] cached log_trace failed during bootstrap: {e}\n")
+            sys.stderr.write(f"[Lục nhãn] cached log_trace failed during bootstrap: {e}\n")
         return
     try:
         log_func = importlib.import_module("rikugan.core.logging").log_trace
@@ -325,7 +326,7 @@ def _log(msg: str) -> None:
     except Exception as e:
         import sys
 
-        sys.stderr.write(f"[Rikugan] log_trace unavailable during bootstrap: {e}\n")
+        sys.stderr.write(f"[Lục nhãn] log_trace unavailable during bootstrap: {e}\n")
 
 
 def PLUGIN_ENTRY():

@@ -26,7 +26,7 @@ class TestEarlyLogBuffer(unittest.TestCase):
         for i in range(60):
             el._early_log(f"line-{i}")
         snap = el._early_log_buffer_snapshot()
-        # The early_log() helper itself appends a banner line ("=== Rikugan
+        # The early_log() helper itself appends a banner line ("=== Lục nhãn
         # early-startup log started ===") on first call after a reset; we
         # allow for that by asserting the snapshot is bounded by the buffer
         # size and contains the most recent tail.

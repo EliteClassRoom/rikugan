@@ -1,6 +1,6 @@
-# Rikugan (六眼)
+# Luc Nhan (六眼)
 
-> A reverse-engineering AI agent for IDA Pro. Rikugan is not an MCP client — it has its own agentic loop, in-process tool orchestration, streaming UI, multi-tab chat, session persistence, and MCP client support. It lives inside the disassembler.
+> A reverse-engineering AI agent for IDA Pro. Luc Nhan is not an MCP client — it has its own agentic loop, in-process tool orchestration, streaming UI, multi-tab chat, session persistence, and MCP client support. It lives inside the disassembler.
 
 ## Key Concepts
 

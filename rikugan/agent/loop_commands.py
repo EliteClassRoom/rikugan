@@ -436,7 +436,7 @@ def _handle_doctor_command(loop: AgentLoop) -> Generator[TurnEvent, None, None]:
         pass
 
     # Format output
-    lines = ["**Rikugan Doctor**\n"]
+    lines = ["**Luc Nhan Doctor**\n"]
     if ok:
         lines.append("**OK:**")
         for item in ok:

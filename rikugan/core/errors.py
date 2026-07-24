@@ -35,12 +35,14 @@ class ProviderError(RikuganError):
 _AUTH_GUIDANCE: dict[str, str] = {
     "anthropic": (
         "Set the ANTHROPIC_API_KEY environment variable, "
-        "configure a key in Rikugan settings, "
+        "configure a key in Luc Nhan settings, "
         "or run `claude setup-token` for OAuth."
     ),
-    "openai": ("Set the OPENAI_API_KEY environment variable or configure a key in Rikugan settings."),
-    "gemini": ("Set the GOOGLE_API_KEY or GEMINI_API_KEY environment variable or configure a key in Rikugan settings."),
-    "minimax": ("Set the MINIMAX_API_KEY environment variable or configure a key in Rikugan settings."),
+    "openai": ("Set the OPENAI_API_KEY environment variable or configure a key in Luc Nhan settings."),
+    "gemini": (
+        "Set the GOOGLE_API_KEY or GEMINI_API_KEY environment variable or configure a key in Luc Nhan settings."
+    ),
+    "minimax": ("Set the MINIMAX_API_KEY environment variable or configure a key in Luc Nhan settings."),
     "ollama": (
         "Ollama does not require an API key. "
         "Ensure the Ollama service is running (default: http://localhost:11434). "
@@ -48,7 +50,7 @@ _AUTH_GUIDANCE: dict[str, str] = {
     ),
     "openai_compat": (
         "OpenAI-compatible providers require a configured API key "
-        "and base URL in Rikugan settings. "
+        "and base URL in Luc Nhan settings. "
         "Use --api-base to set the endpoint URL."
     ),
 }
@@ -57,7 +59,7 @@ _AUTH_GUIDANCE: dict[str, str] = {
 def _auth_guidance_for(provider: str) -> str:
     """Return provider-specific guidance, or a generic fallback."""
     return _AUTH_GUIDANCE.get(
-        provider, "Set the API key via the provider's environment variable or in Rikugan settings."
+        provider, "Set the API key via the provider's environment variable or in Luc Nhan settings."
     )
 
 

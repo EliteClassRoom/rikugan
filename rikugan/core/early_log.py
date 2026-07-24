@@ -181,7 +181,7 @@ def _write_banner(fh: io.TextIOBase | None) -> None:
             pieces.append("qt5core_handle=n/a")
     except Exception:
         pieces.append("qt5core_handle=?")
-    line = "=== Rikugan early-startup log started === " + " ".join(pieces)
+    line = "=== Lục nhãn early-startup log started === " + " ".join(pieces)
     _early_log(line, level="INFO")
 
 
@@ -274,7 +274,7 @@ def _early_log_crash(exc: BaseException) -> None:
     except Exception:
         # Even crash-path I/O failed. Last resort: drop to stderr.
         try:
-            sys.stderr.write(f"[Rikugan] _early_log_crash sink failure: {type(exc).__name__}: {exc}\n")
+            sys.stderr.write(f"[Lục nhãn] _early_log_crash sink failure: {type(exc).__name__}: {exc}\n")
         except Exception:
             pass
 

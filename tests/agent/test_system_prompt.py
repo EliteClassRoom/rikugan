@@ -17,7 +17,7 @@ from rikugan.agent.system_prompt import _BASE_PROMPT, build_system_prompt
 class TestBuildSystemPrompt(unittest.TestCase):
     def test_base_prompt_only(self):
         prompt = build_system_prompt()
-        self.assertIn("Rikugan", prompt)
+        self.assertIn("Luc Nhan", prompt)
         self.assertIn("reverse engineering", prompt)
 
     def test_with_binary_info(self):

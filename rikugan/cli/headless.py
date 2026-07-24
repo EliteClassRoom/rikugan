@@ -790,7 +790,7 @@ def cmd_shutdown(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Rikugan headless CLI — run Rikugan inside IDA without the GUI",
+        description="Luc Nhan headless CLI — run Luc Nhan inside IDA without the GUI",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

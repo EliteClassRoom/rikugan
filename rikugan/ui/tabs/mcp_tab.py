@@ -55,7 +55,7 @@ class MCPTab(QWidget):
 
     def _build_rikugan_group(self) -> QGroupBox:
         """Build the Rikugan MCP servers group box."""
-        group = QGroupBox("Rikugan MCP Servers")
+        group = QGroupBox("Luc Nhan MCP Servers")
         layout = QVBoxLayout(group)
 
         if not self._rikugan_servers:

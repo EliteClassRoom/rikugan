@@ -680,7 +680,7 @@ class AssistantMessageWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
 
-        self._role_label = QLabel("Rikugan")
+        self._role_label = QLabel("Luc Nhan")
         layout.addWidget(self._role_label)
 
         self._thinking_block = _ThinkingBlock()
@@ -1015,7 +1015,7 @@ class UserQuestionWidget(QFrame):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(6)
 
-        self._header = QLabel("Rikugan asks:")
+        self._header = QLabel("Luc Nhan asks:")
         layout.addWidget(self._header)
 
         self._q_label = QLabel(question)

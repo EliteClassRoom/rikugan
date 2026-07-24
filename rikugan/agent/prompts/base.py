@@ -301,7 +301,7 @@ convenience helper that "should" exist.
 5. After an ``AttributeError`` mentioning IDA APIs, FETCH the ida-scripting skill
    before rewriting — do not retry the same broken pattern.
 
-**Tool substitution guard.** Rikugan scans every ``execute_python``
+**Tool substitution guard.** Luc Nhan scans every ``execute_python``
 script for IDAPython API patterns that re-implement an existing
 dedicated tool. When it finds one, the script still runs (you may
 have a legitimate reason) but the output is prefixed with a

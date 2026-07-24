@@ -421,7 +421,7 @@ class RikuganPanelCore(QWidget):
 
         for _attempt in range(3):
             dlg = QDialog()
-            dlg.setWindowTitle("Rikugan — Encrypted API Keys")
+            dlg.setWindowTitle("Luc Nhan — Encrypted API Keys")
             dlg.setMinimumWidth(350)
             layout = QVBoxLayout(dlg)
             layout.addWidget(QLabel("Enter password to decrypt API keys:"))
@@ -833,7 +833,7 @@ class RikuganPanelCore(QWidget):
             (self._cancel_btn, "Stop the running agent (Esc)"),
             (self._new_btn, "Start a new chat tab (Ctrl+T)"),
             (self._export_btn, "Export this chat to a file"),
-            (self._settings_btn, "Open Rikugan settings"),
+            (self._settings_btn, "Open Luc Nhan settings"),
             (self._mutations_btn, "Show the mutation log (IDA database edits made by the agent)"),
             (self._history_btn, "Show past chat sessions"),
             (self._tools_btn, "Open the tools panel"),
@@ -1154,7 +1154,7 @@ class RikuganPanelCore(QWidget):
         include_subagents: bool = False,
     ) -> None:
         """Write session messages to a Markdown file."""
-        lines = ["# Rikugan Chat Export\n"]
+        lines = ["# Luc Nhan Chat Export\n"]
         lines.append(f"- **Model**: {session.model_name or 'unknown'}")
         lines.append(f"- **Exported**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         if session.idb_path:
@@ -1169,7 +1169,7 @@ class RikuganPanelCore(QWidget):
                 lines.append(f"## You\n\n{msg.content}\n")
             elif msg.role == Role.ASSISTANT:
                 if msg.content:
-                    lines.append(f"## Rikugan\n\n{msg.content}\n")
+                    lines.append(f"## Luc Nhan\n\n{msg.content}\n")
                 for tc in msg.tool_calls:
                     lines.append(f"**Tool call**: `{tc.name}`\n")
                     lines.append(_export_format_tool_args(tc))
@@ -3586,7 +3586,7 @@ class RikuganPanelCore(QWidget):
             self._input_area.set_enabled(True)
             if running:
                 self._input_area.setPlaceholderText(
-                    "Rikugan is thinking... press Enter (or Queue) to queue a follow-up."
+                    "Luc Nhan is thinking... press Enter (or Queue) to queue a follow-up."
                 )
             else:
                 self._input_area.setPlaceholderText("Ask about this binary... (/ for skills, /modify to patch)")

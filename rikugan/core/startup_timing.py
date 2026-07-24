@@ -228,7 +228,7 @@ class _StartupSession:
         except Exception as e:
             import sys
 
-            sys.stderr.write(f"[Rikugan] Failed to write startup timing log: {e}\n")
+            sys.stderr.write(f"[Lục nhãn] Failed to write startup timing log: {e}\n")
             return  # preserve records for next retry
 
         # Only clear records after successful log write

@@ -263,7 +263,7 @@ class TestAuthenticationGuidance(unittest.TestCase):
         err = AuthenticationError(provider="unknown_provider_xyz")
         msg = str(err)
         self.assertIn("environment variable", msg)
-        self.assertIn("Rikugan settings", msg)
+        self.assertIn("Luc Nhan settings", msg)
 
     def test_explicit_guidance_overrides_provider(self):
         from rikugan.core.errors import AuthenticationError

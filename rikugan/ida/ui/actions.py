@@ -190,11 +190,11 @@ if _HAS_IDA:
     _ACTION_DEFS: list[tuple[str, str, Callable, bool, str, str, set[str]]] = [
         (
             "rikugan:send_to",
-            "Send to Rikugan",
+            "Send to Luc Nhan",
             _handle_send_to,
             False,
             "Ctrl+Shift+A",
-            "Send selection or address to Rikugan input",
+            "Send selection or address to Luc Nhan input",
             {"disasm", "pseudo"},
         ),
         (
@@ -203,12 +203,12 @@ if _HAS_IDA:
             _handle_explain,
             True,
             "",
-            "Explain the current function with Rikugan",
+            "Explain the current function with Luc Nhan",
             {"disasm", "pseudo"},
         ),
         (
             "rikugan:rename",
-            "Rename with Rikugan",
+            "Rename with Luc Nhan",
             _handle_rename,
             True,
             "",
@@ -217,7 +217,7 @@ if _HAS_IDA:
         ),
         (
             "rikugan:deobfuscate",
-            "Deobfuscate with Rikugan",
+            "Deobfuscate with Luc Nhan",
             _handle_deobfuscate,
             True,
             "",
@@ -324,11 +324,11 @@ if _HAS_IDA:
                     "Open Tools",
                     _OpenToolsAction(self._get_panel),
                     "",
-                    "Open the Rikugan Tools panel",
+                    "Open the Luc Nhan Tools panel",
                 )
             )
             idaapi.attach_action_to_menu(
-                "Edit/Plugins/Rikugan/",
+                "Edit/Plugins/Luc Nhan/",
                 "rikugan:open_tools",
                 idaapi.SETMENU_APP,
             )
@@ -343,13 +343,13 @@ if _HAS_IDA:
 
             for action_id, _label, _handler, _auto, _hk, _tt, views in _ACTION_DEFS:
                 if view_key in views:
-                    idaapi.attach_action_to_popup(widget, popup, action_id, "Rikugan/")
+                    idaapi.attach_action_to_popup(widget, popup, action_id, "Luc Nhan/")
 
             # Always attach "Open Tools" in disasm/pseudo views.
             # The Bulk Renamer action has been removed because the
             # Renamer tab is hidden from the visible Tools surface.
             if view_key in ("disasm", "pseudo"):
-                idaapi.attach_action_to_popup(widget, popup, "rikugan:open_tools", "Rikugan/")
+                idaapi.attach_action_to_popup(widget, popup, "rikugan:open_tools", "Luc Nhan/")
 
         def database_inited(self, is_new_database: bool, idc_script: str) -> None:
             """Called when a database is opened or created."""

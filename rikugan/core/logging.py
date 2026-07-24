@@ -44,7 +44,7 @@ def get_logger() -> logging.Logger:
     _logger.setLevel(logging.DEBUG)
 
     fmt = logging.Formatter(
-        "[Rikugan %(asctime)s.%(msecs)03d %(levelname)s %(threadName)s] %(message)s",
+        "[Lục nhãn %(asctime)s.%(msecs)03d %(levelname)s %(threadName)s] %(message)s",
         datefmt="%H:%M:%S",
     )
 
@@ -55,7 +55,7 @@ def get_logger() -> logging.Logger:
     # so the full diagnostic stream is always recoverable from disk.
     host_handler = HostOutputHandler()
     host_handler.setLevel(_read_configured_host_level())
-    host_handler.setFormatter(logging.Formatter("[Rikugan] %(levelname)s: %(message)s"))
+    host_handler.setFormatter(logging.Formatter("[Lục nhãn] %(levelname)s: %(message)s"))
     _logger.addHandler(host_handler)
 
     # File handler (DEBUG — everything, flush immediately)
@@ -65,7 +65,7 @@ def get_logger() -> logging.Logger:
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(fmt)
         _logger.addHandler(file_handler)
-        _logger.debug(f"=== Rikugan debug log started — {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
+        _logger.debug(f"=== Lục nhãn debug log started — {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
         _logger.debug(f"Log file: {path}")
         _logger.debug(f"Python: {sys.version}")
         _logger.debug(f"Thread: {threading.current_thread().name}")
@@ -80,7 +80,7 @@ def get_logger() -> logging.Logger:
         json_handler.setFormatter(_JSONFormatter())
         _logger.addHandler(json_handler)
     except OSError as e:
-        sys.stderr.write(f"[Rikugan] Could not open structured log file: {e}\n")
+        sys.stderr.write(f"[Lục nhãn] Could not open structured log file: {e}\n")
 
     return _logger
 

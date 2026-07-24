@@ -136,12 +136,12 @@ def _resolve_host_sink() -> Callable[[str, int], None] | None:
                 try:
                     ida_kernwin.msg(f"{msg}\n")
                 except RuntimeError as e:
-                    sys.stderr.write(f"[Rikugan] IDA output window unavailable: {e}\n")
+                    sys.stderr.write(f"[Lục nhãn] IDA output window unavailable: {e}\n")
 
             _host_sink = _ida_sink
             return _host_sink
         except ImportError as exc:
-            sys.stderr.write(f"[Rikugan] ida_kernwin import failed: {exc}\n")
+            sys.stderr.write(f"[Lục nhãn] ida_kernwin import failed: {exc}\n")
 
     return None
 

@@ -5,7 +5,7 @@ Covers three findings from the 2026-07 UI/UX review:
 1. **Assistant role contrast (dark theme).** ``_assistant_role`` resolved to
    ``tokens.highlight`` which in the bundled dark palette is ``#0e639c`` —
    only **2.61:1** against the ``#1e1e1e`` window background, failing even
-   the WCAG 3:1 large-text threshold. The role label ("Rikugan", 11px bold)
+   the WCAG 3:1 large-text threshold. The role label ("Luc Nhan", 11px bold)
    is functional text and must stay readable. The fix derives the role color
    from the theme's high-contrast accent/text tokens instead.
 
