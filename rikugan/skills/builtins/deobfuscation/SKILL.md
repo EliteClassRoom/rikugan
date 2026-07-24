@@ -46,9 +46,16 @@ Strings are the fastest path to understanding a binary. Encrypted strings signal
 3. Decompile it and identify the algorithm (XOR, RC4, custom).
 4. Use xrefs on the decode function to locate all call sites.
 5. At each call site, trace arguments to extract encrypted data and key.
-6. Reimplement the decode logic to compute plaintext.
-7. Annotate decrypted strings at each call site (C2 addresses, file paths, registry keys, API names).
-8. Rename the decode function (e.g., `decrypt_string`).
+6. Prefer `emulate_code` / `resolve_emulated_string` to compute plaintext
+   directly from the binary when the decoder is self-contained (no API
+   calls, no unmodeled state, no internal branches leaving the stub). See
+   `references/ida/tools.md` for register, memory-range, and exclusive-`stop_address` rules.
+7. Fall back to `execute_python` reimplementation only for decoders that
+   emulate cannot handle: those that touch external APIs, depend on
+   captured/unmodeled state, or include control flow that leaves the
+   proposed range.
+8. Annotate decrypted strings at each call site (C2 addresses, file paths, registry keys, API names).
+9. Rename the decode function (e.g., `decrypt_string`).
 
 ### 2. Structural Deobfuscation
 

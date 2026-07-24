@@ -162,9 +162,36 @@ with Database.open(hooks=[hook]) as db:
 2. search_functions for small frequently-called functions → decode stub candidates
 3. xrefs_to(decode_func) → all call sites
 4. decompile_function(caller) → trace arguments to find encrypted data + key
-5. execute_python → reimplement decode logic, compute plaintext
-6. set_comment at each call site → "decrypted: <plaintext>"
-7. rename_function(decode_func, "decrypt_string")
+5. If the stub is self-contained (no API calls, no branches leaving the
+   proposed range) → emulate_code / resolve_emulated_string over the
+   stub with explicit registers and memory_ranges
+6. Otherwise → execute_python → reimplement decode logic, compute plaintext
+7. set_comment at each call site → "decrypted: <plaintext>"
+8. rename_function(decode_func, "decrypt_string")
+```
+
+Emulation-only decoder example (x86 register-based XOR):
+
+```jsonc
+emulate_code(
+  start_address="0x401000",
+  stop_address="0x401060",  // exclusive
+  registers={"eax": 0, "ebx": 0x7, "edi": 0x402000, "esi": 0x401300},
+  memory_ranges=[{"address": 0x401300, "size": 32}],
+)
+```
+
+`resolve_emulated_string` for the same situation when the output lives in a
+known buffer (e.g. C2 string at `0x402100`):
+
+```jsonc
+resolve_emulated_string(
+  start_address="0x401000",
+  stop_address="0x401060",  // exclusive
+  registers={"eax": 0, "ebx": 0x7, "edi": 0x402000, "esi": 0x401300},
+  output_address="0x402100",
+  memory_ranges=[{"address": 0x401300, "size": 32}, {"address": 0x402100, "size": 64}],
+)
 ```
 
 ## Troubleshooting

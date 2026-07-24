@@ -51,6 +51,7 @@ _ADVANCED_MODULE_NAMES = (
     "rikugan.ida.tools.types_tools",
     "rikugan.ida.tools.scripting",
     "rikugan.ida.tools.microcode",
+    "rikugan.ida.tools.emulation",
     "rikugan.tools.web",
     "rikugan.tools.web_fetch",
     "rikugan.tools.idapython_docs",
